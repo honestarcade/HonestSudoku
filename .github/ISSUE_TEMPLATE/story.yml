@@ -1,0 +1,32 @@
+name: Story
+description: Describes WHAT to build, with acceptance criteria and a test plan
+labels: ["feature", "needs-triage"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What the user gets and why.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Testable, one checkbox per criterion.
+      value: |
+        - [ ]
+    validations:
+      required: true
+  - type: textarea
+    id: testplan
+    attributes:
+      label: Test plan
+      description: How the acceptance criteria will be verified (unit, widget, integration, manual).
+    validations:
+      required: true
+  - type: input
+    id: epic
+    attributes:
+      label: Parent epic
+      description: Issue number of the epic this story belongs to, e.g. "#12".

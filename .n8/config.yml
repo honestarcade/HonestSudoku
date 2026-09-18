@@ -1,0 +1,10 @@
+version: 1
+stack: flutter
+initialized: 2026-09-18
+wiki: enabled
+repo: honestarcade/HonestSudoku
+visibility: public
+platforms: [android, ios, web, macos, linux, windows]  # all scaffolded; trim the CI matrix during roadmap
+context7: installed
+security_findings: issues
+areas: [app, platform, ci, docs]

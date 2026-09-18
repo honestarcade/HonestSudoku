@@ -1,0 +1,26 @@
+name: Epic
+description: A large body of work with acceptance criteria at the epic level
+title: "[Epic] "
+labels: ["epic", "needs-triage"]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What capability does this epic deliver, and why does it matter?
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Epic-level, testable outcomes. One checkbox per criterion.
+      value: |
+        - [ ]
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Constraints, open questions, links.

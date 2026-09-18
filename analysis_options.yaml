@@ -1,0 +1,35 @@
+# Static analysis is the always-on quality layer for this project.
+# `dart analyze` must pass with zero issues; `dart format --set-exit-if-changed .`
+# must pass as well. Any rule turned off below carries a one-line rationale.
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  language:
+    strict-casts: true
+    strict-inference: true
+    strict-raw-types: true
+  errors:
+    # Treat TODOs as info so they show up in reviews but never block a build.
+    todo: info
+  exclude:
+    - build/**
+    - android/**
+    - ios/**
+    - web/**
+    - windows/**
+    - macos/**
+    - linux/**
+
+linter:
+  rules:
+    # Consistency rules beyond the flutter_lints defaults.
+    prefer_single_quotes: true
+    prefer_final_locals: true
+    prefer_final_in_for_each: true
+    unawaited_futures: true
+    avoid_dynamic_calls: true
+    directives_ordering: true
+    # sort_pub_dependencies is off: Flutter convention lists `flutter: sdk:` first, which the rule flags.
+    sort_pub_dependencies: false
+    use_super_parameters: true
+    require_trailing_commas: true
