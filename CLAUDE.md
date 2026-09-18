@@ -7,10 +7,10 @@ Flutter app (Dart). Build with `flutter pub get && flutter run`; quality gate is
 
 Load-bearing constraints no story may breach without an explicit conversation with the owner. Changing one is plan drift by definition: log it as an ad-hoc ledger entry in `.n8/decisions.md` and suggest `/n8-replan`.
 
-1. **No ads, no tracking, no analytics, no network.** The release build holds no INTERNET permission and all player data stays on the device. *(test-enforced: dependency blocklist over pubspec.lock, release-manifest permission check, and a byte scan of the final AAB on every release build; fonts are bundled, never fetched)*
-2. **Boards are generated on the device at runtime, never bundled, and every board has exactly one solution.** *(test-enforced: property tests run the real generator over many seeds for every size and difficulty and have the solver count solutions)*
-3. **Lean dependencies.** A third-party package is added only when it is necessary, carries a one-line justification in `pubspec.yaml`, and never brings ads, analytics, or network access. *(blocklist test-enforced under invariant 1; "necessary" is honor-system, checked by audits)*
-4. **Deterministic generation.** The same seed, size, and difficulty always produce the same board. *(test-enforced: golden-seed regression test)*
+1. **No ads, no tracking, no analytics, no network.** The release build declares no Android permissions at all (INTERNET included) and all player data stays on the device. *(test-enforced: manifest guard plus a byte scan of every built bundle, dependency blocklist over pubspec.lock, no web-font references; fonts are bundled, never fetched — guard: #14, #15 (planned))* **Plugins:** any Flutter plugin is adopted only during planning, after the planner has read the plugin's own `AndroidManifest.xml` for permissions and the owner has approved it; build-time permission removal rules are forbidden, and a plugin's `# why:` line records `declares no permissions (manifest checked <date>)`.
+2. **Boards are generated on the device at runtime, never bundled, and every board has exactly one solution.** *(test-enforced: property tests run the real generator over many seeds for every size and difficulty and have the solver count solutions — guard: deferred → M2)*
+3. **Lean dependencies.** A third-party package is added only when it is necessary, carries a one-line justification in `pubspec.yaml` as a trailing `# why: <reason>` comment on its key line, and never brings ads, analytics, or network access. *(blocklist and justification test-enforced under invariant 1 — guard: #15 (planned); "necessary" is honor-system, checked by audits)*
+4. **Deterministic generation.** The same seed, size, and difficulty always produce the same board. *(test-enforced: golden-seed regression test — guard: deferred → M2)*
 
 ## n8SDLC project
 
