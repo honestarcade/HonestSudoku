@@ -88,3 +88,22 @@ Ad-hoc entries (changes made outside the n8SDLC commands that deviate from plann
 - **Decision:** Toolchain facts recorded for execution: no Android Studio, no JDK on PATH (use Homebrew openjdk@21 via `flutter config --jdk-dir`), cmdline-tools missing, no device or AVD (executor creates one).
   **Why:** Discovered by the executor simulation; would otherwise be the first blocker of `/n8-exec M0`.
   **Issue:** #12
+
+## /n8-plan M1 — 2026-09-18
+
+- **Decision:** Four stories (#18–#21), no spikes, no subtasks; chain {#18, #19} → #20 → #21.
+- **Decision:** The Play Console app entry and its service account move from the Launch epic (#9, M7) into M1 (#19), so the tag-to-Play path is proven with a real tag; App Signing enrols at the first upload (#20). #19 edits epic #9 and M7's phase 1 when it lands.
+  **Why:** Owner chose it; without it M1's upload step is unverifiable until M7. Frog Across did the same.
+- **Decision:** Production is a human act in the Play Console; the service account is granted testing-track release only and the promote workflow refuses `production` (#21 also amends epic #8's "or production" wording).
+  **Why:** Owner chose it, matching Frog Across.
+- **Decision:** Pushing a `v*` tag is the stage approval; no GitHub Environment reviewer step.
+  **Why:** Owner chose it; tags are cut by `/n8-release` from verified `main`.
+- **Decision:** The executor scripts the Google Cloud setup (project `honestsudoku-ci`, service account, key → GitHub secret) with the owner's local gcloud login; the owner does the Console clicks.
+  **Why:** Owner chose it.
+- **Decision:** Flutter version pinned in `.fvmrc`, read by `subosito/flutter-action` and by `tools/gate.sh` (warn only); `pubspec.yaml` keeps a range.
+  **Why:** The executor simulation found an exact pin in pubspec makes `flutter pub get` refuse other versions, defeating the warn-only intent.
+- **Decision:** Version code = 1000 + run_number × 10 + run_attempt (attempt 1–9); version name from the tag.
+  **Why:** A plain run-number scheme repeats the code on a re-run after a transient failure and Play rejects it.
+- **Decision:** #20, #21 and #19 verify after the milestone PR merges (a release tag must point at `main`) and close through the post-merge state check; the milestone PR closes #18 only.
+  **Why:** Structural; the coverage check flagged the contradiction with "PR closes all stories".
+- **Decision:** Action majors resolved 2026-09-18: checkout v7, setup-java v6, flutter-action v2, upload-artifact v7, upload-google-play v1, action-shellcheck 2.0.0; Dependabot carries them forward.
