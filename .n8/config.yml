@@ -4,7 +4,27 @@ initialized: 2026-09-18
 wiki: enabled
 repo: honestarcade/HonestSudoku
 visibility: public
-platforms: [android, ios, web, macos, linux, windows]  # all scaffolded; trim the CI matrix during roadmap
 context7: installed
 security_findings: issues
 areas: [app, platform, ci, docs]
+design_source: "claude.ai/design project 9e9471c9-5231-4fd8-9889-066345073295 (Offline Sudoku Game Design), file Honest Sudoku.dc.html — 9 screens, prototype game logic, brand sheet; read 2026-09-18"
+studio_reference: "/Users/npond/HonestArcadeApps/HonestFrogAcross — studio conventions: no-network guards, Play Console runbook, privacy page, CI/release shape"
+platforms:
+  v1: android            # portrait-only; iOS and web deferred to the post-v1 backlog epic
+android:
+  application_id: com.honestarcade.sudoku   # set in M0; immutable after the first Play upload
+deployment:
+  dev: flutter run on a local device or emulator; signed AAB buildable locally
+  stage: Google Play internal testing track, uploaded by CI on a version tag
+  production: Google Play production, promoted from the closed test (M7)
+  notes: personal Play account — production access needs a closed test with >=12 testers opted in for 14 days
+ci:
+  provider: github-actions
+  on_pr: [analyze, format, test, android-build, invariant-guards]
+  release: "tag v* -> signed AAB -> Google Play internal track"
+  secrets_needed: [android-keystore (base64 + passwords), play-service-account-json]
+audio:
+  assets: owner-supplied (needs-owner-action); sound system built against placeholders
+fonts: bundled in the app (Outfit, IBM Plex Mono); never fetched at runtime
+puzzles:
+  generation: on device at runtime, seeded; solver-graded difficulty; unique solution guaranteed

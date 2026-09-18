@@ -3,6 +3,15 @@
 Flutter app (Dart). Build with `flutter pub get && flutter run`; quality gate is
 `dart analyze`, `dart format --set-exit-if-changed .`, and `flutter test`, all of which must pass.
 
+## Project invariants
+
+Load-bearing constraints no story may breach without an explicit conversation with the owner. Changing one is plan drift by definition: log it as an ad-hoc ledger entry in `.n8/decisions.md` and suggest `/n8-replan`.
+
+1. **No ads, no tracking, no analytics, no network.** The release build holds no INTERNET permission and all player data stays on the device. *(test-enforced: dependency blocklist over pubspec.lock, release-manifest permission check, and a byte scan of the final AAB on every release build; fonts are bundled, never fetched)*
+2. **Boards are generated on the device at runtime, never bundled, and every board has exactly one solution.** *(test-enforced: property tests run the real generator over many seeds for every size and difficulty and have the solver count solutions)*
+3. **Lean dependencies.** A third-party package is added only when it is necessary, carries a one-line justification in `pubspec.yaml`, and never brings ads, analytics, or network access. *(blocklist test-enforced under invariant 1; "necessary" is honor-system, checked by audits)*
+4. **Deterministic generation.** The same seed, size, and difficulty always produce the same board. *(test-enforced: golden-seed regression test)*
+
 ## n8SDLC project
 
 This project is managed by the n8SDLC workflow (GitHub Issues = the plan; `/n8-stat` shows where things stand). If a change made in this session deviates from what planned issues assume — different library, provider, architecture, dropped/added scope, or amending a declared invariant below — do two things before finishing:
