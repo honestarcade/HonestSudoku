@@ -1,7 +1,12 @@
 # Honest Sudoku
 
-Flutter app (Dart). Build with `flutter pub get && flutter run`; quality gate is
-`dart analyze`, `dart format --set-exit-if-changed .`, and `flutter test`, all of which must pass.
+Flutter app (Dart). Build with `flutter pub get && flutter run`.
+
+The quality gate is **`tools/gate.sh`** — one command running the six steps CI
+runs, in order: dependencies against the lockfile, `dart analyze --fatal-infos`,
+format check, `flutter test` (which includes the invariant guards below), the
+release bundle build, and `tools/check_aab.sh` over that bundle. It must print
+`GATE PASSED` before anything is considered done.
 
 ## Project invariants
 

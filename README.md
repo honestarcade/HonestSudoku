@@ -17,13 +17,29 @@ flutter run                        # a connected Android device or emulator
 flutter build appbundle --debug    # the Android App Bundle
 ```
 
-## Test and lint
+## Quality gate
+
+One command runs everything CI runs, in the order CI runs it:
 
 ```sh
-dart analyze
-dart format --set-exit-if-changed .
-flutter test
+tools/gate.sh
 ```
+
+Six steps, stopping at the first failure: resolve dependencies against the
+lockfile, analyze (infos are fatal), check formatting, run the tests including
+the invariant guards, build the release bundle, and scan that bundle for
+Android permissions. It reports rather than rewrites — a formatting failure
+names the file and leaves it alone.
+
+CI (M1) runs this same script, so green locally and green in CI mean the same
+thing.
+
+**Signing.** With no `HS_*` variables set the release build falls back to the
+debug key, so the gate passes on a fresh clone with no secrets, and the build
+step says which key it used. With `HS_RELEASE=1` and no secrets the gate fails
+at the build step on purpose: that is how CI proves a release is really signed.
+The signing procedure and the rotation runbook are in
+`.n8/memory/android-signing.md`.
 
 ## Privacy
 

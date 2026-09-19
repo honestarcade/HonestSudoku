@@ -1,6 +1,11 @@
 # Static analysis is the always-on quality layer for this project.
-# `dart analyze` must pass with zero issues; `dart format --set-exit-if-changed .`
-# must pass as well. Any rule turned off below carries a one-line rationale.
+#
+# The gate (`tools/gate.sh`, and CI in M1) runs `dart analyze --fatal-infos`, so
+# an INFO is as blocking as an error here. That is deliberate: a severity that
+# never fails a build is a severity nobody reads.
+#
+# `dart format --output=none --set-exit-if-changed .` must pass as well. Any
+# rule turned off below carries a one-line rationale.
 include: package:flutter_lints/flutter.yaml
 
 analyzer:
@@ -9,7 +14,9 @@ analyzer:
     strict-inference: true
     strict-raw-types: true
   errors:
-    # Treat TODOs as info so they show up in reviews but never block a build.
+    # TODOs are info, and the gate makes info fatal — so a TODO is visible in
+    # review AND blocks the gate. Land the work or open an issue; do not leave
+    # a note in the source and call it tracked.
     todo: info
   exclude:
     - build/**

@@ -398,3 +398,14 @@ Ad-hoc entries (changes made outside the n8SDLC commands that deviate from plann
 
 - **Note:** the upload keystore was generated with a 40-character random password. The value was never printed, never passed as an argument, and was verified absent from both the tracked files and the working tree by searching for the literal. It exists only in `~/HonestArcadeApps/secrets/sudoku-signing-credentials.txt` (chmod 600), which the owner must move into a password manager and delete.
   **Issue:** #13
+
+- **Decision (Rule 1 — own bug, and the worst one of the run):** `tools/gate.sh` printed `GATE FAILED` and **exited 0**. CI would have read that as a pass.
+  **Why:** The runner used `if ! eval "$command"; then status=$?; …`. Inside that branch `$?` is the status of the *negation*, which is always 0, so every failing step exited cleanly. The status is captured before any test now (`status=0; eval "$command" || status=$?`). Caught only because the demo run's `rc` was read rather than its message — the message said the right thing while the exit code said the opposite, which is exactly the false success the whole capture-and-assert discipline exists for.
+  **Issue:** #17
+
+- **Decision:** `analysis_options.yaml`'s TODO comment was reworded rather than left as the scaffold had it.
+  **Why:** It said TODOs "never block a build", which stopped being true the moment the gate ran `--fatal-infos`. A comment that contradicts the build is worse than none, because it is the thing a contributor reads first.
+  **Issue:** #17
+
+- **Note:** `flutter pub get --enforce-lockfile` was verified to actually fail on a real mismatch (downgrading `flutter_lints` in the pubspec → exit 65), rather than assumed. A lockfile check that silently passes is a lockfile check nobody has.
+  **Issue:** #17
