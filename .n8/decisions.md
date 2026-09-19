@@ -409,3 +409,6 @@ Ad-hoc entries (changes made outside the n8SDLC commands that deviate from plann
 
 - **Note:** `flutter pub get --enforce-lockfile` was verified to actually fail on a real mismatch (downgrading `flutter_lints` in the pubspec → exit 65), rather than assumed. A lockfile check that silently passes is a lockfile check nobody has.
   **Issue:** #17
+
+- **Post-merge (M0):** GitHub Pages enabled by the API — the manual click was not needed. `https://honestarcade.github.io/HonestSudoku/privacy` returns 200 with the policy text, the package id and the effective date; the site root returns 200. Repository `homepage` and `description` set. `.n8/memory/pages.md` corrected from "intended method" to what actually happened.
+  **Issue:** #16

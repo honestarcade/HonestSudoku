@@ -35,10 +35,12 @@ Recorded at the same time: the repository `homepage` is set to the Pages URL
 and the `description` to "Fully offline Sudoku for Android. No ads, no
 tracking, no permissions."
 
-**Status:** this file was committed with the milestone, before the merge, and
-records the intended method. If the manual click turns out to be needed
-instead, a follow-up commit corrects this section — so if you are reading this
-sentence, check the closing comment on #16 for which actually happened.
+**Status: enabled 2026-09-19, by the API call above — no manual click was
+needed.** The response confirmed `"source":{"branch":"main","path":"/docs"}`,
+`"public":true` and `"https_enforced":true`. The first build took a few minutes;
+`/privacy` returned 404 until it finished, then 200 with the policy text, the
+package id and the effective date. The repository `homepage` and `description`
+were set in the same step.
 
 Pages builds are asynchronous: the first request after enabling can 404 for a
 minute or two. Poll up to five minutes before concluding anything is wrong.
