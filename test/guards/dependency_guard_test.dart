@@ -56,6 +56,88 @@ void main() {
       }
     });
 
+    // #94. Verification probed the blocklist and found fifteen ads, analytics
+    // and network packages walking through it, including `webview_flutter`,
+    // which embeds a whole browser. The originals matched #15's acceptance
+    // criteria exactly, so this list is what was specified rather than what
+    // was needed.
+    //
+    // The allow list below matters at least as much. A broad glob like
+    // `*webview*` or `googleapis*` is how a blocklist starts refusing ordinary
+    // packages, and a guard that cries wolf gets deleted. Both halves are
+    // asserted, always together.
+    test('the named ads, analytics and network packages are refused', () {
+      const mustBlock = [
+        'webview_flutter',
+        'flutter_inappwebview',
+        'googleapis',
+        'googleapis_auth',
+        'supabase_flutter',
+        'socket_io_client',
+        'graphql_flutter',
+        'http2',
+        'cronet_http',
+        'facebook_app_events',
+        'admob_flutter',
+        'adjust_sdk',
+        'yandex_mobileads',
+        'retrofit',
+        'chopper',
+        'flutter_branch_sdk',
+        'appmetrica_plugin',
+        'sentry_dio',
+        // The ones that were already covered, kept so a future edit that
+        // narrows a glob cannot quietly drop them.
+        'firebase_analytics',
+        'google_mobile_ads',
+        'http',
+        'dio',
+        'sentry_flutter',
+      ];
+      final open = mustBlock.where((n) => policy.matches(n) == null).toList();
+      expect(
+        open,
+        isEmpty,
+        reason: describeOffenders(
+          'blocklist-coverage',
+          open.map((n) => '$n is not blocked — invariant 1').toList(),
+        ),
+      );
+    });
+
+    test('the blocklist does not refuse ordinary packages', () {
+      const mustAllow = [
+        'path_provider',
+        'shared_preferences',
+        'shared_preferences_android',
+        'collection',
+        'intl',
+        'meta',
+        'vector_math',
+        'characters',
+        'material_color_utilities',
+        'async',
+        'clock',
+        'fake_async',
+        'flutter_lints',
+        // Plausible future additions this app may actually want.
+        'audioplayers',
+        'just_audio',
+        'flutter_svg',
+        'share_plus',
+      ];
+      final refused = <String>[];
+      for (final name in mustAllow) {
+        final reason = policy.matches(name);
+        if (reason != null) refused.add('$name refused by "$reason"');
+      }
+      expect(
+        refused,
+        isEmpty,
+        reason: describeOffenders('blocklist-overshoot', refused),
+      );
+    });
+
     test('exempting from justification never exempts from the blocklist', () {
       // A name on both lists must still be refused. Nothing is today; this
       // asserts the relationship rather than the current data.
