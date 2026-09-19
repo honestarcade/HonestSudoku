@@ -31,8 +31,19 @@ the invariant guards, build the release bundle, and scan that bundle for
 Android permissions. It reports rather than rewrites — a formatting failure
 names the file and leaves it alone.
 
-CI (M1) runs this same script, so green locally and green in CI mean the same
-thing.
+The **CI** workflow (`.github/workflows/ci.yml`, job `gate`) runs this same
+script on every pull request, so green locally and green in CI mean the same
+thing. `main` will not accept a merge until `CI / gate` passes. The invariant
+guards also run as their own named step before the full gate, so a breached
+invariant is the first red line in the checks rather than something to find
+inside a long log.
+
+**The Flutter version.** `.fvmrc` holds the exact version CI uses, and
+`pubspec.yaml` declares the minimum the code needs. To move to a newer Flutter,
+bump `.fvmrc` and, if the code now needs it, raise the `flutter:` range under
+`environment:` — a guard fails if the pin drops below the range. Running the
+gate on a different local version prints one note on stderr and carries on;
+CI always uses the pin.
 
 **Signing.** With no `HS_*` variables set the release build falls back to the
 debug key, so the gate passes on a fresh clone with no secrets, and the build

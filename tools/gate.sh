@@ -113,6 +113,30 @@ if [ "${1:-}" = "--signing-mode" ]; then
   exit 0
 fi
 
+# Say when the local Flutter is not the one CI pins.
+#
+# A warning, never a failure: a contributor on a nearby version should be able
+# to run the gate, and the only thing that matters is that they know CI will
+# use a different one. `.fvmrc` is the single pin `subosito/flutter-action`
+# reads, so this compares against the same file rather than a second copy.
+#
+# Parsed with sed rather than jq, which stock macOS does not have. Either read
+# failing is silence, not noise — this is a courtesy line, and a courtesy that
+# errors is worse than none.
+flutter_pin_warning() {
+  local pin local_version
+  [ -r .fvmrc ] || return 0
+  pin="$(sed -n 's/.*"flutter"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' .fvmrc | head -1)"
+  [ -n "$pin" ] || return 0
+  local_version="$(flutter --version --machine 2>/dev/null |
+    sed -n 's/.*"frameworkVersion"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+  [ -n "$local_version" ] || return 0
+  if [ "$local_version" != "$pin" ]; then
+    echo "note: flutter $local_version differs from .fvmrc pin $pin; CI uses the pin" >&2
+  fi
+}
+flutter_pin_warning
+
 # The path GATE PASSED names must hold THIS run's artefact or nothing, and it
 # must do so for the whole run — the removal used to sit at step 5, by which
 # time step 4 had already read whatever was there (#108).

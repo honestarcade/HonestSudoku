@@ -54,3 +54,6 @@ app.*.map.json
 *.p12
 key.properties
 *credentials*.txt
+
+# FVM, if a contributor uses it; the pin itself is .fvmrc and is tracked.
+.fvm/
