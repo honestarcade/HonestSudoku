@@ -15,7 +15,9 @@
 #         2  package id missing or wrong
 #         3  file unreadable, not an .aab, or no manifest entry in the zip
 #
-# Needs only unzip, tr, grep and sort. Written for bash 3.2 (macOS default).
+# Needs unzip, tr, grep, sort and awk. Written for bash 3.2 (macOS default).
+# (awk arrived with the element decoder in #80 and the list was not updated
+# until #105 — the same stale-header defect #87 was partly filed for.)
 set -euo pipefail
 export LC_ALL=C
 
@@ -89,6 +91,8 @@ FOUND_PERMS="$(printf '%s\n' "$STRINGS" | grep -o 'android\.permission\.[A-Z_]*'
 OFFENDERS=""
 ALLOWED_SEEN=""
 SELF_PERM_SEEN=""
+DECLARE_SEEN=""
+REQUEST_SEEN=""
 while IFS= read -r perm; do
   [ -z "$perm" ] && continue
   if [ "$perm" = "$ALLOWED_RESTRICTION" ]; then
@@ -162,6 +166,13 @@ PERM_ENTRIES="$(printf '%s\n' "$STRINGS" | awk '
   /^uses-permission(-sdk-23)?([^A-Za-z0-9_-]|$)/ {
     flush(); kind = "REQUEST"; inel = 1; window = 0; want = ""; name = ""; level = ""; next
   }
+  # The two element-start patterns are deliberately NOT the same shape, and
+  # widening this one to match the request pattern is a mistake that was made
+  # and caught: `permission` is also an ATTRIBUTE name — `android:permission`
+  # on a receiver — and its run is bare, so the wider pattern read the DUMP
+  # access restriction as a declared permission and failed the real bundle.
+  # `uses-permission` never appears as an attribute name, which is why it can
+  # afford the looser match (#103).
   /^permission(-group|-tree)?["*]/ {
     flush(); kind = "DECLARE"; inel = 1; window = 0; want = ""; name = ""; level = ""; next
   }
@@ -209,6 +220,11 @@ while IFS="$(printf '\t')" read -r kind rawname rawlevel; do
       continue
     fi
     SELF_PERM_SEEN="$ALLOWED_SELF_PERMISSION"
+    if [ "$kind" = "DECLARE" ]; then
+      DECLARE_SEEN=1
+    else
+      REQUEST_SEEN=1
+    fi
     continue
   fi
   if [ "$value" = "<undecoded>" ]; then
@@ -251,12 +267,28 @@ EOF
 # loudly and wrongly. That is the intended direction: a human looks, confirms
 # the encoding, and edits this check. Silence would be the other kind of wrong.
 if printf '%s\n' "$STRINGS" | grep -qF 'flutterEmbedding'; then
-  if [ -z "${SELF_PERM_SEEN:-}" ] && [ -z "$OFFENDERS" ]; then
-    echo "check_aab: this is a Flutter bundle but the scan found no permission element at all." >&2
-    echo "  Every Flutter build declares and requests" >&2
-    echo "  ${PACKAGE}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION via androidx.core." >&2
-    echo "  Finding none means this decoder has gone inert, not that the bundle is clean (#80)." >&2
-    exit 1
+  # BOTH halves, not either. The first version of this check used one flag set
+  # by either matcher, so it only fired when both went blind at once — and a
+  # recurrence of #87 alone (declarations invisible) or of #80 alone (requests
+  # invisible) passed the gate silently. Those are the two bugs it exists to
+  # catch (#103).
+  if [ -z "$OFFENDERS" ]; then
+    MISSING=""
+    [ -z "${DECLARE_SEEN:-}" ] && MISSING="the <permission> declaration"
+    if [ -z "${REQUEST_SEEN:-}" ]; then
+      if [ -n "$MISSING" ]; then
+        MISSING="$MISSING and the <uses-permission> request"
+      else
+        MISSING="the <uses-permission> request"
+      fi
+    fi
+    if [ -n "$MISSING" ]; then
+      echo "check_aab: this is a Flutter bundle but the scan did not find $MISSING" >&2
+      echo "  of ${PACKAGE}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION, which androidx.core" >&2
+      echo "  puts in every build as both. Finding it missing means this decoder has gone" >&2
+      echo "  inert for that half, not that the bundle is clean (#80, #87, #103)." >&2
+      exit 1
+    fi
   fi
 fi
 

@@ -72,6 +72,23 @@ String _stripYamlCommentFromLine(String line) {
   return line;
 }
 
+/// Every file under [relativeDir] that exists on disk, tracked or not.
+///
+/// Use this where the rule is about what a build would *see*, rather than
+/// about what the repository holds. `git ls-files` is blind to an untracked
+/// file, so a locally created manifest could carry a removal rule the guard
+/// never read (#105).
+List<String> filesUnder(String relativeDir) {
+  final dir = Directory('${repoRoot.path}/$relativeDir');
+  if (!dir.existsSync()) return const [];
+  return dir
+      .listSync(recursive: true)
+      .whereType<File>()
+      .map((f) => f.path.substring(repoRoot.path.length + 1))
+      .toList()
+    ..sort();
+}
+
 /// Every tracked file under [relativeDir], via git, so untracked build output
 /// (`.gradle/`, `local.properties`, wrapper jars) is skipped by construction
 /// rather than by an exclusion list that would rot.

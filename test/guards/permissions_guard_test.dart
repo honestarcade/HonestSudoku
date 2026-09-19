@@ -13,6 +13,8 @@ library;
 //
 // What this does NOT cover: Gradle's merged manifest under build/, which only
 // exists after a build. tools/check_aab.sh scans the built bundle for that.
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 
 import 'repo_files.dart';
@@ -79,7 +81,12 @@ void main() {
 
   test('no manifest strips a permission at build time', () {
     final offenders = <String>[];
-    for (final path in trackedFilesUnder('android/app/src')) {
+    // Filesystem, not `git ls-files`. The rule is about what a build would
+    // see, and an untracked manifest carrying a removal rule was invisible to
+    // it (#105) — while the sibling test above, which reads its path
+    // directly, did fire. Two tests over the same file disagreeing about
+    // whether it exists is how a gap hides.
+    for (final path in filesUnder('android/app/src')) {
       if (!path.endsWith('AndroidManifest.xml')) continue;
       final body = stripXmlComments(readFile(path));
       if (RegExp(r'''tools:node\s*=\s*["']remove["']''').hasMatch(body)) {
@@ -133,6 +140,35 @@ void main() {
       );
     });
   }
+
+  test('the file walk sees untracked files, which git ls-files does not', () {
+    // #105. `no-removal-rules` enumerated with `git ls-files`, so an untracked
+    // manifest carrying tools:node="remove" was invisible to it — while the
+    // sibling test above, which reads its path directly, did fire. Two tests
+    // over the same file disagreeing about whether it exists is how a gap
+    // hides.
+    final dir = Directory('${repoRoot.path}/build/zz_walk_probe')
+      ..createSync(recursive: true);
+    try {
+      File('${dir.path}/AndroidManifest.xml').writeAsStringSync('<manifest/>');
+      expect(
+        filesUnder('build/zz_walk_probe'),
+        contains('build/zz_walk_probe/AndroidManifest.xml'),
+        reason:
+            'file-walk: an untracked file must be visible to a rule about '
+            'what a build would see',
+      );
+      expect(
+        trackedFilesUnder('build/zz_walk_probe'),
+        isEmpty,
+        reason:
+            'file-walk: the git walk is the one that cannot see it — kept '
+            'so the difference between the two helpers stays documented',
+      );
+    } finally {
+      dir.deleteSync(recursive: true);
+    }
+  });
 
   test('uses-feature is allowed everywhere', () {
     // A negative control for the element regex: uses-feature must never be
