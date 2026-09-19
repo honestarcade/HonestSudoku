@@ -526,3 +526,33 @@ Scoped to the thirteen bugs the third `/n8-verify M0` filed against `a6494a7` (#
 
 - **Note (a bug reproduced while fixing a bug):** `verify_upload_cert.sh`'s first keytool probe was `cmd | grep -q`, and with `set -o pipefail` the stub's non-zero exit made the pipeline false even when grep matched — so the check never fired and the macOS stub was used as though it worked. Identical in shape to the SIGPIPE race fixed in `check_aab.sh` during the first pass. Captured first now.
   **Issue:** #108
+
+## /n8-exec M1 — 2026-09-19
+
+CI and the tag-to-Play pipeline, on `milestone/m1-ci`. Three stories implemented in full; #19 blocked on the owner, and #20/#21's live verification blocked behind it.
+
+- **Decision:** proceeded with M1 despite two open `sev:high` defects in `tools/gate.sh`, which CI now runs.
+  **Why:** #121 (no `GATE FAILED` label when the build step fails) and #120 (the signing cross-check can pass with a false header) were checked against M1's criteria before starting. Neither invalidates them: the gate's exit code still propagates, so CI goes red and the merge block works, and the signing path is not exercised on a pull request because no `HS_*` secrets are present. The cost is log legibility when a CI build fails, which is worth saying once so the first red run is not mistaken for something new. Stopping M1 to fix them first would have delayed the one thing four rounds of local verification could not provide — running all of this somewhere other than this machine.
+  **Issue:** #18
+
+- **Decision (deviation from a stated acceptance criterion):** `tools/set_ci_secrets.sh` **parses** the signing credentials file rather than sourcing it, which is what #19's criteria say.
+  **Why:** that file executes arbitrary code when sourced (#119, open, `sev:critical`) and records a value that does not open the keystore. Writing new code whose documented happy path is `source` would add a second caller to a known code-execution defect while it is open. Parsing costs three lines, is strictly safer, and keeps working whichever way the quoting is eventually fixed. Flagged on the issue before the code was written, and proven: a credentials file containing a command substitution leaves no trace when parsed.
+  **Issue:** #19, deviates from its third criterion
+
+- **Decision:** the two pin greps were run in the form the plugin's Actions lessons actually specify, not the shortened form #18's criterion quotes.
+  **Why:** the lessons' greps exempt `./` and `docker://`; the quoted short form does not, and it flags `uses: ./.github/workflows/ci.yml` — which #20's criteria *require*, because the release workflow must call the gate rather than restate it. The two criteria would otherwise contradict each other. Both real greps print nothing.
+  **Issue:** #18, #20
+
+- **Decision:** every action version and every input name was resolved by lookup at authoring time.
+  **Why:** the plan resolved them on 2026-09-18 and I resolved them again today rather than trusting the note. All six matched. Two input names did not come free: `subosito/flutter-action` publishes `action.yaml`, not `action.yml`, so the first manifest read 404'd and a recalled input name would have gone in unchecked.
+  **Issue:** #18
+
+- **Decision:** the ruleset was updated before the milestone PR was opened, so this PR is the first one gated by its own work.
+  **Why:** #18's discretion asks for it, and it is the only way the criterion "a PR cannot merge until that check passes" gets tested by the change that introduces it rather than by the next one. Verified by re-reading the ruleset from the server.
+  **Issue:** #18
+
+- **Note:** `tools/set_ci_secrets.sh` was written but deliberately **not run**. Running it is the moment the owner's real keystore password moves into a repository secret, and that belongs in a session where the owner can see it happen. It needs no credential of theirs, only their say-so.
+  **Issue:** #19
+
+- **Blocker:** #19 needs three owner acts — the Play Console app entry, a `gcloud auth login` on this machine, and the Console permission invite for the service account. The automation for all three is written; the credential is not mine to supply. #20 and #21 are implemented and tested for everything that does not need a credential, and their live verification waits on this.
+  **Issue:** #19, blocking the live halves of #20 and #21
