@@ -34,18 +34,52 @@ COMMANDS=(
 
 BUNDLE="build/app/outputs/bundle/release/app-release.aab"
 
+SIGNING_VARS=(HS_KEYSTORE_PATH HS_KEYSTORE_PASS HS_KEY_ALIAS HS_KEY_PASS)
+
 # Say which key the bundle will be signed with, so a passing gate never leaves
 # the reader guessing whether the artefact is real.
+#
+# Four states, not three. A PARTLY set environment used to fall through to the
+# last branch and print "no HS_* variables set", which was false twice over:
+# variables were set, and build.gradle.kts treats any partial set as a hard
+# GradleException in every mode. So a contributor who typed HS_KEY_PASSS was
+# told they were on the debug fallback one line before the build stopped with
+# "HS_KEY_PASS is not set" (#82). The message was wrong exactly where a correct
+# one saves the most time — which is why this one names the missing variable.
 signing_mode() {
-  if [ "${HS_RELEASE:-}" = "1" ]; then
-    echo "HS_RELEASE=1 — a missing secret is a hard failure"
-  elif [ -n "${HS_KEYSTORE_PATH:-}" ] && [ -n "${HS_KEYSTORE_PASS:-}" ] \
-    && [ -n "${HS_KEY_ALIAS:-}" ] && [ -n "${HS_KEY_PASS:-}" ]; then
-    echo "HS_* set — signing with the upload key"
+  local set_count=0
+  local missing=""
+  local name
+  for name in "${SIGNING_VARS[@]}"; do
+    if [ -n "${!name:-}" ]; then
+      set_count=$((set_count + 1))
+    elif [ -z "$missing" ]; then
+      missing="$name"
+    fi
+  done
+
+  if [ "$set_count" -eq "${#SIGNING_VARS[@]}" ]; then
+    if [ "${HS_RELEASE:-}" = "1" ]; then
+      echo "HS_* set, HS_RELEASE=1 — signing with the upload key"
+    else
+      echo "HS_* set — signing with the upload key"
+    fi
+  elif [ "$set_count" -gt 0 ]; then
+    echo "partial — $missing is empty, Gradle will refuse this build"
+  elif [ "${HS_RELEASE:-}" = "1" ]; then
+    echo "HS_RELEASE=1 with no HS_* variables — Gradle will refuse this build"
   else
     echo "debug fallback — no HS_* variables set"
   fi
 }
+
+# Report the mode and stop. The gate's own branches are only assertable if
+# something can ask for them without running a six-minute build; leaving them
+# unaskable is how the wrong message shipped.
+if [ "${1:-}" = "--signing-mode" ]; then
+  signing_mode
+  exit 0
+fi
 
 total=${#LABELS[@]}
 i=0
