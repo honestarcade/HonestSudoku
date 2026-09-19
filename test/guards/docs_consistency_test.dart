@@ -76,6 +76,15 @@ void main() {
       );
     });
 
+    test('the site config names the app', () {
+      final offenders = siteConfigOffenders(readFile('docs/_config.yml'));
+      expect(
+        offenders,
+        isEmpty,
+        reason: describeOffenders('site-config', offenders),
+      );
+    });
+
     test('the licence is MIT and names Honest Arcade', () {
       final offenders = licenceOffenders(readFile('LICENSE'));
       expect(
@@ -100,6 +109,136 @@ void main() {
   // above cannot distinguish a working guard from a guard that returns an
   // empty list unconditionally.
   group('each rule fires', () {
+    // #89. Everything below was mutated to its opposite during verification
+    // with the suite staying green. The published policy is a public
+    // statement; these are the sentences that could become false silently.
+
+    test('a deleted permalink is caught', () {
+      // The single line the published URL rests on. Remove it and `/privacy`
+      // 404s, taking the README link and M7's Play Console URL with it.
+      final broken = policy.replaceAll(
+        RegExp(r'^permalink: /privacy\n', multiLine: true),
+        '',
+      );
+      expect(
+        policyOffenders(broken, applicationId).join('\n'),
+        contains('permalink'),
+      );
+    });
+
+    for (final claim in const {
+      'only on your device': 'uploaded to our servers for backup',
+      'no ads and contains no purchases':
+          'shows banner ads and contains in-app purchases',
+      // Without the leading "no": the policy hard-wraps after it, so the
+      // rule's own claim key is not contiguous in the file. The rule reads
+      // normalised prose and is right to; the fixture has to mutate text that
+      // actually exists. The integrity check below is what caught this.
+      'advertising, analytics, attribution or crash-reporting SDKs':
+          'the usual advertising and analytics SDKs',
+      'published by Honest Arcade': 'published by someone else',
+    }.entries) {
+      test('a policy that stops claiming "${claim.key}" is caught', () {
+        final broken = policy.replaceAll(claim.key, claim.value);
+        expect(
+          broken,
+          isNot(policy),
+          reason:
+              'fixture-integrity: the mutation changed nothing, so this test '
+              'would prove nothing — the policy no longer contains '
+              '"${claim.key}"',
+        );
+        expect(
+          policyOffenders(broken, applicationId).join('\n'),
+          contains('no longer states'),
+        );
+      });
+    }
+
+    test('a site root that keeps the word but drops the link is caught', () {
+      // The rule used to match the word "privacy" anywhere, so a sentence
+      // announcing the page had been taken down satisfied it. It failed open
+      // on the exact regression it exists to prevent.
+      const broken =
+          '# Honest Sudoku\n\nThe privacy page has been taken '
+          'down.\n';
+      expect(siteIndexOffenders(broken), isNotEmpty);
+      // And the real link shape still passes, in each spelling Jekyll accepts.
+      for (final good in const [
+        '- [Privacy policy](privacy)',
+        '- [Privacy policy](/privacy)',
+        '- [Privacy policy](privacy.html)',
+      ]) {
+        expect(
+          siteIndexOffenders(good),
+          isEmpty,
+          reason: 'site-index-negative: refused a real link: $good',
+        );
+      }
+    });
+
+    test('an MIT header over a non-MIT body is caught', () {
+      const broken =
+          'MIT License\n\n'
+          'Copyright (c) 2026 Honest Arcade\n\n'
+          'Commercial use is prohibited. All rights reserved.\n';
+      final offenders = licenceOffenders(broken).join('\n');
+      expect(
+        offenders,
+        contains('MIT body'),
+        reason:
+            'licence-body: two substrings made a GPL body pass as MIT, which '
+            'is what the licence says about itself rather than what it grants',
+      );
+    });
+
+    test('a missing copyright line is caught', () {
+      final broken = readFile('LICENSE').replaceAll(
+        RegExp(r'Copyright \(c\) \d{4} Honest Arcade'),
+        'Honest Arcade',
+      );
+      expect(licenceOffenders(broken).join('\n'), contains('Copyright'));
+    });
+
+    test('a site config naming another app is caught', () {
+      expect(
+        siteConfigOffenders('title: Frog Across\n').join('\n'),
+        contains('_config.yml'),
+      );
+      expect(siteConfigOffenders('theme: minima\n'), isNotEmpty);
+    });
+
+    for (final spelling in const [
+      'flutter run -dchrome',
+      'flutter run --device-id chrome',
+      'flutter run -d  chrome',
+    ]) {
+      test('`$spelling` is caught', () {
+        // Tested against the rule directly, not through a README mutation.
+        // Several fixtures in this group derive their broken text from the
+        // real file, so a no-op replaceAll makes them fail with `Actual: ''` —
+        // fail-safe, but a red run there is not proof the rule fired.
+        expect(
+          readmeOffenders('# X\n\n```sh\n$spelling\n```\n').join('\n'),
+          contains('chrome'),
+        );
+      });
+    }
+
+    test('the chrome rule leaves innocent text alone', () {
+      expect(
+        readmeOffenders(readme),
+        isEmpty,
+        reason:
+            'chrome-negative: the widened pattern started matching the real '
+            'README, which has no web example',
+      );
+      expect(
+        readmeOffenders('$readme\n\nTested on chrome-plated hardware.\n'),
+        isEmpty,
+      );
+    });
+
     test('a wrong package id in the policy is caught', () {
       final broken = policy.replaceAll(
         '`$applicationId`',
