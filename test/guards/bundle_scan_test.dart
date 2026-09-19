@@ -279,6 +279,69 @@ void main() {
     expect(scan.stderr, contains('unreadable name'));
   });
 
+  // #87. The scan decoded requests correctly and ignored declarations
+  // entirely, so a library `<permission>` — which is exactly how the
+  // androidx.core one arrives — scanned clean. The repository's own manifest
+  // guard bans all five permission elements; the bundle scan is the only place
+  // a merged manifest can be seen, so it has to ban them too.
+  for (final element in const [
+    'permission',
+    'permission-group',
+    'permission-tree',
+  ]) {
+    test('a <$element> declaration is caught', () {
+      final m = _realisticBase()
+        ..element(element)
+        ..attribute('name', 'com.evil.NEW_CUSTOM_PERMISSION')
+        ..attribute('protectionLevel', 'dangerous');
+      final scan = _scan(_bundle(tmp, 'declare-$element', m.bytes));
+      expect(
+        scan.exitCode,
+        1,
+        reason:
+            'declare-$element: declaring a permission is not requesting one, '
+            'but invariant 1 says the release build declares none.\n'
+            '${scan.output}',
+      );
+      expect(scan.stderr, contains('com.evil.NEW_CUSTOM_PERMISSION'));
+      expect(scan.stderr, contains('declared'));
+    });
+  }
+
+  test('the allowlisted declaration is refused at the wrong level', () {
+    // The allowlist is for a signature-level permission only its own signer
+    // can hold. At any other protection level it is a permission other apps
+    // can actually be granted — a different thing wearing the same name.
+    final m = _Manifest()..packageId(_package);
+    m
+      ..element('permission')
+      ..attribute('name', _selfPermission)
+      ..attribute('protectionLevel', 'dangerous');
+    final scan = _scan(_bundle(tmp, 'wrong-level', m.bytes));
+    expect(
+      scan.exitCode,
+      1,
+      reason:
+          'allowlist-level: the name alone must not buy a pass.\n${scan.output}',
+    );
+    expect(scan.stderr, contains('not signature'));
+  });
+
+  test('a declaration with no readable name still fails', () {
+    final m = _Manifest()..packageId(_package);
+    m
+      ..element('permission')
+      ..attribute('protectionLevel', 'dangerous');
+    final scan = _scan(_bundle(tmp, 'declare-undecodable', m.bytes));
+    expect(
+      scan.exitCode,
+      1,
+      reason:
+          'declare-fail-closed: a permission nobody can name is still a '
+          'permission.\n${scan.output}',
+    );
+  });
+
   test('a wrong package id fails with its own exit code', () {
     final m = _Manifest()..packageId('com.honestarcade.sudoku.honest_sudoku');
     final scan = _scan(_bundle(tmp, 'wrong-package', m.bytes));
@@ -330,18 +393,56 @@ void main() {
     }, reason: 'determinism: eight scans of one bundle returned $codes');
   });
 
-  test('the real release bundle, when built, matches the modelled shape', () {
+  test('the real release bundle matches the modelled shape', () {
+    // This is the only thing tying the twelve fixtures above to reality. They
+    // model the protobuf encoding rather than being real aapt2 output, so if
+    // aapt2 ever changes how it encodes a manifest they all keep passing while
+    // testing a fiction.
+    //
+    // It used to run only when a bundle happened to be on disk, and print a
+    // notice otherwise. tools/gate.sh runs the tests at step 4 and builds the
+    // bundle at step 5, so on every clean checkout — every CI run, every fresh
+    // clone — it printed and asserted nothing while counting as a passing test
+    // (#92). The comment that said "tools/gate.sh builds the bundle before
+    // scanning it" was true of the scan and false of this test, and that is
+    // how the gap survived review.
+    //
+    // So it builds what it needs. Only when the bundle is absent, so a local
+    // re-run stays fast.
     const built = 'build/app/outputs/bundle/release/app-release.aab';
     if (!pathExists(built)) {
-      // Printed, not skipped: a skipped test reads as a passing one, and this
-      // file's fixtures are a model until something checks them against the
-      // genuine article. tools/gate.sh builds the bundle before scanning it.
       // ignore: avoid_print
-      print(
-        'real-bundle-shape: $built is absent — run tools/gate.sh (or '
-        '`flutter build appbundle --release`) to exercise this check.',
-      );
-      return;
+      print('real-bundle-shape: no bundle on disk — building one.');
+      late ProcessResult build;
+      try {
+        build = Process.runSync(
+          'flutter',
+          ['build', 'appbundle', '--release', '--no-pub'],
+          workingDirectory: repoRoot.path,
+          stdoutEncoding: utf8,
+          stderrEncoding: utf8,
+        );
+      } on ProcessException catch (e) {
+        // The one honest reason to skip: no toolchain to build with. Printed
+        // rather than skipped, because a skipped test reads as a passing one —
+        // and the message now says the build failed, not that a file was
+        // missing, which is the difference that makes the gap visible.
+        // ignore: avoid_print
+        print(
+          'real-bundle-shape: cannot build — `flutter` is not on PATH ($e). '
+          'This check needs the Android toolchain.',
+        );
+        return;
+      }
+      if (!pathExists(built)) {
+        // ignore: avoid_print
+        print(
+          'real-bundle-shape: the release build did not produce a bundle, so '
+          'the fixtures could not be checked against a real one.\n'
+          '${build.stdout}${build.stderr}',
+        );
+        return;
+      }
     }
 
     final scan = _scan(built);
