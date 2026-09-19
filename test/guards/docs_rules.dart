@@ -53,6 +53,34 @@ List<String> configIdOffenders(String configYaml, String applicationId) {
   return const [];
 }
 
+/// Lowercased, comma-stripped, whitespace-collapsed.
+///
+/// The policy is hard-wrapped prose that a non-engineer may edit. Matching raw
+/// substrings meant one Oxford comma turned the suite red with a message
+/// saying the policy "no longer states" something it plainly still stated
+/// (#102). Normalising the punctuation that carries no meaning removes the
+/// silliest of those false alarms.
+String proseOf(String text) => text
+    .toLowerCase()
+    // Markdown emphasis and code ticks carry no meaning for these claims, and
+    // the policy bolds half of them.
+    .replaceAll(RegExp(r'[*`]'), '')
+    .replaceAll(',', '')
+    .replaceAll(RegExp(r'\s+'), ' ');
+
+/// A sentence this guard pins, with the reason it is pinned.
+///
+/// The wording IS the thing being protected — these sentences are what a Play
+/// reviewer reads and what the data-safety form quotes — so the check is a
+/// literal one on purpose. What changed is the message: "no longer states"
+/// reads as an accusation when someone has merely reworded, and the fastest
+/// way past an accusation is to delete the check.
+class PinnedClaim {
+  const PinnedClaim(this.text, this.about);
+  final String text;
+  final String about;
+}
+
 /// The published policy must name the right package, carry a date, keep its
 /// contact address, and keep claiming what the build actually does.
 ///
@@ -66,7 +94,7 @@ List<String> policyOffenders(String policy, String applicationId) {
   // "requests no permissions at all" really is split across two lines in the
   // file and a literal match on it finds nothing. A rule that silently misses
   // the sentence it exists to protect is the failure this whole file is about.
-  final prose = policy.replaceAll(RegExp(r'\s+'), ' ');
+  final prose = proseOf(policy);
   if (!policy.contains('`$applicationId`')) {
     offenders.add(
       'docs/privacy.md: does not name `$applicationId` in backticks — the '
@@ -96,34 +124,57 @@ List<String> policyOffenders(String policy, String applicationId) {
   // Play Console — and nothing noticed (#89). Liveness is deliberately out of
   // this guard's scope, but the permalink is a file fact, not a network one.
   if (!RegExp(
-    r'^permalink:\s*/privacy\s*$',
+    r'''^permalink:\s*["']?/privacy["']?\s*$''',
     multiLine: true,
   ).hasMatch(policy)) {
     offenders.add(
       'docs/privacy.md: no `permalink: /privacy` in the front matter — the '
-      'published policy URL depends on it',
+      'published policy URL depends on it. Quoted forms are fine; a trailing '
+      'slash is not, because it changes the published URL.',
     );
   }
 
   // The substantive claims. These are public statements a player or a Play
   // reviewer reads, and each was mutated to its opposite with the suite
-  // staying green. The dependency blocklist guards the CODE behind two of
+  // staying green. The dependency blocklist guards the CODE behind some of
   // them; nothing guarded the SENTENCE, so the policy could be edited to say
-  // the opposite of a true thing while the code stayed clean (#89).
-  const claims = {
-    'only on your device':
-        'that player data never leaves the device — the Play data-safety claim',
-    'no ads and contains no purchases':
-        'that the app shows no ads and contains no purchases',
-    'no advertising, analytics, attribution or crash-reporting SDKs':
-        'that the app contains no advertising or analytics SDKs',
-    'published by Honest Arcade': 'who publishes the app',
-  };
-  for (final claim in claims.entries) {
-    if (!prose.contains(claim.key)) {
+  // the opposite of a true thing while the code stayed clean (#89, #104).
+  const claims = [
+    PinnedClaim('collects no data. none.', 'that the app collects nothing'),
+    PinnedClaim(
+      'only on your device',
+      'that player data never leaves the '
+          'device — the claim Play\'s data-safety form quotes',
+    ),
+    PinnedClaim(
+      'no ads and contains no purchases',
+      'that the app shows no ads and contains no purchases',
+    ),
+    PinnedClaim(
+      'no advertising analytics attribution or crash-reporting sdks',
+      'that the app contains no advertising or analytics SDKs',
+    ),
+    PinnedClaim('published by honest arcade', 'who publishes the app'),
+    PinnedClaim(
+      'no data is collected from children',
+      "children's privacy, which #16's AC1 requires",
+    ),
+    PinnedClaim(
+      'nothing for you to request a copy of or ask us to delete',
+      'that there is nothing to request or delete',
+    ),
+    PinnedClaim(
+      'uninstalling the app deletes them',
+      'that uninstalling removes the stored data',
+    ),
+  ];
+  for (final claim in claims) {
+    if (!prose.contains(claim.text)) {
       offenders.add(
-        'docs/privacy.md: no longer states ${claim.value} '
-        '(looked for "${claim.key}")',
+        'docs/privacy.md: the pinned sentence about ${claim.about} is not '
+        'there. Looked for "${claim.text}". If you reworded it deliberately, '
+        'update test/guards/docs_rules.dart in the same commit — this text is '
+        'published and some of it is quoted in the Play listing.',
       );
     }
   }
@@ -135,23 +186,85 @@ List<String> policyOffenders(String policy, String applicationId) {
 /// #16's AC2 requires it and nothing read it: mutating it to another app's
 /// name left the suite green (#89).
 List<String> siteConfigOffenders(String configYaml) =>
-    RegExp(r'^title:\s*Honest Sudoku\s*$', multiLine: true).hasMatch(configYaml)
+    RegExp(
+      r'''^title:\s*["']?Honest Sudoku["']?\s*(#.*)?$''',
+      multiLine: true,
+    ).hasMatch(configYaml)
     ? const []
     : const ['docs/_config.yml: `title: Honest Sudoku` is missing or changed'];
 
 /// The site root must link the policy, or the published policy is unreachable.
 ///
-/// Matched as a markdown link whose destination is the policy, not as the word
-/// "privacy" anywhere in the file. The word test was satisfied by a sentence
-/// reading "The privacy page has been taken down." — it failed open on the
-/// exact regression it exists to prevent (#89).
-List<String> siteIndexOffenders(String indexMd) =>
-    RegExp(r'\]\(\s*/?privacy(\.html|\.md)?\s*\)').hasMatch(indexMd)
-    ? const []
-    : const [
-        'docs/index.md: no markdown link pointing at the privacy policy — '
-            'the site root is how a reviewer reaches it',
-      ];
+/// Wrong in both directions before (#101). It refused every idiomatic Jekyll
+/// spelling — `{{ site.baseurl }}/privacy`, `relative_url`, an absolute URL, a
+/// title attribute, a reference link, an HTML anchor — and it ACCEPTED
+/// `](/privacy)`, which on a project page resolves to
+/// `honestarcade.github.io/privacy` and returns 404. A negative fixture
+/// asserted that broken spelling must pass, calling it "a real link".
+///
+/// So this resolves the destination rather than matching the href text:
+/// Liquid wrappers are unwrapped, an absolute URL is reduced to its path, and
+/// the root-absolute form is refused by name, with the reason.
+List<String> siteIndexOffenders(String indexMd) {
+  final destinations = <String>[];
+  // [text](dest) and [text](dest "title"). The destination may contain spaces
+  // when it is a Liquid expression, so this matches to the closing paren and
+  // strips a trailing title rather than forbidding whitespace.
+  for (final m in RegExp(r'\]\(([^)]*)\)').allMatches(indexMd)) {
+    destinations.add(m.group(1)!.replaceAll(RegExp(r'\s+"[^"]*"$'), ''));
+  }
+  // [ref]: dest
+  for (final m in RegExp(
+    r'^\s*\[[^\]]+\]:\s*(\S+)',
+    multiLine: true,
+  ).allMatches(indexMd)) {
+    destinations.add(m.group(1)!);
+  }
+  // <a href="dest">
+  for (final m in RegExp(
+    '<a[^>]+href=["\']([^"\']+)["\']',
+  ).allMatches(indexMd)) {
+    destinations.add(m.group(1)!);
+  }
+
+  var rootAbsolute = false;
+  for (final raw in destinations) {
+    var dest = raw.trim();
+    // A Liquid wrapper means the author asked Jekyll to prepend the project
+    // prefix, so what is left is site-relative and correct — the opposite of
+    // a bare `/privacy`, which is not.
+    final viaBaseurl =
+        dest.contains('site.baseurl') || dest.contains('relative_url');
+    dest = dest.replaceAll(RegExp(r'\{\{\s*site\.baseurl\s*\}\}'), '');
+    final liquid = RegExp(r'''\{\{\s*['"]([^'"]+)['"]\s*\|\s*\w+\s*\}\}''')
+        .firstMatch(dest);
+    if (liquid != null) dest = liquid.group(1)!;
+    // An absolute URL is reduced to its path.
+    final absolute = RegExp(r'^https?://[^/]+(/.*)$').firstMatch(dest);
+    if (absolute != null) dest = absolute.group(1)!;
+    dest = dest.replaceAll(RegExp(r'\.(html|md)$'), '');
+    dest = dest.replaceAll(RegExp(r'/$'), '');
+    if (viaBaseurl) dest = dest.replaceFirst(RegExp(r'^/'), '');
+
+    if (dest == 'privacy' || dest.endsWith('/HonestSudoku/privacy')) {
+      return const [];
+    }
+    if (dest == '/privacy') rootAbsolute = true;
+  }
+
+  if (rootAbsolute) {
+    return const [
+      'docs/index.md: the policy link is root-absolute (`/privacy`). This is '
+          'a GitHub Pages PROJECT page served under /HonestSudoku/, so that '
+          'resolves to honestarcade.github.io/privacy and 404s. Write '
+          '`privacy` or `{{ site.baseurl }}/privacy`.',
+    ];
+  }
+  return const [
+    'docs/index.md: no link that resolves to the privacy policy — the site '
+        'root is how a reviewer reaches it',
+  ];
+}
 
 /// MIT, naming the studio.
 List<String> licenceOffenders(String licence) {
@@ -162,7 +275,11 @@ List<String> licenceOffenders(String licence) {
   if (!licence.contains('Honest Arcade')) {
     offenders.add('LICENSE: does not name Honest Arcade');
   }
-  if (!RegExp(r'Copyright \(c\)\s*\d{4}\s+Honest Arcade').hasMatch(licence)) {
+  // A year range and either spelling of the symbol are ordinary ways to
+  // write this notice; refusing them was a false alarm (#102).
+  if (!RegExp(
+    r'Copyright\s+(\((c|C)\)|©)\s*\d{4}(\s*[-–]\s*\d{4})?\s+Honest Arcade',
+  ).hasMatch(licence)) {
     offenders.add('LICENSE: no `Copyright (c) <year> Honest Arcade` line');
   }
   // The body, not the header. A GPL body under an `MIT License` line passed,
@@ -172,6 +289,10 @@ List<String> licenceOffenders(String licence) {
   for (final phrase in const [
     'Permission is hereby granted, free of charge',
     'without restriction',
+    // The licence's ONE condition. Without it this is a bare grant with no
+    // attribution requirement and is no longer MIT — and nothing checked it
+    // (#104).
+    'The above copyright notice and this permission notice shall be included',
     'THE SOFTWARE IS PROVIDED "AS IS"',
   ]) {
     if (!prose.contains(phrase)) {
@@ -217,7 +338,8 @@ List<String> readmeOffenders(String readme) {
   if (!readme.contains('honestarcade.github.io/HonestSudoku/privacy')) {
     offenders.add('README.md: does not link the published policy');
   }
-  if (!readme.contains('trademark')) {
+  // "trade mark" is the British spelling and means the same thing (#102).
+  if (!RegExp(r'trade ?marks?', caseSensitive: false).hasMatch(readme)) {
     offenders.add(
       'README.md: the License section no longer states that a copyright '
       'licence grants no trademark rights',
