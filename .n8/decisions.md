@@ -322,3 +322,90 @@ Ad-hoc entries (changes made outside the n8SDLC commands that deviate from plann
 - **Change:** Both project skills approved during `/n8-plan M7` — the Play Console launch runbook and the Sudoku techniques reference — were **not built**. The suggestions are recorded on #9 and #25 instead, with what each should encode.
   **Why:** `/n8-skill`'s own rule: a skill is grounded in real paths and symbols at HEAD, and where that code does not exist yet the suggestion is noted and the skill built after the milestone verifies. Today `lib/` holds only the Flutter scaffold's `main.dart`, there is no `.github/workflows/`, no `tools/`, and no `.n8/memory/play-console.md`. The cold-test gate is also unrunnable without an artefact to prove against. Building either now would produce a document describing how such things usually work rather than how this project's actually do — the failure the rule exists to prevent.
   **Affects:** nothing in the plan is stale; these are additions to make after M2 (#25) and M7 (#9) verify.
+
+## /n8-exec M0 — 2026-09-19
+
+- **Decision:** Merged PR #11 (the planning state) before starting, as the run's first act.
+  **Why:** `main` carried the init commit only. The four project invariants were not in CLAUDE.md, and `.n8/config.yml` still listed all six platforms with no `android.application_id`. #12 implements that id and #14/#15 are guard stories for invariants that were not written down on the branch they would have been built from. Executing M0 off that `main` would have meant implementing stories whose own configuration answers did not exist in the tree.
+  **Issue:** precondition for all of M0
+
+- **Decision:** `minSdk = 24` pinned literally in `android/app/build.gradle.kts` rather than inherited from `flutter.minSdkVersion`, with an inline comment pointing here.
+  **Why:** #12's acceptance criterion. The value happens to equal Flutter 3.47's default today, so inheriting would look identical and silently move when Flutter raises its floor. Pinning records the choice: Android 7.0 and newer, which is every device that can install from Play.
+  **Issue:** #12
+
+- **Decision (Rule 1 — own bug):** The identity guard's "old id absent" walk decoded every tracked file under `android/` as UTF-8 and crashed on the launcher PNGs. Changed to decode bytes as latin1.
+  **Why:** The walk must cover binaries — an id string can appear in one — and latin1 never throws while still matching an ASCII id byte for byte. Caught by running the guard, not by reading it.
+  **Issue:** #12
+
+- **Decision (Rule 3 — blocker):** Pointed Flutter at Homebrew's `/opt/homebrew/opt/openjdk@21` with `flutter config --jdk-dir`.
+  **Why:** `/usr/bin/java` on this machine is the macOS stub that reports "Unable to locate a Java Runtime", so Gradle had no JDK. The planned toolchain note named this exact remedy. No shell rc file was edited; the setting lives in Flutter's own config.
+  **Issue:** #12
+
+- **Decision:** Rewrote `pubspec.yaml` rather than editing it in place, keeping a two-line header.
+  **Why:** #12's discretion asks for every scaffold comment block removed, and those blocks are most of the file — the scaffold's iOS, Windows and web versioning notes, the asset and font examples. Rewriting is legible; a dozen deletions are not.
+  **Issue:** #12
+
+- **Decision (deviation from an acceptance criterion):** #14's bundle scan was specified as "exit 1 if any run contains `android.permission.`". That rule can never pass on any Flutter release build, so it is not the rule that shipped. `tools/check_aab.sh` allowlists exactly one string, `android.permission.DUMP`, and says so loudly on every clean run.
+  **Why:** `android.permission.X` appears in a manifest for two opposite reasons. `<uses-permission android:name="...">` **requests** a capability — what invariant 1 forbids. `android:permission="..."` on a component **restricts** who may reach it — a lock, not a key, granting the app nothing. Every Flutter release build carries the second kind, from androidx.profileinstaller's `ProfileInstallReceiver`. Verified against Gradle's merged release manifest: the release build has **zero** `<uses-permission>` of any `android.permission.*`, no INTERNET, and one `android:permission="android.permission.DUMP"` attribute. A byte scan cannot see that difference, so the allowlist encodes it. Anything else, including a new restriction, still fails.
+  **Issue:** #14
+
+- **For the owner to confirm:** the release build also declares a signature-level permission on **itself**, `com.honestarcade.sudoku.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`, added automatically by androidx.core so dynamically-registered receivers are not world-readable. It is granted only to this app's own signature, is not an `android.permission.*`, and Play does not show custom signature permissions to users — so the "NO PERMISSIONS" promise on the About screen still holds. But invariant 1 literally says "no Android permissions at all", and this is a permission element in the shipped manifest. Removing it is not possible without dropping androidx, which means dropping Flutter. Recorded here and raised on #14 rather than decided silently.
+  **Issue:** #14
+
+- **Decision (Rule 1 — own bug):** `tools/check_aab.sh` used `grep -q` in two places and returned **different answers for identical runs**.
+  **Why:** `grep -q` exits at the first match, closing the pipe under `unzip`, which dies of SIGPIPE; `set -o pipefail` then makes that the pipeline's exit status. On a 44 MB bundle it is a race, so the manifest-entry check passed or failed at random — caught only because I ran the same command twice and got different results. Both are `grep -c` now, which reads to the end. Verified stable over six consecutive runs per exit path.
+  **Issue:** #14
+
+- **Decision:** #15's three rules are pure functions over strings in `test/guards/dependency_rules.dart`, and every failure case the test plan asks to synthesize is *also* a permanent unit test with inline fixture text.
+  **Why:** The plan's synthesized failures are one-off edits an executor makes, watches fail, and reverts. Nothing then re-proves them. As fixtures they run on every build, so the rules keep demonstrating they can fire rather than only having fired once. Both were done: the fixtures, and the live synthesis against the real pubspec.
+  **Issue:** #15
+
+- **Decision (Rule 1 — own bug, found by testing):** The source rule walked `git ls-files lib`, so an **uncommitted** `.dart` file under `lib/` was invisible to it. It walks the filesystem now.
+  **Why:** Caught by the live synthesis: two throwaway files containing `fonts.googleapis.com` and `HttpClient()` produced no offenders because they were untracked. The tracked-files approach was borrowed from #12's identity guard, where it is right — `android/` holds build residue and a wrapper jar. `lib/` holds none, so there is nothing to skip and everything to catch. A guard that only sees committed code cannot fail a developer before they commit, which is when it is most useful.
+  **Issue:** #15
+
+- **Decision:** `lib/links.dart` is the single file permitted to contain a URL, enforced by a grammar test (comments, `library;` and single-line `const String` declarations only).
+  **Why:** #15's criterion. It also makes the source rule's `https://` ban enforceable without exceptions scattered through the codebase — there is exactly one exception and a test that says what may be in it.
+  **Issue:** #15
+
+- **Decision:** The privacy policy's effective date is written as 2026-09-19 and will be re-checked against the milestone pull request's actual open date before the PR is opened.
+  **Why:** #16's criterion defines the date as "the date the M0 PR is opened", which had not happened when the file was written. A date that is merely plausible is worse than none in a document a regulator or a store reviewer may read, so it is pinned to a real event rather than left as the day the file happened to be created.
+  **Issue:** #16
+
+- **Decision:** The docs guard asserts the package id agrees across **three** places — `build.gradle.kts`, `.n8/config.yml` and the policy — rather than the two the criterion names.
+  **Why:** The criterion asks that the policy match the build and that the build match the config. Checking both in one guard means the three can never drift pairwise into agreement while disagreeing overall. The policy is the one that matters: a wrong id there is a public document describing a different app.
+  **Issue:** #16
+
+- **Decision:** The README's audio paragraph is written in the future tense ("when licensed sound effects ship") and says the synthesised placeholders are MIT-covered.
+  **Why:** #16's criterion describes the carve-out, but no audio exists yet and M5 #49 ships placeholders before M6 #63 replaces them. Claiming a licence carve-out over files that do not exist would be false today; M6 #63 rewrites this paragraph in the present tense when the real clips land, which that story's criteria already require.
+  **Issue:** #16
+
+- **Decision:** `build.gradle.kts` prints the debug-fallback warning with **both** `logger.warn` and `println`.
+  **Why:** #13 specifies `logger.warn(...)` and that is implemented verbatim, but `flutter build` filters Gradle's warn-level output at default verbosity — the line only appeared under `-v`. A warning nobody sees cannot tell a developer their release build is debug-signed, which is the entire reason the criterion asks for one.
+  **Issue:** #13
+
+- **Decision:** A partly-set signing environment fails configuration in **every** mode, not only under `HS_RELEASE=1`.
+  **Why:** #13's criterion asks for this ("with the variables only partly set in any mode"), and the reason is worth recording: a half-set environment is almost always a typo in a variable name, and falling back to debug signing would hide it until an unsigned bundle reached the Console.
+  **Issue:** #13
+
+- **Decision (Rule 1 — own bug):** The credentials file's first line was prose, so `source`-ing it errored, despite the file being documented as an env template. It is a comment now, in the script and in the already-generated file.
+  **Why:** Found by using it rather than reading it — sourcing the file to run the signed build printed `command not found: Honest`.
+  **Issue:** #13
+
+- **Decision (Rule 3 — blocker):** `.gitignore` gains `/android/build/`.
+  **Why:** Gradle writes a reports directory there, and the existing `/build/` pattern is anchored to the repository root, so it was about to be committed. Caught by reading `git status` before committing rather than trusting it.
+  **Issue:** #13
+
+- **Note:** the upload keystore was generated with a 40-character random password. The value was never printed, never passed as an argument, and was verified absent from both the tracked files and the working tree by searching for the literal. It exists only in `~/HonestArcadeApps/secrets/sudoku-signing-credentials.txt` (chmod 600), which the owner must move into a password manager and delete.
+  **Issue:** #13
+
+- **Decision (Rule 1 — own bug, and the worst one of the run):** `tools/gate.sh` printed `GATE FAILED` and **exited 0**. CI would have read that as a pass.
+  **Why:** The runner used `if ! eval "$command"; then status=$?; …`. Inside that branch `$?` is the status of the *negation*, which is always 0, so every failing step exited cleanly. The status is captured before any test now (`status=0; eval "$command" || status=$?`). Caught only because the demo run's `rc` was read rather than its message — the message said the right thing while the exit code said the opposite, which is exactly the false success the whole capture-and-assert discipline exists for.
+  **Issue:** #17
+
+- **Decision:** `analysis_options.yaml`'s TODO comment was reworded rather than left as the scaffold had it.
+  **Why:** It said TODOs "never block a build", which stopped being true the moment the gate ran `--fatal-infos`. A comment that contradicts the build is worse than none, because it is the thing a contributor reads first.
+  **Issue:** #17
+
+- **Note:** `flutter pub get --enforce-lockfile` was verified to actually fail on a real mismatch (downgrading `flutter_lints` in the pubspec → exit 65), rather than assumed. A lockfile check that silently passes is a lockfile check nobody has.
+  **Issue:** #17

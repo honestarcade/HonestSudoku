@@ -1,0 +1,6 @@
+# Declares the tags the guard suites use, so `flutter test` does not warn about
+# an unknown tag. CI can run only the guards with `flutter test --tags guard`;
+# they are part of a plain `flutter test` too.
+tags:
+  guard:
+    description: Invariant and project-identity guards that read repository files.
