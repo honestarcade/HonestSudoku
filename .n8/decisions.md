@@ -344,3 +344,14 @@ Ad-hoc entries (changes made outside the n8SDLC commands that deviate from plann
 - **Decision:** Rewrote `pubspec.yaml` rather than editing it in place, keeping a two-line header.
   **Why:** #12's discretion asks for every scaffold comment block removed, and those blocks are most of the file — the scaffold's iOS, Windows and web versioning notes, the asset and font examples. Rewriting is legible; a dozen deletions are not.
   **Issue:** #12
+
+- **Decision (deviation from an acceptance criterion):** #14's bundle scan was specified as "exit 1 if any run contains `android.permission.`". That rule can never pass on any Flutter release build, so it is not the rule that shipped. `tools/check_aab.sh` allowlists exactly one string, `android.permission.DUMP`, and says so loudly on every clean run.
+  **Why:** `android.permission.X` appears in a manifest for two opposite reasons. `<uses-permission android:name="...">` **requests** a capability — what invariant 1 forbids. `android:permission="..."` on a component **restricts** who may reach it — a lock, not a key, granting the app nothing. Every Flutter release build carries the second kind, from androidx.profileinstaller's `ProfileInstallReceiver`. Verified against Gradle's merged release manifest: the release build has **zero** `<uses-permission>` of any `android.permission.*`, no INTERNET, and one `android:permission="android.permission.DUMP"` attribute. A byte scan cannot see that difference, so the allowlist encodes it. Anything else, including a new restriction, still fails.
+  **Issue:** #14
+
+- **For the owner to confirm:** the release build also declares a signature-level permission on **itself**, `com.honestarcade.sudoku.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`, added automatically by androidx.core so dynamically-registered receivers are not world-readable. It is granted only to this app's own signature, is not an `android.permission.*`, and Play does not show custom signature permissions to users — so the "NO PERMISSIONS" promise on the About screen still holds. But invariant 1 literally says "no Android permissions at all", and this is a permission element in the shipped manifest. Removing it is not possible without dropping androidx, which means dropping Flutter. Recorded here and raised on #14 rather than decided silently.
+  **Issue:** #14
+
+- **Decision (Rule 1 — own bug):** `tools/check_aab.sh` used `grep -q` in two places and returned **different answers for identical runs**.
+  **Why:** `grep -q` exits at the first match, closing the pipe under `unzip`, which dies of SIGPIPE; `set -o pipefail` then makes that the pipeline's exit status. On a 44 MB bundle it is a race, so the manifest-entry check passed or failed at random — caught only because I ran the same command twice and got different results. Both are `grep -c` now, which reads to the end. Verified stable over six consecutive runs per exit path.
+  **Issue:** #14
