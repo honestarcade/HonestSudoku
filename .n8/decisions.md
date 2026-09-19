@@ -477,3 +477,7 @@ Scoped to the nine bugs `/n8-verify M0` filed against `74e1f629` (#86–#94), on
 
 - **Note:** `make_upload_key.sh` now exits 2 for an existing keystore where it previously exited 1. The planner's discretion specified 2 for either output; the original code disagreed with the plan and nothing tested it.
   **Issue:** #93
+
+- **Decision (correction, same run):** #92's guarantee moved from the test into `tools/check_aab.sh`, reversing the approach I had committed an hour earlier.
+  **Why:** having the test build its own bundle raced. `flutter test` runs files concurrently, and `signing_guard_test.dart` asserts a refused build leaves the bundle untouched, so the build started by `bundle_scan_test.dart` changed the file under it and the gate went red. Two tests fighting over one artefact is worse than the problem being solved. Reordering the gate would fix the race but makes every failing unit test wait on a release build and changes the step order the README and CLAUDE.md publish. The scanner now refuses a bundle that is recognisably a Flutter app yet yields no permission element at all — the signature of an inert decoder, which is what #80 was — and that runs against the real artefact at step 6 of every gate run. Found only by running the gate from an empty `build/` directory; both earlier runs had a bundle already on disk and passed.
+  **Issue:** #92
