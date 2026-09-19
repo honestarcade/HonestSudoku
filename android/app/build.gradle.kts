@@ -75,6 +75,12 @@ android {
     buildTypes {
         release {
             if (hsSigningComplete) {
+                // Said out loud, for the same reason the fallback below is:
+                // tools/gate.sh reads this line back and fails if its own
+                // prediction disagreed. Two definitions of "is this variable
+                // set" drifted apart twice (#91, #106); now a disagreement is
+                // itself a gate failure rather than a silent lie.
+                println("HS_* signing variables set — release build signed with the UPLOAD key")
                 signingConfig = signingConfigs.getByName("release")
             } else {
                 // Both, deliberately. logger.warn is the Gradle-idiomatic

@@ -12,6 +12,10 @@
 #
 # Usage: tools/gate.sh
 set -euo pipefail
+# Deterministic classification. Without this the whitespace rules below behave
+# differently in a UTF-8 shell and in the C locale a bare CI runner has — so a
+# CI failure could not be reproduced by hand (#106).
+export LC_ALL=C
 cd "$(dirname "$0")/.."
 
 LABELS=(
@@ -53,8 +57,20 @@ SIGNING_VARS=(HS_KEYSTORE_PATH HS_KEYSTORE_PASS HS_KEY_ALIAS HS_KEY_PASS)
 # took the debug fallback, the build SUCCEEDED and GATE PASSED was printed over
 # a debug-signed bundle (#91). #82 was cosmetic because the gate failed either
 # way. This one passed, which is why the two checks must agree exactly.
+# Kotlin's Character.isWhitespace, for the ASCII range, exactly.
+#
+# POSIX [:space:] is space \t \n \v \f \r. Java ALSO counts 0x1C-0x1F, and
+# 0x1C is a single ASCII byte that a mangled paste really produces. With four
+# of them the gate announced one thing and the build did another, and the gate
+# PASSED over a debug-signed bundle (#106).
+#
+# What this does NOT cover: the multi-byte whitespace Java also counts
+# (U+1680, U+2000-U+200A, U+2028, U+2029, U+205F, U+3000). Widening `tr` again
+# would be the third narrowing of the same rule. Instead the build itself now
+# states which key it used and the gate fails if this prediction disagreed —
+# see the step-5 cross-check below. That is the part that cannot drift.
 hs_is_blank() {
-  [ -z "$(printf '%s' "${1:-}" | tr -d '[:space:]')" ]
+  [ -z "$(printf '%s' "${1:-}" | tr -d '\011\012\013\014\015\034\035\036\037\040')" ]
 }
 
 signing_mode() {
@@ -97,6 +113,14 @@ if [ "${1:-}" = "--signing-mode" ]; then
   exit 0
 fi
 
+# The path GATE PASSED names must hold THIS run's artefact or nothing, and it
+# must do so for the whole run — the removal used to sit at step 5, by which
+# time step 4 had already read whatever was there (#108).
+rm -f "$BUNDLE"
+BUILD_LOG="$(mktemp -t hs-gate-build)"
+trap 'rm -f "$BUILD_LOG"' EXIT
+SIGNING_MODE=""
+
 total=${#LABELS[@]}
 i=0
 while [ "$i" -lt "$total" ]; do
@@ -105,11 +129,8 @@ while [ "$i" -lt "$total" ]; do
   command="${COMMANDS[$i]}"
 
   if [ "$step" -eq 5 ]; then
-    # The path GATE PASSED names must hold this run's artefact or nothing. A
-    # failed build used to leave the previous run's bundle sitting exactly
-    # where a human, or M1's upload step, would look for it (#93).
-    rm -f "$BUNDLE"
-    echo "[$step/$total] $label ($(signing_mode))"
+    SIGNING_MODE="$(signing_mode)"
+    echo "[$step/$total] $label ($SIGNING_MODE)"
   else
     echo "[$step/$total] $label"
   fi
@@ -120,10 +141,45 @@ while [ "$i" -lt "$total" ]; do
   # In that form `$?` is the status of the negation, which is always 0 — so the
   # gate printed GATE FAILED and exited 0, and CI would have called it a pass.
   status=0
-  eval "$command" || status=$?
+  if [ "$step" -eq 5 ]; then
+    # Captured as well as streamed, so the cross-check below can read what
+    # Gradle actually said. PIPESTATUS, not $?, because $? here would be tee.
+    eval "$command" 2>&1 | tee "$BUILD_LOG"
+    status=${PIPESTATUS[0]}
+  else
+    eval "$command" || status=$?
+  fi
   if [ "$status" -ne 0 ]; then
     echo "GATE FAILED at $label"
     exit "$status"
+  fi
+
+  # The cross-check. `signing_mode` is a prediction; Gradle is the fact. They
+  # have drifted apart twice (#91 on ASCII whitespace, #106 on 0x1C and
+  # U+3000), each time with the gate announcing the upload key over a
+  # debug-signed bundle. A disagreement is now a gate failure.
+  if [ "$step" -eq 5 ]; then
+    if grep -q "signed with the UPLOAD key" "$BUILD_LOG"; then
+      actual="upload"
+    elif grep -q "signed with the DEBUG key" "$BUILD_LOG"; then
+      actual="debug"
+    else
+      echo "GATE FAILED at $label: the build said nothing about which key it" >&2
+      echo "  used. build.gradle.kts must print one of the two lines this" >&2
+      echo "  cross-check reads, or the gate cannot tell you what it built." >&2
+      exit 1
+    fi
+    case "$SIGNING_MODE" in
+      *"upload key"*) predicted="upload" ;;
+      *) predicted="debug" ;;
+    esac
+    if [ "$actual" != "$predicted" ]; then
+      echo "GATE FAILED at $label: the header said '$SIGNING_MODE'," >&2
+      echo "  and Gradle signed with the $actual key. These two decide" >&2
+      echo "  'is this variable set' separately and have disagreed before." >&2
+      exit 1
+    fi
+    echo "signing: Gradle used the $actual key (header agreed)"
   fi
   i=$((i + 1))
 done
