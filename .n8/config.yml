@@ -22,7 +22,7 @@ ci:
   provider: github-actions
   on_pr: [analyze, format, test, android-build, invariant-guards]
   release: "tag v* -> signed AAB -> Google Play internal track"
-  secrets_needed: [android-keystore (base64 + passwords), play-service-account-json]
+  secrets_needed: [PLAY_SERVICE_ACCOUNT_JSON, HS_KEYSTORE_B64, HS_KEYSTORE_PASS, HS_KEY_ALIAS, HS_KEY_PASS]
 audio:
   assets: owner-supplied (needs-owner-action); sound system built against placeholders
 fonts: bundled in the app (Outfit, IBM Plex Mono); never fetched at runtime
