@@ -234,6 +234,32 @@ done <<EOF
 $PERM_ENTRIES
 EOF
 
+# The decoder must not go inert on a real bundle.
+#
+# This is the tie between the synthetic fixtures in bundle_scan_test.dart and
+# the genuine article, and it lives here rather than in a test because this
+# runs against the real artefact on every gate run, and a test cannot without
+# racing the build (#92).
+#
+# Every Flutter build carries `flutterEmbedding` meta-data, and every one also
+# carries the androidx.core self-permission — as a <permission> declaration and
+# a <uses-permission> request. So in a bundle that is recognisably a Flutter
+# app, finding no permission element at all does not mean the app is clean; it
+# means the element matcher stopped matching, which is precisely bug #80.
+#
+# If a future Flutter or androidx drops that self-permission this will fail
+# loudly and wrongly. That is the intended direction: a human looks, confirms
+# the encoding, and edits this check. Silence would be the other kind of wrong.
+if printf '%s\n' "$STRINGS" | grep -qF 'flutterEmbedding'; then
+  if [ -z "${SELF_PERM_SEEN:-}" ] && [ -z "$OFFENDERS" ]; then
+    echo "check_aab: this is a Flutter bundle but the scan found no permission element at all." >&2
+    echo "  Every Flutter build declares and requests" >&2
+    echo "  ${PACKAGE}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION via androidx.core." >&2
+    echo "  Finding none means this decoder has gone inert, not that the bundle is clean (#80)." >&2
+    exit 1
+  fi
+fi
+
 OFFENDERS="$(printf '%s' "$OFFENDERS" | grep -v '^$' | sort -u || true)"
 
 # The package must appear as a whole token: followed by end-of-run or by a

@@ -394,55 +394,31 @@ void main() {
   });
 
   test('the real release bundle matches the modelled shape', () {
-    // This is the only thing tying the twelve fixtures above to reality. They
-    // model the protobuf encoding rather than being real aapt2 output, so if
-    // aapt2 ever changes how it encodes a manifest they all keep passing while
-    // testing a fiction.
+    // This checks the fixtures above against a real bundle when one happens to
+    // be on disk. It is a convenience, not the guarantee — and the first
+    // attempt at #92 got that backwards.
     //
-    // It used to run only when a bundle happened to be on disk, and print a
-    // notice otherwise. tools/gate.sh runs the tests at step 4 and builds the
-    // bundle at step 5, so on every clean checkout — every CI run, every fresh
-    // clone — it printed and asserted nothing while counting as a passing test
-    // (#92). The comment that said "tools/gate.sh builds the bundle before
-    // scanning it" was true of the scan and false of this test, and that is
-    // how the gap survived review.
+    // The guarantee lives in tools/check_aab.sh, which refuses a bundle that
+    // is recognisably a Flutter app yet yields no permission element at all.
+    // That is exactly what an inert decoder looks like (#80), it runs against
+    // the real artefact at step 6 of every gate run, and it cannot be skipped.
     //
-    // So it builds what it needs. Only when the bundle is absent, so a local
-    // re-run stays fast.
+    // Why not have this test build its own bundle, which is what #92's plan
+    // said? Because it raced. `flutter test` runs files concurrently, and
+    // signing_guard_test.dart asserts that a refused build leaves the bundle
+    // untouched — so a build started here changed the file out from under it
+    // and turned the gate red. Two tests fighting over one artefact is a worse
+    // problem than the one being solved, and the honest fix was to put the
+    // guarantee somewhere that already runs against the real bundle.
     const built = 'build/app/outputs/bundle/release/app-release.aab';
     if (!pathExists(built)) {
       // ignore: avoid_print
-      print('real-bundle-shape: no bundle on disk — building one.');
-      late ProcessResult build;
-      try {
-        build = Process.runSync(
-          'flutter',
-          ['build', 'appbundle', '--release', '--no-pub'],
-          workingDirectory: repoRoot.path,
-          stdoutEncoding: utf8,
-          stderrEncoding: utf8,
-        );
-      } on ProcessException catch (e) {
-        // The one honest reason to skip: no toolchain to build with. Printed
-        // rather than skipped, because a skipped test reads as a passing one —
-        // and the message now says the build failed, not that a file was
-        // missing, which is the difference that makes the gap visible.
-        // ignore: avoid_print
-        print(
-          'real-bundle-shape: cannot build — `flutter` is not on PATH ($e). '
-          'This check needs the Android toolchain.',
-        );
-        return;
-      }
-      if (!pathExists(built)) {
-        // ignore: avoid_print
-        print(
-          'real-bundle-shape: the release build did not produce a bundle, so '
-          'the fixtures could not be checked against a real one.\n'
-          '${build.stdout}${build.stderr}',
-        );
-        return;
-      }
+      print(
+        'real-bundle-shape: no bundle on disk, so this convenience check did '
+        'nothing. The guarantee is the inertness check in tools/check_aab.sh, '
+        'which gate.sh runs against the real bundle at step 6.',
+      );
+      return;
     }
 
     final scan = _scan(built);
