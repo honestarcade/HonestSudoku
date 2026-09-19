@@ -84,7 +84,7 @@ List<Offender> unjustifiedDependencies(String pubspecText) {
   final lines = pubspecText.split('\n');
 
   for (var i = 0; i < lines.length; i++) {
-    if (RegExp(r'^dependency_overrides:\s*$').hasMatch(lines[i])) {
+    if (_sectionKeyOf(lines[i]) == 'dependency_overrides') {
       offenders.add(
         Offender(
           'pubspec.yaml:${i + 1}',
@@ -95,7 +95,14 @@ List<Offender> unjustifiedDependencies(String pubspecText) {
     }
   }
 
-  for (final section in ['dependencies', 'dev_dependencies']) {
+  // dependency_overrides is walked for justification as well as refused
+  // outright: an override can substitute any package for any other, so it is
+  // the last place an unexplained entry belongs (#79).
+  for (final section in [
+    'dependencies',
+    'dev_dependencies',
+    'dependency_overrides',
+  ]) {
     for (final entry in _sectionEntries(pubspecText, section)) {
       if (exemptFromJustification.contains(entry.name)) continue;
       if (!_hasWhy(entry.line)) {
@@ -122,29 +129,47 @@ class _Entry {
   final int lineNumber;
 }
 
+/// The section key a line opens, or null if it opens none.
+///
+/// A trailing comment must not hide the header: `dependencies: # app deps` is
+/// valid YAML that `flutter pub get` accepts, and matching against the whole
+/// line made every dependency beneath it invisible to this rule (#79).
+String? _sectionKeyOf(String line) {
+  if (line.isEmpty || line.startsWith(' ') || line.startsWith('#')) return null;
+  final match = RegExp(r'^([A-Za-z0-9_]+):\s*(#.*)?$').firstMatch(line);
+  return match?.group(1);
+}
+
+int _indentOf(String line) => line.length - line.trimLeft().length;
+
 List<_Entry> _sectionEntries(String pubspecText, String section) {
   final entries = <_Entry>[];
   final lines = pubspecText.split('\n');
   var inSection = false;
+  int? entryIndent;
   for (var i = 0; i < lines.length; i++) {
     final line = lines[i];
-    if (RegExp('^$section:\\s*\$').hasMatch(line)) {
-      inSection = true;
+    if (line.trim().isEmpty) continue;
+
+    final key = _sectionKeyOf(line);
+    if (key != null) {
+      inSection = key == section;
+      entryIndent = null;
       continue;
     }
-    if (inSection &&
-        line.trim().isNotEmpty &&
-        !line.startsWith(' ') &&
-        !line.startsWith('#')) {
-      inSection = false;
-    }
     if (!inSection) continue;
-    // Dependency keys sit at exactly two spaces; anything deeper belongs to a
-    // multi-line entry whose key line was already seen.
-    final match = RegExp(r'^  ([A-Za-z0-9_]+):').firstMatch(line);
-    if (match != null) {
-      entries.add(_Entry(match.group(1)!, line, i + 1));
-    }
+    if (line.trimLeft().startsWith('#')) continue;
+
+    // The first indented key sets this section's entry depth; anything deeper
+    // belongs to a multi-line entry whose key line was already seen. Two
+    // spaces is the convention, not the rule — four-space pubspecs are legal
+    // and used to escape this scan entirely (#79).
+    final match = RegExp(r'^\s*([A-Za-z0-9_]+):').firstMatch(line);
+    if (match == null) continue;
+    final indent = _indentOf(line);
+    entryIndent ??= indent;
+    if (indent != entryIndent) continue;
+    entries.add(_Entry(match.group(1)!, line, i + 1));
   }
   return entries;
 }

@@ -128,6 +128,26 @@ dependencies:
       expect(offenders.single.what, contains('transitive'));
     });
 
+    test('a four-space pubspec still labels a direct dependency direct', () {
+      const lock = '''
+packages:
+  http:
+    dependency: "direct main"
+    version: "1.2.0"
+sdks:
+  dart: ">=3.0.0"
+''';
+      const pubspec = '''
+dependencies:
+    http: ^1.2.0  # why: fixture
+''';
+      final offenders = lockOffenders(lock, pubspec);
+      expect(offenders, hasLength(1));
+      expect(offenders.single.what, contains('direct'),
+          reason: 'indentation must not turn a direct dependency into a '
+              'transitive one — the label is what tells you whose fault it is');
+    });
+
     test('stops at sdks: and does not scan past it', () {
       const lock = '''
 packages:
@@ -196,6 +216,66 @@ dependency_overrides:
 ''';
       final offenders = unjustifiedDependencies(pubspec);
       expect(offenders.map((o) => o.what), contains('dependency_overrides'));
+    });
+
+    // The three bypasses #79 found. Each was a legal pubspec that flutter
+    // pub get accepts, and each made the rule silently see nothing. They are
+    // fixtures rather than one-off checks because the rule's earlier fixtures
+    // only ever fed it canonically formatted input, which is precisely why the
+    // holes were invisible.
+    test('a trailing comment on the section header does not disable the rule',
+        () {
+      const pubspec = '''
+dependencies: # app deps
+  flutter:
+    sdk: flutter
+  path_provider: ^2.1.0
+''';
+      final offenders = unjustifiedDependencies(pubspec);
+      expect(offenders, hasLength(1),
+          reason: 'a commented section header must not hide its dependencies');
+      expect(offenders.single.what, 'path_provider');
+    });
+
+    test('a commented dependency_overrides header is still refused', () {
+      const pubspec = '''
+dependencies:
+  flutter:
+    sdk: flutter
+dependency_overrides:  # sneaky
+  collection: 1.0.0
+''';
+      expect(unjustifiedDependencies(pubspec).map((o) => o.what),
+          contains('dependency_overrides'));
+    });
+
+    test('dependency_overrides entries need justification too', () {
+      const pubspec = '''
+dependencies:
+  flutter:
+    sdk: flutter
+dependency_overrides:
+  collection: 1.0.0
+''';
+      // Two offenders: the section itself, and the unjustified entry inside it.
+      // An override can swap any package for another, so it is the last place
+      // an unexplained entry should be allowed.
+      final offenders = unjustifiedDependencies(pubspec);
+      expect(offenders.map((o) => o.what), contains('dependency_overrides'));
+      expect(offenders.map((o) => o.what), contains('collection'));
+    });
+
+    test('indentation other than two spaces does not escape the rule', () {
+      const pubspec = '''
+dependencies:
+    flutter:
+        sdk: flutter
+    path_provider: ^2.1.0
+''';
+      final offenders = unjustifiedDependencies(pubspec);
+      expect(offenders, hasLength(1),
+          reason: 'four-space keys are valid YAML and must still be seen');
+      expect(offenders.single.what, 'path_provider');
     });
 
     test('exempt packages need no justification', () {
