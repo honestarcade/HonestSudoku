@@ -25,6 +25,24 @@ class Offender {
   String toString() => '$where: $what ($why)';
 }
 
+/// Strips a byte-order mark and every carriage return before any rule reads.
+///
+/// This is not tidiness. Dart's `.` excludes `\r` and its non-multiline `$`
+/// anchors before it, so under CRLF **every** top-level line failed to match
+/// and the whole justification rule went silent: no `# why:` check, no
+/// `dependency_overrides` refusal, and a direct dependency relabelled
+/// transitive. `flutter pub get` installs such a pubspec happily, and a
+/// Windows clone with `core.autocrlf=true` produces one by accident (#96).
+///
+/// `.gitattributes` normalises the file in the working tree; this normalises
+/// it in the rules, because a guard whose correctness depends on line endings
+/// is not a guard.
+String normaliseText(String text) {
+  var out = text;
+  if (out.startsWith('﻿')) out = out.substring(1);
+  return out.replaceAll('\r', '');
+}
+
 /// Why the lockfile itself cannot be trusted to be there and be whole.
 ///
 /// `lockOffenders` scans the `packages:` section. Given empty text, or text
@@ -44,6 +62,7 @@ List<Offender> lockfilePreconditions(
   String lockText, {
   int minimumPackages = 10,
 }) {
+  lockText = normaliseText(lockText);
   final offenders = <Offender>[];
   if (lockText.trim().isEmpty) {
     offenders.add(
@@ -82,6 +101,7 @@ List<Offender> lockfilePreconditions(
 
 /// Every package name in the lockfile's `packages:` section.
 Set<String> lockedPackageNames(String lockText) {
+  lockText = normaliseText(lockText);
   final names = <String>{};
   var inPackages = false;
   int? packageIndent;
@@ -113,6 +133,8 @@ Set<String> lockedPackageNames(String lockText) {
 /// pubspec. Transitive hits matter as much as direct ones: an ads SDK pulled in
 /// by something innocent still ships.
 List<Offender> lockOffenders(String lockText, String pubspecText) {
+  lockText = normaliseText(lockText);
+  pubspecText = normaliseText(pubspecText);
   final offenders = <Offender>[];
   final direct = _directDependencyNames(pubspecText);
   final directDev = _directDependencyNames(pubspecText, dev: true);
@@ -164,15 +186,89 @@ List<Offender> lockOffenders(String lockText, String pubspecText) {
   return offenders;
 }
 
+int _indentOf(String line) => line.length - line.trimLeft().length;
+
+/// Lines inside a dependency section that this rule cannot read as an entry.
+///
+/// `unreadableDependencySections` refuses a section *header* it cannot parse.
+/// It never looked inside, and `_sectionEntries` silently skipped any line it
+/// could not match — so YAML's explicit-key form walked straight through:
+///
+///     dependencies:
+///       flutter:
+///         sdk: flutter
+///       ? path_provider
+///       : ^2.1.0
+///
+/// `flutter pub get` installs that. The guard reported nothing (#96).
+///
+/// Fail-closed one level down: a non-blank, non-comment line at the section's
+/// entry depth that is not a readable `name:` key is an offender in itself.
+/// Deeper lines belong to a multi-line entry whose key was already seen, so
+/// they are not inspected — `sdk: flutter` under `flutter:` must stay legal.
+List<Offender> unreadableSectionEntries(String pubspecText) {
+  pubspecText = normaliseText(pubspecText);
+  final offenders = <Offender>[];
+  final lines = pubspecText.split('\n');
+
+  for (final section in dependencySections) {
+    var inSection = false;
+    int? entryIndent;
+    for (var i = 0; i < lines.length; i++) {
+      final line = lines[i];
+      if (line.trim().isEmpty) continue;
+
+      final key = _sectionKeyOf(line);
+      if (key != null) {
+        inSection = key == section;
+        entryIndent = null;
+        continue;
+      }
+      if (_topLevelOf(line) != null) {
+        inSection = false;
+        entryIndent = null;
+        continue;
+      }
+      if (!inSection) continue;
+      if (line.trimLeft().startsWith('#')) continue;
+
+      final match = _entryKey.firstMatch(line);
+      final indent = _indentOf(line);
+      if (match != null && _entryNameOf(match) != null) {
+        entryIndent ??= indent;
+        continue;
+      }
+      // Unreadable. Only a line at the entry depth is this rule's business;
+      // until the depth is known, the first indented line sets it.
+      entryIndent ??= indent;
+      if (indent != entryIndent) continue;
+      offenders.add(
+        Offender(
+          'pubspec.yaml:${i + 1}',
+          line.trim(),
+          'this line sits where a dependency goes and is not a readable '
+              '`name:` key — an unreadable shape is refused, never ignored '
+              '(invariant 3)',
+        ),
+      );
+    }
+  }
+  return offenders;
+}
+
 /// Third-party dependencies with no `# why:` justification on their key line.
 ///
 /// Reads raw text rather than parsed YAML because the justification lives in a
 /// comment, which a parser would discard. A `dependency_overrides:` section is
 /// refused outright: it can silently swap any package for another.
 List<Offender> unjustifiedDependencies(String pubspecText) {
+  pubspecText = normaliseText(pubspecText);
   // Refused first, because a section this rule cannot read would otherwise
   // contribute no entries and so read as a clean section (#86).
-  final offenders = <Offender>[...unreadableDependencySections(pubspecText)];
+  final offenders = <Offender>[
+    ...unreadableDependencySections(pubspecText),
+    ...unreadableSectionEntries(pubspecText),
+  ];
   final lines = pubspecText.split('\n');
 
   for (var i = 0; i < lines.length; i++) {
@@ -292,6 +388,7 @@ String? _entryNameOf(RegExpMatch match) =>
 /// is refused **because** the rule cannot read it. "I cannot read this" must
 /// never render as "there is nothing here" — that is the whole defect class.
 List<Offender> unreadableDependencySections(String pubspecText) {
+  pubspecText = normaliseText(pubspecText);
   final offenders = <Offender>[];
   final lines = pubspecText.split('\n');
   for (var i = 0; i < lines.length; i++) {
@@ -363,6 +460,7 @@ Set<String> _directDependencyNames(String pubspecText, {bool dev = false}) =>
 /// Scanned as raw text, comments included: a commented-out socket is a plan to
 /// use one, and this guard would rather be loud than clever.
 List<Offender> sourceOffenders(String path, String text) {
+  text = normaliseText(text);
   final offenders = <Offender>[];
   final lines = text.split('\n');
 

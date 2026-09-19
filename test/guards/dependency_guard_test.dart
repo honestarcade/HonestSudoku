@@ -433,6 +433,159 @@ dependency_overrides:  # sneaky
     // overshooting — because the rule now refuses shapes it cannot read, and
     // a rule that refuses too much gets switched off just as fast.
 
+    // #96. The fail-closed strategy #86 claimed was general was applied to
+    // section headers and to LF text only. Two shapes still read as empty.
+
+    test('CRLF line endings do not silence the rule', () {
+      // Dart's `.` excludes \r and its non-multiline `$` anchors before it, so
+      // under CRLF every top-level line failed to parse and the whole rule
+      // went quiet — no justification check, no overrides refusal, and a
+      // direct dependency relabelled transitive. A Windows clone with
+      // core.autocrlf produces this by accident.
+      const lf =
+          'name: x\n'
+          'dependencies:\n'
+          '  flutter:\n'
+          '    sdk: flutter\n'
+          '  path_provider: ^2.1.0\n'
+          'dependency_overrides:\n'
+          '  collection: 1.0.0\n';
+      final crlf = lf.replaceAll('\n', '\r\n');
+
+      final lfNames = unjustifiedDependencies(lf).map((o) => o.what).toSet();
+      final crlfNames = unjustifiedDependencies(crlf)
+          .map((o) => o.what)
+          .toSet();
+      expect(
+        crlfNames,
+        lfNames,
+        reason:
+            'crlf: the same pubspec with Windows line endings must produce '
+            'the same offenders. It produced none (#96).',
+      );
+      expect(crlfNames, contains('path_provider'));
+      expect(crlfNames, contains('dependency_overrides'));
+    });
+
+    test('a byte-order mark does not silence the rule', () {
+      const withBom = '﻿name: x\ndependencies:\n  path_provider: ^2.1.0\n';
+      expect(
+        unjustifiedDependencies(withBom).map((o) => o.what),
+        contains('path_provider'),
+      );
+    });
+
+    test('the direct/transitive label survives CRLF', () {
+      // The mislabel is the tell that the section walk went blind, and it is
+      // the same symptom #79 reported. Asserted separately because the
+      // offender list alone would not show it.
+      const lock =
+          'packages:\n'
+          '  http:\n'
+          '    dependency: "direct main"\n'
+          '    version: "1.2.0"\n'
+          'sdks:\n'
+          '  dart: ">=3.0.0"\n';
+      const pubspec = 'dependencies:\n  http: ^1.2.0  # why: fixture\n';
+      final offenders = lockOffenders(
+        lock.replaceAll('\n', '\r\n'),
+        pubspec.replaceAll('\n', '\r\n'),
+      );
+      expect(offenders, hasLength(1));
+      expect(
+        offenders.single.what,
+        contains('direct'),
+        reason:
+            'crlf-label: under CRLF the direct dependency was reported as '
+            'transitive, because _directDependencyNames came back empty',
+      );
+    });
+
+    test('a YAML explicit key inside a section is refused', () {
+      // The fail-closed refusal guarded the section header and never looked
+      // inside; _sectionEntries silently skipped what it could not parse.
+      const pubspec =
+          'name: x\n'
+          'dependencies:\n'
+          '  flutter:\n'
+          '    sdk: flutter\n'
+          '  ? path_provider\n'
+          '  : ^2.1.0\n';
+      final offenders = unreadableSectionEntries(pubspec);
+      expect(
+        offenders,
+        isNotEmpty,
+        reason:
+            'explicit-key: `flutter pub get` installs this and the guard saw '
+            'nothing (#96)',
+      );
+      expect(offenders.first.why, contains('unreadable shape'));
+      expect(
+        unjustifiedDependencies(pubspec).map((o) => o.what),
+        contains('? path_provider'),
+      );
+    });
+
+    test('legal entry shapes are not refused', () {
+      // The controls. Refusing a multi-line dependency or an asset list would
+      // undo #79's fix in the name of #96's, and a guard that refuses ordinary
+      // pubspecs gets deleted.
+      for (final pubspec in const [
+        // A git dependency with its justification on the key line.
+        'name: x\n'
+            'dependencies:\n'
+            '  pkg: # why: needed\n'
+            '    git:\n'
+            '      url: https://e.com/r.git\n'
+            '      ref: main\n',
+        // An asset list, which lives under flutter: and not under a
+        // dependency section.
+        'name: x\n'
+            'dependencies:\n'
+            '  path_provider: ^2.1.0  # why: ok\n'
+            'flutter:\n'
+            '  assets:\n'
+            '    - assets/a.png\n',
+        // Four-space indentation, from #79.
+        'name: x\ndependencies:\n    path_provider: ^2.1.0  # why: ok\n',
+      ]) {
+        expect(
+          unreadableSectionEntries(pubspec),
+          isEmpty,
+          reason: 'entries-negative: refused a legal shape:\n$pubspec',
+        );
+        expect(
+          unjustifiedDependencies(pubspec),
+          isEmpty,
+          reason: 'entries-negative: offended on a clean pubspec:\n$pubspec',
+        );
+      }
+    });
+
+    test('the real pubspec and lockfile survive normalisation', () {
+      expect(unreadableSectionEntries(readFile('pubspec.yaml')), isEmpty);
+      expect(
+        unjustifiedDependencies(
+          readFile('pubspec.yaml').replaceAll('\n', '\r\n'),
+        ),
+        isEmpty,
+        reason: 'the repository pubspec must be clean under either line ending',
+      );
+    });
+
+    test('the repository pins line endings', () {
+      // Belt and braces: the rules normalise, and git normalises the working
+      // tree so the file a contributor edits is the file CI reads.
+      expect(
+        pathExists('.gitattributes'),
+        isTrue,
+        reason:
+            'gitattributes: absent, so a Windows clone can still produce '
+            'CRLF sources (#96)',
+      );
+      expect(readFile('.gitattributes'), contains('text=auto eol=lf'));
+    });
+
     test('a quoted section header does not hide the section', () {
       const pubspec =
           '"dependencies":\n'
