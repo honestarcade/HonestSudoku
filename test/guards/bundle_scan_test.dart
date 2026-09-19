@@ -279,6 +279,69 @@ void main() {
     expect(scan.stderr, contains('unreadable name'));
   });
 
+  // #87. The scan decoded requests correctly and ignored declarations
+  // entirely, so a library `<permission>` — which is exactly how the
+  // androidx.core one arrives — scanned clean. The repository's own manifest
+  // guard bans all five permission elements; the bundle scan is the only place
+  // a merged manifest can be seen, so it has to ban them too.
+  for (final element in const [
+    'permission',
+    'permission-group',
+    'permission-tree',
+  ]) {
+    test('a <$element> declaration is caught', () {
+      final m = _realisticBase()
+        ..element(element)
+        ..attribute('name', 'com.evil.NEW_CUSTOM_PERMISSION')
+        ..attribute('protectionLevel', 'dangerous');
+      final scan = _scan(_bundle(tmp, 'declare-$element', m.bytes));
+      expect(
+        scan.exitCode,
+        1,
+        reason:
+            'declare-$element: declaring a permission is not requesting one, '
+            'but invariant 1 says the release build declares none.\n'
+            '${scan.output}',
+      );
+      expect(scan.stderr, contains('com.evil.NEW_CUSTOM_PERMISSION'));
+      expect(scan.stderr, contains('declared'));
+    });
+  }
+
+  test('the allowlisted declaration is refused at the wrong level', () {
+    // The allowlist is for a signature-level permission only its own signer
+    // can hold. At any other protection level it is a permission other apps
+    // can actually be granted — a different thing wearing the same name.
+    final m = _Manifest()..packageId(_package);
+    m
+      ..element('permission')
+      ..attribute('name', _selfPermission)
+      ..attribute('protectionLevel', 'dangerous');
+    final scan = _scan(_bundle(tmp, 'wrong-level', m.bytes));
+    expect(
+      scan.exitCode,
+      1,
+      reason:
+          'allowlist-level: the name alone must not buy a pass.\n${scan.output}',
+    );
+    expect(scan.stderr, contains('not signature'));
+  });
+
+  test('a declaration with no readable name still fails', () {
+    final m = _Manifest()..packageId(_package);
+    m
+      ..element('permission')
+      ..attribute('protectionLevel', 'dangerous');
+    final scan = _scan(_bundle(tmp, 'declare-undecodable', m.bytes));
+    expect(
+      scan.exitCode,
+      1,
+      reason:
+          'declare-fail-closed: a permission nobody can name is still a '
+          'permission.\n${scan.output}',
+    );
+  });
+
   test('a wrong package id fails with its own exit code', () {
     final m = _Manifest()..packageId('com.honestarcade.sudoku.honest_sudoku');
     final scan = _scan(_bundle(tmp, 'wrong-package', m.bytes));
@@ -330,16 +393,30 @@ void main() {
     }, reason: 'determinism: eight scans of one bundle returned $codes');
   });
 
-  test('the real release bundle, when built, matches the modelled shape', () {
+  test('the real release bundle matches the modelled shape', () {
+    // This checks the fixtures above against a real bundle when one happens to
+    // be on disk. It is a convenience, not the guarantee — and the first
+    // attempt at #92 got that backwards.
+    //
+    // The guarantee lives in tools/check_aab.sh, which refuses a bundle that
+    // is recognisably a Flutter app yet yields no permission element at all.
+    // That is exactly what an inert decoder looks like (#80), it runs against
+    // the real artefact at step 6 of every gate run, and it cannot be skipped.
+    //
+    // Why not have this test build its own bundle, which is what #92's plan
+    // said? Because it raced. `flutter test` runs files concurrently, and
+    // signing_guard_test.dart asserts that a refused build leaves the bundle
+    // untouched — so a build started here changed the file out from under it
+    // and turned the gate red. Two tests fighting over one artefact is a worse
+    // problem than the one being solved, and the honest fix was to put the
+    // guarantee somewhere that already runs against the real bundle.
     const built = 'build/app/outputs/bundle/release/app-release.aab';
     if (!pathExists(built)) {
-      // Printed, not skipped: a skipped test reads as a passing one, and this
-      // file's fixtures are a model until something checks them against the
-      // genuine article. tools/gate.sh builds the bundle before scanning it.
       // ignore: avoid_print
       print(
-        'real-bundle-shape: $built is absent — run tools/gate.sh (or '
-        '`flutter build appbundle --release`) to exercise this check.',
+        'real-bundle-shape: no bundle on disk, so this convenience check did '
+        'nothing. The guarantee is the inertness check in tools/check_aab.sh, '
+        'which gate.sh runs against the real bundle at step 6.',
       );
       return;
     }

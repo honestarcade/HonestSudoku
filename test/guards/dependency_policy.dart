@@ -40,6 +40,36 @@ const List<String> blockedNames = [
   'applovin_max',
   'ironsource_mediation',
   'facebook_audience_network',
+  // Added by #94, after verification probed the list and found fifteen
+  // ads, analytics and network packages walking straight through it. The
+  // originals matched #15's acceptance criteria exactly, so this extends
+  // what was specified — see the ad-hoc entry in .n8/decisions.md.
+  'facebook_app_events',
+  'adjust_sdk',
+  'flutter_branch_sdk',
+  'appmetrica_plugin',
+  'socket_io_client',
+  'graphql_flutter',
+  'graphql',
+  'retrofit',
+  'chopper',
+  'http2',
+  'cronet_http',
+  'cupertino_http',
+  'native_dio_adapter',
+  'googleapis',
+  'googleapis_auth',
+  'supabase_flutter',
+  'amplify_flutter',
+  'aws_common',
+  'new_relic_mobile',
+  'pusher_channels_flutter',
+  'mqtt_client',
+  'universal_io',
+  'flutter_downloader',
+  'flutter_appauth',
+  'vungle',
+  'chartboost',
 ];
 
 /// Refused by shape, for the ones nobody has thought of yet. `*` matches any
@@ -47,10 +77,17 @@ const List<String> blockedNames = [
 const List<String> blockedPatterns = [
   '*_ads',
   '*ads_*',
+  '*ads',
+  'admob*',
+  '*mobileads*',
   '*analytics*',
   '*crashlytics*',
   '*tracking*',
+  '*attribution*',
+  '*webview*',
   'firebase_*',
+  'googleapis*',
+  'sentry_*',
 ];
 
 /// Packages that need no `# why:` line, because they are the SDK itself or the

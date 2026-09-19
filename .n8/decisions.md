@@ -451,3 +451,33 @@ Scoped to the six bugs `/n8-verify M0` filed (#79–#84), on `milestone/m0-fixes
 
 - **Note (own process error, already reported on PR #77):** during `/n8-verify M0` six verifier subagents were pointed at one shared worktree and several were told to mutate it. They collided, and three reported transient red runs caused by each other's fixtures. Both blocking findings were re-confirmed by hand in fresh worktrees before being filed. Recorded here so the next verification gives each agent its own worktree.
   **Issue:** #83
+
+## /n8-exec M0 (second fix pass) — 2026-09-19
+
+Scoped to the nine bugs `/n8-verify M0` filed against `74e1f629` (#86–#94), on `milestone/m0-fixes-2`.
+
+- **Decision (the one that matters):** every rule in this pass now **fails closed on a shape it cannot read**, rather than learning one more spelling.
+  **Why:** #79, #82, #83 and #80 were all the same bug wearing different clothes, and each fix closed the instances it was shown. The dependency rule had been fixed three times and still had five legal bypasses. The gate's blank check reasoned its way to `isNullOrBlank` in a comment and then asserted only the empty string. The bundle scan learned to decode requests and forgot declarations. "I cannot read this" must never render as "there is nothing here" — so a dependency section that is not a plain block is refused, an undecodable permission element is an offender, and a whitespace variable is unset.
+  **Issue:** #86, #91, #87
+
+- **Decision:** the blocklist was extended beyond what #15's acceptance criteria enumerated, without treating it as a blocker.
+  **Why:** #94's own text called this an owner decision, and on reflection it is not one. Extending a blocklist makes an existing guard stricter in the direction invariant 1 already points; it cannot forbid anything invariant 1 permitted. Twenty-three names and six new globs, including `webview_flutter`, which embeds a whole browser. What it does amend is the specific list #15 enumerated, which is why this entry exists. A seventeen-package allow list is asserted beside it: a broad glob like `*webview*` is how a blocklist starts refusing ordinary packages, and a guard that cries wolf gets deleted.
+  **Issue:** #94, amends #15
+
+- **Decision:** #92's pinning test builds the bundle it needs instead of the gate reordering its steps.
+  **Why:** moving the build ahead of the tests would make every failing unit test wait on a full release build, and it would change the step order that the README and CLAUDE.md both publish as "the order CI will run it". Having the test build on demand keeps that order and makes the dependency explicit rather than incidental. The cost is a slower first run on a clean checkout, which is exactly the run that was proving nothing before.
+  **Issue:** #92
+
+- **Decision (Rule 1 — own bug, found while writing the fix):** the bundle scanner's permission elements had no end.
+  **Why:** the sixteen-run window ran on into following elements, so a later `name` attribute overwrote the permission's, and the clean fixture was reported as requesting `android.intent.action.MAIN`. Elements now end at the next element name, checked *after* the value assignment so a value that looks like an element name — `signature"` is exactly that — is still read first. Caught only because the clean-bundle complement fixture exists; the dirty fixtures all still passed.
+  **Issue:** #87
+
+- **Note (own overclaim, corrected):** two commit messages in this pass asserted numbers that were wrong — a test count off by one, and "7 of 12 fixtures fail" where the true figure was 3. Both were amended rather than left, and the second now records *why* it is 3: two of the names are new entries that match under the old boundary too, so only the three whose capture depends on the change fail without it. This is the same class of defect as #88, where the previous pass claimed every memory-file claim had been re-checked.
+  **Issue:** #90
+
+- **Note:** `make_upload_key.sh` now exits 2 for an existing keystore where it previously exited 1. The planner's discretion specified 2 for either output; the original code disagreed with the plan and nothing tested it.
+  **Issue:** #93
+
+- **Decision (correction, same run):** #92's guarantee moved from the test into `tools/check_aab.sh`, reversing the approach I had committed an hour earlier.
+  **Why:** having the test build its own bundle raced. `flutter test` runs files concurrently, and `signing_guard_test.dart` asserts a refused build leaves the bundle untouched, so the build started by `bundle_scan_test.dart` changed the file under it and the gate went red. Two tests fighting over one artefact is worse than the problem being solved. Reordering the gate would fix the race but makes every failing unit test wait on a release build and changes the step order the README and CLAUDE.md publish. The scanner now refuses a bundle that is recognisably a Flutter app yet yields no permission element at all — the signature of an inert decoder, which is what #80 was — and that runs against the real artefact at step 6 of every gate run. Found only by running the gate from an empty `build/` directory; both earlier runs had a bundle already on disk and passed.
+  **Issue:** #92

@@ -71,8 +71,18 @@ String _signingMode(Map<String, String> env) {
 }
 
 const _keystorePath = 'HS_KEYSTORE_PATH';
-const _allFour = {
-  'HS_KEYSTORE_PATH': '/tmp/upload.p12',
+
+/// A file that exists, standing in for a keystore.
+///
+/// It has to exist: since #91 the gate refuses to promise the upload key for a
+/// keystore it cannot read, so a fixture pointing at a path that is not there
+/// would exercise that branch instead of the one it means to.
+final File _fakeKeystore = File(
+  '${Directory.systemTemp.createTempSync('hs-signing').path}/upload.p12',
+)..writeAsStringSync('not a real keystore');
+
+Map<String, String> get _allFour => {
+  'HS_KEYSTORE_PATH': _fakeKeystore.path,
   'HS_KEYSTORE_PASS': 'x',
   'HS_KEY_ALIAS': 'upload',
   'HS_KEY_PASS': 'x',
@@ -157,6 +167,136 @@ void _signingModeTests() {
     final mode = _signingMode(env);
     expect(mode, contains('partial'));
     expect(mode, contains(_keystorePath));
+  });
+
+  // #91. The two ways the headline could still be false. The first is the one
+  // that mattered: it was the only case found where a PASSING gate mislabelled
+  // the artefact it named.
+
+  test('a whitespace value counts as missing, matching isNullOrBlank', () {
+    // build.gradle.kts decides with Kotlin's isNullOrBlank(), which treats
+    // whitespace as unset. The gate used to decide with [ -n "$var" ], which
+    // does not. With all four set to a single space the gate announced the
+    // upload key, Gradle took the debug fallback, the build SUCCEEDED, and
+    // GATE PASSED was printed over a bundle signed `CN=Android Debug`.
+    final allBlank = {for (final v in _signingVars) v: ' '};
+    expect(
+      _signingMode(allBlank),
+      contains('debug fallback'),
+      reason:
+          'blank-all: whitespace must read exactly as Gradle reads it — as '
+          'unset, so the headline matches the debug fallback the build takes',
+    );
+    expect(_signingMode(allBlank), isNot(contains('upload key')));
+
+    for (final blank in _signingVars) {
+      final env = Map<String, String>.from(_allFour)..[blank] = '   ';
+      final mode = _signingMode(env);
+      expect(
+        mode,
+        contains('partial'),
+        reason:
+            'blank-$blank: one whitespace variable is a partial set, which '
+            'Gradle refuses.\nGot: $mode',
+      );
+      expect(mode, contains(blank));
+    }
+  });
+
+  test('an unreadable keystore is not announced as the upload key', () {
+    // The lesser half of the same defect: a promise made without checking.
+    // This one fails safe — Gradle dies at validateSigningRelease — but the
+    // headline was still false.
+    final env = Map<String, String>.from(_allFour)
+      ..[_keystorePath] = '/tmp/hs-definitely-not-here.p12';
+    final mode = _signingMode(env);
+    expect(
+      mode,
+      contains('not readable'),
+      reason:
+          'unreadable-keystore: the gate must not promise a key it cannot '
+          'find.\nGot: $mode',
+    );
+    expect(mode, isNot(contains('signing with the upload key')));
+  });
+
+  test('the key script refuses when either output already exists', () {
+    // #93. Driven with a fake HOME, so the real secrets directory is never
+    // read, written or even resolved. The credentials file is the only copy
+    // of the password until the owner moves it to a password manager, and the
+    // key it unlocks cannot be regenerated once Play has enrolled it — so
+    // overwriting it is the one irreversible thing this script can do. It used
+    // to refuse on the keystore alone.
+    final home = Directory.systemTemp.createTempSync('hs-keyscript');
+    final secrets = Directory('${home.path}/HonestArcadeApps/secrets')
+      ..createSync(recursive: true);
+    final keystore = File('${secrets.path}/sudoku-upload.keystore');
+    final credentials = File('${secrets.path}/sudoku-signing-credentials.txt');
+
+    ProcessResult run() => Process.runSync(
+      'tools/make_upload_key.sh',
+      const [],
+      workingDirectory: repoRoot.path,
+      includeParentEnvironment: false,
+      environment: {
+        'PATH': Platform.environment['PATH'] ?? '/usr/bin:/bin',
+        'HOME': home.path,
+        // Set, so the refusal is what stops the run rather than a missing
+        // password. Never a real one: this script must not reach keytool.
+        'HS_KEYSTORE_PASS': 'not-used-because-it-refuses',
+      },
+      stdoutEncoding: utf8,
+      stderrEncoding: utf8,
+    );
+
+    try {
+      keystore.writeAsStringSync('pretend keystore');
+      var result = run();
+      expect(
+        result.exitCode,
+        2,
+        reason:
+            'key-refusal: an existing keystore must stop the run.\n'
+            '${result.stderr}',
+      );
+      expect(result.stderr, contains('refusing to overwrite'));
+
+      keystore.deleteSync();
+      credentials.writeAsStringSync('THE PASSWORD OF A LIVE KEY\n');
+      result = run();
+      expect(
+        result.exitCode,
+        2,
+        reason:
+            'key-refusal: an existing credentials file must stop the run too. '
+            'With the keystore moved aside this used to overwrite the only '
+            'record of a live key\'s password and exit 0.\n${result.stderr}',
+      );
+      expect(result.stderr, contains('sudoku-signing-credentials.txt'));
+      expect(
+        credentials.readAsStringSync(),
+        'THE PASSWORD OF A LIVE KEY\n',
+        reason:
+            'key-refusal: the credentials file was modified by a run that '
+            'was supposed to refuse',
+      );
+    } finally {
+      home.deleteSync(recursive: true);
+    }
+  });
+
+  test('the gate clears a stale bundle before building', () {
+    // #93. The path GATE PASSED names must hold this run's artefact or
+    // nothing; a failed build used to leave the previous run's bundle there.
+    final gate = readFile('tools/gate.sh');
+    expect(
+      gate,
+      contains('rm -f "\$BUNDLE"'),
+      reason:
+          'stale-bundle: nothing removes the bundle before the build step, so '
+          'a failed run leaves the previous artefact where the success line '
+          'points',
+    );
   });
 
   test('the build file agrees that a partial set is always an error', () {

@@ -87,17 +87,71 @@ List<String> policyOffenders(String policy, String applicationId) {
   }
   if (!prose.contains('no network access')) {
     offenders.add(
-      'docs/privacy.md: no longer claims the app has no network '
-      'access',
+      'docs/privacy.md: no longer claims the app has no network access',
     );
+  }
+
+  // The published URL rests on this one line of front matter. Delete it and
+  // `/privacy` 404s, the README link breaks, and so does the URL M7 gives the
+  // Play Console — and nothing noticed (#89). Liveness is deliberately out of
+  // this guard's scope, but the permalink is a file fact, not a network one.
+  if (!RegExp(
+    r'^permalink:\s*/privacy\s*$',
+    multiLine: true,
+  ).hasMatch(policy)) {
+    offenders.add(
+      'docs/privacy.md: no `permalink: /privacy` in the front matter — the '
+      'published policy URL depends on it',
+    );
+  }
+
+  // The substantive claims. These are public statements a player or a Play
+  // reviewer reads, and each was mutated to its opposite with the suite
+  // staying green. The dependency blocklist guards the CODE behind two of
+  // them; nothing guarded the SENTENCE, so the policy could be edited to say
+  // the opposite of a true thing while the code stayed clean (#89).
+  const claims = {
+    'only on your device':
+        'that player data never leaves the device — the Play data-safety claim',
+    'no ads and contains no purchases':
+        'that the app shows no ads and contains no purchases',
+    'no advertising, analytics, attribution or crash-reporting SDKs':
+        'that the app contains no advertising or analytics SDKs',
+    'published by Honest Arcade': 'who publishes the app',
+  };
+  for (final claim in claims.entries) {
+    if (!prose.contains(claim.key)) {
+      offenders.add(
+        'docs/privacy.md: no longer states ${claim.value} '
+        '(looked for "${claim.key}")',
+      );
+    }
   }
   return offenders;
 }
 
-/// The site root must link the policy, or the published policy is unreachable.
-List<String> siteIndexOffenders(String indexMd) => indexMd.contains('privacy')
+/// The site config must name the app, since the published `<title>` is it.
+///
+/// #16's AC2 requires it and nothing read it: mutating it to another app's
+/// name left the suite green (#89).
+List<String> siteConfigOffenders(String configYaml) =>
+    RegExp(r'^title:\s*Honest Sudoku\s*$', multiLine: true).hasMatch(configYaml)
     ? const []
-    : const ['docs/index.md: does not link the privacy policy'];
+    : const ['docs/_config.yml: `title: Honest Sudoku` is missing or changed'];
+
+/// The site root must link the policy, or the published policy is unreachable.
+///
+/// Matched as a markdown link whose destination is the policy, not as the word
+/// "privacy" anywhere in the file. The word test was satisfied by a sentence
+/// reading "The privacy page has been taken down." — it failed open on the
+/// exact regression it exists to prevent (#89).
+List<String> siteIndexOffenders(String indexMd) =>
+    RegExp(r'\]\(\s*/?privacy(\.html|\.md)?\s*\)').hasMatch(indexMd)
+    ? const []
+    : const [
+        'docs/index.md: no markdown link pointing at the privacy policy — '
+            'the site root is how a reviewer reaches it',
+      ];
 
 /// MIT, naming the studio.
 List<String> licenceOffenders(String licence) {
@@ -107,6 +161,22 @@ List<String> licenceOffenders(String licence) {
   }
   if (!licence.contains('Honest Arcade')) {
     offenders.add('LICENSE: does not name Honest Arcade');
+  }
+  if (!RegExp(r'Copyright \(c\)\s*\d{4}\s+Honest Arcade').hasMatch(licence)) {
+    offenders.add('LICENSE: no `Copyright (c) <year> Honest Arcade` line');
+  }
+  // The body, not the header. A GPL body under an `MIT License` line passed,
+  // including one reading "Commercial use is prohibited" (#89). These three
+  // sentences are what make a licence MIT, rather than what it calls itself.
+  final prose = licence.replaceAll(RegExp(r'\s+'), ' ');
+  for (final phrase in const [
+    'Permission is hereby granted, free of charge',
+    'without restriction',
+    'THE SOFTWARE IS PROVIDED "AS IS"',
+  ]) {
+    if (!prose.contains(phrase)) {
+      offenders.add('LICENSE: the MIT body is missing "$phrase"');
+    }
   }
   return offenders;
 }
@@ -130,7 +200,10 @@ List<String> readmeOffenders(String readme) {
       'README.md: no Requirements line stating "Android 7.0 (API 24) or newer"',
     );
   }
-  if (RegExp(r'-d\s+chrome').hasMatch(readme)) {
+  // `-dchrome` is ordinary shell habit and `--device-id chrome` is the long
+  // form. Both are valid `flutter run` invocations and both slipped past the
+  // original `-d\s+chrome` (#89).
+  if (RegExp(r'(-d\s*|--device-id\s+)chrome').hasMatch(readme)) {
     offenders.add(
       'README.md: the `flutter run -d chrome` example is back — this project '
       'has no web platform',

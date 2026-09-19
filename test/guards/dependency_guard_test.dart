@@ -56,6 +56,88 @@ void main() {
       }
     });
 
+    // #94. Verification probed the blocklist and found fifteen ads, analytics
+    // and network packages walking through it, including `webview_flutter`,
+    // which embeds a whole browser. The originals matched #15's acceptance
+    // criteria exactly, so this list is what was specified rather than what
+    // was needed.
+    //
+    // The allow list below matters at least as much. A broad glob like
+    // `*webview*` or `googleapis*` is how a blocklist starts refusing ordinary
+    // packages, and a guard that cries wolf gets deleted. Both halves are
+    // asserted, always together.
+    test('the named ads, analytics and network packages are refused', () {
+      const mustBlock = [
+        'webview_flutter',
+        'flutter_inappwebview',
+        'googleapis',
+        'googleapis_auth',
+        'supabase_flutter',
+        'socket_io_client',
+        'graphql_flutter',
+        'http2',
+        'cronet_http',
+        'facebook_app_events',
+        'admob_flutter',
+        'adjust_sdk',
+        'yandex_mobileads',
+        'retrofit',
+        'chopper',
+        'flutter_branch_sdk',
+        'appmetrica_plugin',
+        'sentry_dio',
+        // The ones that were already covered, kept so a future edit that
+        // narrows a glob cannot quietly drop them.
+        'firebase_analytics',
+        'google_mobile_ads',
+        'http',
+        'dio',
+        'sentry_flutter',
+      ];
+      final open = mustBlock.where((n) => policy.matches(n) == null).toList();
+      expect(
+        open,
+        isEmpty,
+        reason: describeOffenders(
+          'blocklist-coverage',
+          open.map((n) => '$n is not blocked — invariant 1').toList(),
+        ),
+      );
+    });
+
+    test('the blocklist does not refuse ordinary packages', () {
+      const mustAllow = [
+        'path_provider',
+        'shared_preferences',
+        'shared_preferences_android',
+        'collection',
+        'intl',
+        'meta',
+        'vector_math',
+        'characters',
+        'material_color_utilities',
+        'async',
+        'clock',
+        'fake_async',
+        'flutter_lints',
+        // Plausible future additions this app may actually want.
+        'audioplayers',
+        'just_audio',
+        'flutter_svg',
+        'share_plus',
+      ];
+      final refused = <String>[];
+      for (final name in mustAllow) {
+        final reason = policy.matches(name);
+        if (reason != null) refused.add('$name refused by "$reason"');
+      }
+      expect(
+        refused,
+        isEmpty,
+        reason: describeOffenders('blocklist-overshoot', refused),
+      );
+    });
+
     test('exempting from justification never exempts from the blocklist', () {
       // A name on both lists must still be refused. Nothing is today; this
       // asserts the relationship rather than the current data.
@@ -345,6 +427,111 @@ dependency_overrides:  # sneaky
       );
     });
 
+    // #86. Three passes at this rule each closed the spellings they were
+    // shown, and each time another legal one turned up. These fixtures are
+    // the five that were still open, plus the controls that stop the fix
+    // overshooting — because the rule now refuses shapes it cannot read, and
+    // a rule that refuses too much gets switched off just as fast.
+
+    test('a quoted section header does not hide the section', () {
+      const pubspec =
+          '"dependencies":\n'
+          '  flutter:\n'
+          '    sdk: flutter\n'
+          '  path_provider: ^2.1.0\n';
+      expect(
+        unjustifiedDependencies(pubspec).map((o) => o.what),
+        contains('path_provider'),
+        reason:
+            'quoted-header: `"dependencies":` is legal YAML that `flutter pub '
+            'get --enforce-lockfile` accepts, and it hid the whole block (#86)',
+      );
+    });
+
+    for (final quote in ['"', "'"]) {
+      final kind = quote == '"' ? 'double' : 'single';
+      test('a $kind-quoted entry key is seen', () {
+        final pubspec =
+            'dependencies:\n'
+            '  flutter:\n'
+            '    sdk: flutter\n'
+            '  ${quote}path_provider$quote: ^2.1.0\n';
+        expect(
+          unjustifiedDependencies(pubspec).map((o) => o.what),
+          contains('path_provider'),
+        );
+      });
+    }
+
+    // The three below are not "spellings the rule now knows". They are shapes
+    // it deliberately refuses, which is the difference that makes this the
+    // last fix of its kind rather than the fourth.
+    final unreadable = {
+      'a flow mapping': 'dependencies: {path_provider: ^2.1.0}\n',
+      'an anchor': 'dependencies: &deps\n  path_provider: ^2.1.0\n',
+      'an alias':
+          'extra: &deps\n  path_provider: ^2.1.0\ndependencies: *deps\n',
+    };
+    for (final entry in unreadable.entries) {
+      test('${entry.key} on a dependency section is refused', () {
+        final offenders = unreadableDependencySections(entry.value);
+        expect(
+          offenders,
+          hasLength(1),
+          reason:
+              'unreadable-${entry.key}: a section this rule cannot parse must '
+              'be refused, not read as empty (#86)',
+        );
+        expect(offenders.single.why, contains('unreadable shape'));
+        // And the refusal reaches the rule invariant 3 actually depends on.
+        expect(
+          unjustifiedDependencies(entry.value).map((o) => o.what),
+          contains(startsWith('dependencies:')),
+        );
+      });
+    }
+
+    test('a plain block opener is not refused', () {
+      // The control that stops the refusal overshooting. A commented header
+      // and an ordinary block must both stay readable, or #79's fix is undone
+      // by #86's.
+      for (final pubspec in const [
+        'dependencies:\n  path_provider: ^2.1.0  # why: fixture\n',
+        'dependencies: # app deps\n  path_provider: ^2.1.0  # why: fixture\n',
+        'dependencies:\n  flutter:\n    sdk: flutter\n',
+      ]) {
+        expect(
+          unreadableDependencySections(pubspec),
+          isEmpty,
+          reason: 'not-overshooting: refused a readable section:\n$pubspec',
+        );
+        expect(
+          unjustifiedDependencies(pubspec),
+          isEmpty,
+          reason: 'not-overshooting: offended on a clean section:\n$pubspec',
+        );
+      }
+    });
+
+    test('a non-dependency key with a value on the line is ignored', () {
+      // `version: 1.0.0+1` and `publish_to: 'none'` are top-level keys with
+      // inline values. Refusing those would fail every pubspec ever written.
+      expect(
+        unreadableDependencySections(
+          "name: honest_sudoku\nversion: 1.0.0+1\npublish_to: 'none'\n",
+        ),
+        isEmpty,
+      );
+    });
+
+    test('the real pubspec is readable', () {
+      expect(
+        unreadableDependencySections(readFile('pubspec.yaml')),
+        isEmpty,
+        reason: "the repository's own pubspec must not trip the new refusal",
+      );
+    });
+
     test('dependency_overrides entries need justification too', () {
       const pubspec = '''
 dependencies:
@@ -470,6 +657,54 @@ dev_dependencies:
       expect(isScannedSourceFile('lib/main.dart'), isTrue);
       expect(isScannedSourceFile('test/whatever.dart'), isFalse);
     });
+
+    // #90. The list was matched with `\bSocket\b`, which correctly spared
+    // `mySocketName` and equally spared `SecureSocket` — the canonical way to
+    // open a TLS connection in Dart, and the name a developer reaches for
+    // first. The boundary is now on the START of the match only, so an
+    // identifier may end in a listed word but not begin before one.
+    //
+    // Both directions matter. A rule that starts matching `mySocketName` gets
+    // switched off as fast as one that misses `SecureSocket`, so the true
+    // negatives below are load-bearing, not decoration.
+    for (final entry in const {
+      'SecureSocket.connect(h, 443);': 'SecureSocket',
+      'RawSecureSocket.connect(h, 443);': 'RawSecureSocket',
+      'ServerSocket.bind(a, 80);': 'ServerSocket',
+      'HttpServer.bind(a, 80);': 'HttpServer',
+      "InternetAddress('1.1.1.1');": 'InternetAddress',
+      'Socket.connect(h, 80);': 'Socket',
+      'io.HttpClient();': 'HttpClient',
+    }.entries) {
+      test('the source rule catches ${entry.value}', () {
+        final offenders = sourceOffenders('lib/x.dart', entry.key);
+        expect(
+          offenders.map((o) => o.what),
+          contains(entry.value),
+          reason:
+              'dartio-${entry.value}: `${entry.key}` opens a network '
+              'connection and must not scan clean (#90)',
+        );
+      });
+    }
+
+    for (final innocent in const [
+      'final mySocketName = 1;',
+      'class WebSocketish {}',
+      'const socket = 2;',
+      'var internetAddressBook = 3;',
+      "const label = 'Rocket';",
+    ]) {
+      test('the source rule leaves `$innocent` alone', () {
+        expect(
+          sourceOffenders('lib/x.dart', innocent),
+          isEmpty,
+          reason:
+              'dartio-negative: the suffix rule started matching an innocent '
+              'identifier, which is how a guard gets switched off',
+        );
+      });
+    }
 
     test('a word that merely contains an identifier is not an offender', () {
       // `WebSocketish` and `mySocketName` must not fire: the identifiers are

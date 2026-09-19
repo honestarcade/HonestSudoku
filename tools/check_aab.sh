@@ -80,8 +80,8 @@ fi
 # declares on ITSELF (<package>.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION), added
 # by androidx.core so dynamically-registered receivers are not world-readable.
 # It is granted only to this app's own signature, is not an android.permission.*
-# and is not shown to users by Play. The bare `permission` run below is that
-# element's name.
+# and is not shown to users by Play. It is allowlisted below, as both the
+# declaration and the request, and only at `signature` level.
 ALLOWED_RESTRICTION="android.permission.DUMP"
 
 FOUND_PERMS="$(printf '%s\n' "$STRINGS" | grep -o 'android\.permission\.[A-Z_]*' | sort -u || true)"
@@ -101,83 +101,164 @@ done <<EOF
 $FOUND_PERMS
 EOF
 
-# Custom permissions — anything REQUESTED that is not an android.permission.*.
+# Permissions, requested and declared.
 #
-# The first attempt at this matched `uses-permission` as a whole run and so
-# never fired at all: the protobuf packs the next field's tag straight onto the
-# element name, and the real run reads `uses-permission"y`. A bundle requesting
-# `com.evilads.sdk.TRACK_USER` passed clean (#80).
+# The manifest has two kinds of permission element and they fail differently:
 #
-# The second attempt matched the run START and then hunted the WHOLE manifest
-# for dotted, permission-shaped tokens. That fired on every intent action and
-# every framework class name in the file and failed the real bundle. A scan that
-# cries wolf on a clean build gets switched off, so it is no better than blind.
+#   REQUESTED   <uses-permission android:name="…"/>
+#               the app asks Android for a capability. Invariant 1 forbids it.
 #
-# So this decodes the element instead of guessing at it. The encoding is
-# regular, and the four runs of a permission entry look like this:
+#   DECLARED    <permission android:name="…" android:protectionLevel="…"/>
+#               the app defines a permission other apps may request. It grants
+#               this app nothing, but invariant 1 says the release build
+#               declares no permissions, and the repository's own manifest
+#               guard bans all five elements.
 #
-#     uses-permission"y                              <- element name + next tag
+# The first version of this check matched `uses-permission` as a whole run and
+# never fired, because the protobuf packs the next field's tag onto the element
+# name and the real run reads `uses-permission"y` (#80). The second hunted the
+# whole manifest for dotted names and failed the real build on intent actions.
+# The third decoded requests correctly and ignored declarations entirely, so a
+# library `<permission>` — which is exactly how the androidx.core one arrives —
+# scanned clean (#87).
+#
+# So both kinds are decoded from the element, the same way. The encoding is
+# regular:
+#
+#     permission"y                                   <- element name + next tag
 #     *http://schemas.android.com/apk/res/android    <- the android namespace
 #     name                                           <- the attribute's name
-#     @com.honestarcade.sudoku.DYNAMIC_...PERMISSION(   <- length byte + value
-#
-# so the value is the run after the one that is exactly `name`, minus the
-# length byte in front and the next field's tag behind.
+#     @com.honestarcade.sudoku.DYNAMIC_…PERMISSION(  <- length byte + value
+#     *http://schemas.android.com/apk/res/android
+#     protectionLevel
+#     signature"
 #
 # What this does NOT cover: a permission name of 128 characters or more takes a
-# two-byte length varint, and only one byte is stripped, so such a name is
-# reported with one stray character in front. It still fails — the verdict never
-# depends on decoding the name, only the message does.
+# two-byte length varint and both bytes are non-printable, so it decodes
+# cleanly; a name of 32 to 127 characters keeps one printable length byte, and
+# is reported with a stray character in front. The verdict never depends on
+# decoding the name — only the message does. It also reads `base/` only, so a
+# feature-module manifest is out of scope; this app has no deferred components.
 #
-# The one expected entry is allowlisted: androidx.core makes every app declare
-# <package>.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION on itself, at signature
-# level, so dynamically-registered receivers are not world-readable. It grants
-# the app nothing beyond its own signature, and Play does not show custom
-# signature permissions to users.
+# One request and one declaration are allowlisted, and they are the same
+# permission: androidx.core makes every app declare
+# <package>.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION on itself so that
+# dynamically-registered receivers are not world-readable. It is allowlisted
+# only at `signature` protection level — at any other level it would be a
+# permission other apps could actually hold, and that is a different thing
+# wearing the same name.
 ALLOWED_SELF_PERMISSION="${PACKAGE}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
 
-# One line per uses-permission element: `VAL <run>`, or `UNDECODED` when the
-# element is there but its name could not be read. Undecodable is a failure, not
-# a pass — a request nobody can name is still a request.
+# One tab-separated line per permission element: kind, name, protection level.
+# An element whose name cannot be read reports `<undecoded>`, which is a
+# failure and not a pass — a permission nobody can name is still a permission.
 PERM_ENTRIES="$(printf '%s\n' "$STRINGS" | awk '
-  function flush() { if (inperm) { print "UNDECODED"; inperm = 0 } }
-  /^uses-permission(-sdk-23)?([^A-Za-z0-9_-]|$)/ {
-    flush(); inperm = 1; window = 0; want = 0; next
+  function flush() {
+    if (inel) {
+      print kind "\t" (name == "" ? "<undecoded>" : name) "\t" level
+      inel = 0
+    }
   }
-  inperm {
+  /^uses-permission(-sdk-23)?([^A-Za-z0-9_-]|$)/ {
+    flush(); kind = "REQUEST"; inel = 1; window = 0; want = ""; name = ""; level = ""; next
+  }
+  /^permission(-group|-tree)?["*]/ {
+    flush(); kind = "DECLARE"; inel = 1; window = 0; want = ""; name = ""; level = ""; next
+  }
+  inel {
     if ($0 == "") next
-    if (++window > 12) { flush(); next }
-    if (want) { print "VAL " $0; inperm = 0; want = 0; next }
-    if ($0 == "name") { want = 1; next }
+    if (++window > 16) { flush(); next }
+    if ($0 == "name") { want = "name"; next }
+    if ($0 == "protectionLevel") { want = "level"; next }
     if (index($0, "schemas.android.com/apk/res")) next
-    # Fallback for a manifest this decoder has not seen the shape of: a run that
-    # looks like a permission name (a dotted id ending in a SHOUTING segment).
-    if ($0 ~ /\.[A-Z][A-Z0-9_]*(\(|$)/) { print "VAL " $0; inperm = 0; next }
+    if (want != "") {
+      v = $0
+      sub(/[("].*$/, "", v)
+      if (want == "name") { name = v } else { level = v }
+      want = ""
+      next
+    }
+    # The element ends at the next element name. Without this the window ran
+    # on into the following elements, a later `name` attribute overwrote the
+    # permission it belonged to, and a clean bundle was reported as
+    # `android.intent.action.MAIN`. An element name is a lowercase run with
+    # the next field tag packed onto it: `application"n`, `intent-filter*`.
+    # Checked AFTER the value assignment above, so a value that happens to
+    # look like one — `signature"` is exactly that — is still read first.
+    if ($0 ~ /^[a-z][a-z0-9_-]*["*]/) { flush(); next }
+    # Fallback for a layout this decoder has not seen: a run shaped like a
+    # permission name (a dotted id ending in a SHOUTING segment).
+    if (name == "" && $0 ~ /\.[A-Z][A-Z0-9_]*(\(|$)/) {
+      v = $0; sub(/[("].*$/, "", v); name = v; next
+    }
   }
   END { flush() }
 ' || true)"
 
-while IFS= read -r entry; do
-  [ -z "$entry" ] && continue
-  if [ "$entry" = "UNDECODED" ]; then
-    OFFENDERS="$OFFENDERS<uses-permission with an unreadable name>
+while IFS="$(printf '\t')" read -r kind rawname rawlevel; do
+  [ -z "${kind:-}" ] && continue
+  # Drop the length byte in front, if the run kept one.
+  value="$rawname"
+  level="${rawlevel:-}"
+  if [ "$value" = "$ALLOWED_SELF_PERMISSION" ] ||
+    [ "${value#?}" = "$ALLOWED_SELF_PERMISSION" ]; then
+    if [ "$kind" = "DECLARE" ] && [ "$level" != "signature" ] &&
+      [ "${level#?}" != "signature" ]; then
+      OFFENDERS="$OFFENDERS$ALLOWED_SELF_PERMISSION declared at protectionLevel '${level:-none}', not signature
 "
+      continue
+    fi
+    SELF_PERM_SEEN="$ALLOWED_SELF_PERMISSION"
     continue
   fi
-  run="${entry#VAL }"
-  # Drop the next field's tag and everything after it, then the length byte.
-  value="${run%%(*}"
-  if [ "$value" = "$ALLOWED_SELF_PERMISSION" ] || [ "${value#?}" = "$ALLOWED_SELF_PERMISSION" ]; then
-    SELF_PERM_SEEN="$ALLOWED_SELF_PERMISSION"
+  if [ "$value" = "<undecoded>" ]; then
+    if [ "$kind" = "DECLARE" ]; then
+      OFFENDERS="$OFFENDERS<permission element with an unreadable name>
+"
+    else
+      OFFENDERS="$OFFENDERS<uses-permission with an unreadable name>
+"
+    fi
     continue
   fi
   name="$(printf '%s' "$value" | grep -oE '[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$' || true)"
   [ -z "$name" ] && name="$value"
-  OFFENDERS="$OFFENDERS$name
+  if [ "$kind" = "DECLARE" ]; then
+    OFFENDERS="$OFFENDERS$name (declared)
 "
+  else
+    OFFENDERS="$OFFENDERS$name
+"
+  fi
 done <<EOF
 $PERM_ENTRIES
 EOF
+
+# The decoder must not go inert on a real bundle.
+#
+# This is the tie between the synthetic fixtures in bundle_scan_test.dart and
+# the genuine article, and it lives here rather than in a test because this
+# runs against the real artefact on every gate run, and a test cannot without
+# racing the build (#92).
+#
+# Every Flutter build carries `flutterEmbedding` meta-data, and every one also
+# carries the androidx.core self-permission — as a <permission> declaration and
+# a <uses-permission> request. So in a bundle that is recognisably a Flutter
+# app, finding no permission element at all does not mean the app is clean; it
+# means the element matcher stopped matching, which is precisely bug #80.
+#
+# If a future Flutter or androidx drops that self-permission this will fail
+# loudly and wrongly. That is the intended direction: a human looks, confirms
+# the encoding, and edits this check. Silence would be the other kind of wrong.
+if printf '%s\n' "$STRINGS" | grep -qF 'flutterEmbedding'; then
+  if [ -z "${SELF_PERM_SEEN:-}" ] && [ -z "$OFFENDERS" ]; then
+    echo "check_aab: this is a Flutter bundle but the scan found no permission element at all." >&2
+    echo "  Every Flutter build declares and requests" >&2
+    echo "  ${PACKAGE}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION via androidx.core." >&2
+    echo "  Finding none means this decoder has gone inert, not that the bundle is clean (#80)." >&2
+    exit 1
+  fi
+fi
 
 OFFENDERS="$(printf '%s' "$OFFENDERS" | grep -v '^$' | sort -u || true)"
 
