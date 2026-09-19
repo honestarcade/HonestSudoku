@@ -355,3 +355,15 @@ Ad-hoc entries (changes made outside the n8SDLC commands that deviate from plann
 - **Decision (Rule 1 — own bug):** `tools/check_aab.sh` used `grep -q` in two places and returned **different answers for identical runs**.
   **Why:** `grep -q` exits at the first match, closing the pipe under `unzip`, which dies of SIGPIPE; `set -o pipefail` then makes that the pipeline's exit status. On a 44 MB bundle it is a race, so the manifest-entry check passed or failed at random — caught only because I ran the same command twice and got different results. Both are `grep -c` now, which reads to the end. Verified stable over six consecutive runs per exit path.
   **Issue:** #14
+
+- **Decision:** #15's three rules are pure functions over strings in `test/guards/dependency_rules.dart`, and every failure case the test plan asks to synthesize is *also* a permanent unit test with inline fixture text.
+  **Why:** The plan's synthesized failures are one-off edits an executor makes, watches fail, and reverts. Nothing then re-proves them. As fixtures they run on every build, so the rules keep demonstrating they can fire rather than only having fired once. Both were done: the fixtures, and the live synthesis against the real pubspec.
+  **Issue:** #15
+
+- **Decision (Rule 1 — own bug, found by testing):** The source rule walked `git ls-files lib`, so an **uncommitted** `.dart` file under `lib/` was invisible to it. It walks the filesystem now.
+  **Why:** Caught by the live synthesis: two throwaway files containing `fonts.googleapis.com` and `HttpClient()` produced no offenders because they were untracked. The tracked-files approach was borrowed from #12's identity guard, where it is right — `android/` holds build residue and a wrapper jar. `lib/` holds none, so there is nothing to skip and everything to catch. A guard that only sees committed code cannot fail a developer before they commit, which is when it is most useful.
+  **Issue:** #15
+
+- **Decision:** `lib/links.dart` is the single file permitted to contain a URL, enforced by a grammar test (comments, `library;` and single-line `const String` declarations only).
+  **Why:** #15's criterion. It also makes the source rule's `https://` ban enforceable without exceptions scattered through the codebase — there is exactly one exception and a test that says what may be in it.
+  **Issue:** #15
