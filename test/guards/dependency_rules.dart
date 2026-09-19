@@ -471,22 +471,27 @@ List<Offender> sourceOffenders(String path, String text) {
     'googlefonts.': 'GoogleFonts API — fonts are bundled',
   };
 
-  // Case-sensitive identifiers: dart:io networking.
+  // The dart:io networking names, listed rather than pattern-matched.
   //
-  // Matched as a SUFFIX, not a whole word. `\bSocket\b` correctly spared
-  // `mySocketName` and equally spared `SecureSocket` — the canonical way to
-  // open a TLS connection in Dart, and the name a developer reaches for first
-  // (#90). `SecureSocket`, `RawSecureSocket` and `ServerSocket` all end in a
-  // listed word, so a suffix rule catches the family without listing it.
+  // #90 made these a suffix match so `SecureSocket` would be caught. It
+  // overshot onto `MockSocket`, `FakeHttpClient` and `TestWebSocket` — exactly
+  // what a test file is full of — and undershot on `_Socket`, which fell
+  // between the lookbehind and the uppercase-prefix branch (#98).
   //
-  // The boundary moves to the START of the match: an identifier may end in
-  // `Socket`, but the match must begin at an identifier boundary, so
-  // `mySocketName` and `WebSocketish` still pass. That asymmetry is the whole
-  // trick, and both directions are fixtures.
+  // Naming the classes is both more precise and easier to read than a rule
+  // that tries to infer them. The boundary below allows a leading underscore
+  // and forbids a leading alphanumeric, so `_Socket` is caught and
+  // `MockSocket` is not.
   final identifiers = <String>[
     'HttpClient',
     'HttpServer',
     'Socket',
+    'RawSocket',
+    'SecureSocket',
+    'RawSecureSocket',
+    'ServerSocket',
+    'RawServerSocket',
+    'SecureServerSocket',
     'WebSocket',
     'RawDatagramSocket',
     'SecurityContext',
@@ -519,12 +524,11 @@ List<Offender> sourceOffenders(String path, String text) {
       // continues an identifier, so `SecureSocket` matches on `Socket` but
       // `mySocketName` does not: there, `Socket` is preceded by `my`.
       // (?![A-Za-z0-9_]) — and nothing may follow, so `WebSocketish` passes.
+      // (?<![A-Za-z0-9]) — not preceded by an alphanumeric, so `MockSocket`
+      // and `mySocketName` pass while `_Socket` is caught.
+      // (?![A-Za-z0-9_]) — not followed by one, so `WebSocketish` passes.
       final pattern = RegExp(
-        '(?<![A-Za-z0-9_])'
-        '[A-Z][A-Za-z0-9_]*${RegExp.escape(identifier)}'
-        '(?![A-Za-z0-9_])'
-        '|'
-        '(?<![A-Za-z0-9_])${RegExp.escape(identifier)}(?![A-Za-z0-9_])',
+        '(?<![A-Za-z0-9])${RegExp.escape(identifier)}(?![A-Za-z0-9_])',
       );
       final match = pattern.firstMatch(line);
       if (match != null) {

@@ -32,9 +32,37 @@ void main() {
 
     test('refuses by shape', () {
       expect(policy.matches('some_ads'), '*_ads');
-      expect(policy.matches('ads_helper'), '*ads_*');
+      expect(policy.matches('ads_helper'), 'ads_*');
+      expect(policy.matches('flutter_ads_helper'), '*_ads_*');
       expect(policy.matches('my_analytics_thing'), '*analytics*');
       expect(policy.matches('firebase_anything'), 'firebase_*');
+    });
+
+    test('the ads shapes mean advertising, not the letters a-d-s', () {
+      // The glob was `*ads_*` and `*ads`, which matched any name containing
+      // those three letters. Anchoring each end to an underscore, or to the
+      // start of the name, is the difference between a shape and a spelling
+      // (#97).
+      for (final innocent in ['gamepads', 'gamepads_android', 'threads']) {
+        expect(
+          policy.matches(innocent),
+          isNull,
+          reason: 'ads-shape: $innocent has nothing to do with advertising',
+        );
+      }
+      for (final real in [
+        'google_mobile_ads',
+        'ads_helper',
+        'flutter_ads_helper',
+        'admob_flutter',
+        'yandex_mobileads',
+      ]) {
+        expect(
+          policy.matches(real),
+          isNotNull,
+          reason: 'ads-shape: $real must still be refused',
+        );
+      }
     });
 
     test('allows what it should', () {
@@ -125,6 +153,17 @@ void main() {
         'just_audio',
         'flutter_svg',
         'share_plus',
+        // The case that mattered and was missing: this list had seventeen
+        // names and not one ended in `ads`, so the `*ads` glob's complement
+        // was never asserted and it refused a real package from the Flame
+        // team, its three platform packages, and two more besides (#97).
+        'gamepads',
+        'gamepads_android',
+        'gamepads_darwin',
+        'gamepads_linux',
+        'downloads_path_provider',
+        'threads',
+        'flame',
       ];
       final refused = <String>[];
       for (final name in mustAllow) {
@@ -828,6 +867,11 @@ dev_dependencies:
       "InternetAddress('1.1.1.1');": 'InternetAddress',
       'Socket.connect(h, 80);': 'Socket',
       'io.HttpClient();': 'HttpClient',
+      // Missed by the suffix rule: `_Socket` fell between the lookbehind and
+      // the uppercase-prefix branch (#98).
+      '_Socket x;': 'Socket',
+      '_HttpClient y;': 'HttpClient',
+      'SecureServerSocket.bind(a, 1);': 'SecureServerSocket',
     }.entries) {
       test('the source rule catches ${entry.value}', () {
         final offenders = sourceOffenders('lib/x.dart', entry.key);
@@ -847,6 +891,14 @@ dev_dependencies:
       'const socket = 2;',
       'var internetAddressBook = 3;',
       "const label = 'Rocket';",
+      // What a test file is full of. The suffix rule flagged all four, and a
+      // guard that fails on the test doubles for the thing it guards against
+      // is one a contributor learns to route around (#98).
+      'class MockSocket {}',
+      'class FakeHttpClient {}',
+      'class TestWebSocket {}',
+      'class MySecurityContext {}',
+      'class BluetoothSocket {}',
     ]) {
       test('the source rule leaves `$innocent` alone', () {
         expect(
