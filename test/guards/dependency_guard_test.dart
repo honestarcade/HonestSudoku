@@ -345,6 +345,111 @@ dependency_overrides:  # sneaky
       );
     });
 
+    // #86. Three passes at this rule each closed the spellings they were
+    // shown, and each time another legal one turned up. These fixtures are
+    // the five that were still open, plus the controls that stop the fix
+    // overshooting — because the rule now refuses shapes it cannot read, and
+    // a rule that refuses too much gets switched off just as fast.
+
+    test('a quoted section header does not hide the section', () {
+      const pubspec =
+          '"dependencies":\n'
+          '  flutter:\n'
+          '    sdk: flutter\n'
+          '  path_provider: ^2.1.0\n';
+      expect(
+        unjustifiedDependencies(pubspec).map((o) => o.what),
+        contains('path_provider'),
+        reason:
+            'quoted-header: `"dependencies":` is legal YAML that `flutter pub '
+            'get --enforce-lockfile` accepts, and it hid the whole block (#86)',
+      );
+    });
+
+    for (final quote in ['"', "'"]) {
+      final kind = quote == '"' ? 'double' : 'single';
+      test('a $kind-quoted entry key is seen', () {
+        final pubspec =
+            'dependencies:\n'
+            '  flutter:\n'
+            '    sdk: flutter\n'
+            '  ${quote}path_provider$quote: ^2.1.0\n';
+        expect(
+          unjustifiedDependencies(pubspec).map((o) => o.what),
+          contains('path_provider'),
+        );
+      });
+    }
+
+    // The three below are not "spellings the rule now knows". They are shapes
+    // it deliberately refuses, which is the difference that makes this the
+    // last fix of its kind rather than the fourth.
+    final unreadable = {
+      'a flow mapping': 'dependencies: {path_provider: ^2.1.0}\n',
+      'an anchor': 'dependencies: &deps\n  path_provider: ^2.1.0\n',
+      'an alias':
+          'extra: &deps\n  path_provider: ^2.1.0\ndependencies: *deps\n',
+    };
+    for (final entry in unreadable.entries) {
+      test('${entry.key} on a dependency section is refused', () {
+        final offenders = unreadableDependencySections(entry.value);
+        expect(
+          offenders,
+          hasLength(1),
+          reason:
+              'unreadable-${entry.key}: a section this rule cannot parse must '
+              'be refused, not read as empty (#86)',
+        );
+        expect(offenders.single.why, contains('unreadable shape'));
+        // And the refusal reaches the rule invariant 3 actually depends on.
+        expect(
+          unjustifiedDependencies(entry.value).map((o) => o.what),
+          contains(startsWith('dependencies:')),
+        );
+      });
+    }
+
+    test('a plain block opener is not refused', () {
+      // The control that stops the refusal overshooting. A commented header
+      // and an ordinary block must both stay readable, or #79's fix is undone
+      // by #86's.
+      for (final pubspec in const [
+        'dependencies:\n  path_provider: ^2.1.0  # why: fixture\n',
+        'dependencies: # app deps\n  path_provider: ^2.1.0  # why: fixture\n',
+        'dependencies:\n  flutter:\n    sdk: flutter\n',
+      ]) {
+        expect(
+          unreadableDependencySections(pubspec),
+          isEmpty,
+          reason: 'not-overshooting: refused a readable section:\n$pubspec',
+        );
+        expect(
+          unjustifiedDependencies(pubspec),
+          isEmpty,
+          reason: 'not-overshooting: offended on a clean section:\n$pubspec',
+        );
+      }
+    });
+
+    test('a non-dependency key with a value on the line is ignored', () {
+      // `version: 1.0.0+1` and `publish_to: 'none'` are top-level keys with
+      // inline values. Refusing those would fail every pubspec ever written.
+      expect(
+        unreadableDependencySections(
+          "name: honest_sudoku\nversion: 1.0.0+1\npublish_to: 'none'\n",
+        ),
+        isEmpty,
+      );
+    });
+
+    test('the real pubspec is readable', () {
+      expect(
+        unreadableDependencySections(readFile('pubspec.yaml')),
+        isEmpty,
+        reason: "the repository's own pubspec must not trip the new refusal",
+      );
+    });
+
     test('dependency_overrides entries need justification too', () {
       const pubspec = '''
 dependencies:

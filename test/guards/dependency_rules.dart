@@ -84,6 +84,7 @@ List<Offender> lockfilePreconditions(
 Set<String> lockedPackageNames(String lockText) {
   final names = <String>{};
   var inPackages = false;
+  int? packageIndent;
   for (final line in lockText.split('\n')) {
     if (RegExp(r'^packages:\s*$').hasMatch(line)) {
       inPackages = true;
@@ -93,8 +94,14 @@ Set<String> lockedPackageNames(String lockText) {
       inPackages = false;
     }
     if (!inPackages) continue;
-    final match = RegExp(r'^  ([A-Za-z0-9_]+):\s*$').firstMatch(line);
-    if (match != null) names.add(match.group(1)!);
+    final match = _entryKey.firstMatch(line);
+    if (match == null) continue;
+    final name = _entryNameOf(match);
+    final indent = match.group(1)!.length;
+    if (name == null || indent == 0) continue;
+    packageIndent ??= indent;
+    if (indent != packageIndent) continue;
+    names.add(name);
   }
   return names;
 }
@@ -111,6 +118,7 @@ List<Offender> lockOffenders(String lockText, String pubspecText) {
   final directDev = _directDependencyNames(pubspecText, dev: true);
 
   var inPackages = false;
+  int? packageIndent;
   final lines = lockText.split('\n');
   for (final line in lines) {
     if (RegExp(r'^packages:\s*$').hasMatch(line)) {
@@ -125,10 +133,18 @@ List<Offender> lockOffenders(String lockText, String pubspecText) {
     }
     if (!inPackages) continue;
 
-    // Package names sit at exactly two spaces of indent: `  http:`.
-    final match = RegExp(r'^  ([A-Za-z0-9_]+):\s*$').firstMatch(line);
+    // The first indented key inside `packages:` sets the package depth, the
+    // same way a pubspec section's entry depth is found. Pinning it to exactly
+    // two spaces let a quoted or four-space entry escape the blocklist
+    // entirely, which is #86's defect wearing a lockfile (#94 review).
+    final match = _entryKey.firstMatch(line);
     if (match == null) continue;
-    final name = match.group(1)!;
+    final name = _entryNameOf(match);
+    if (name == null) continue;
+    final indent = match.group(1)!.length;
+    if (indent == 0) continue;
+    packageIndent ??= indent;
+    if (indent != packageIndent) continue;
     final reason = matches(name);
     if (reason == null) continue;
 
@@ -154,7 +170,9 @@ List<Offender> lockOffenders(String lockText, String pubspecText) {
 /// comment, which a parser would discard. A `dependency_overrides:` section is
 /// refused outright: it can silently swap any package for another.
 List<Offender> unjustifiedDependencies(String pubspecText) {
-  final offenders = <Offender>[];
+  // Refused first, because a section this rule cannot read would otherwise
+  // contribute no entries and so read as a clean section (#86).
+  final offenders = <Offender>[...unreadableDependencySections(pubspecText)];
   final lines = pubspecText.split('\n');
 
   for (var i = 0; i < lines.length; i++) {
@@ -203,18 +221,96 @@ class _Entry {
   final int lineNumber;
 }
 
-/// The section key a line opens, or null if it opens none.
-///
-/// A trailing comment must not hide the header: `dependencies: # app deps` is
-/// valid YAML that `flutter pub get` accepts, and matching against the whole
-/// line made every dependency beneath it invisible to this rule (#79).
-String? _sectionKeyOf(String line) {
-  if (line.isEmpty || line.startsWith(' ') || line.startsWith('#')) return null;
-  final match = RegExp(r'^([A-Za-z0-9_]+):\s*(#.*)?$').firstMatch(line);
-  return match?.group(1);
+/// The dependency sections this rule governs.
+const dependencySections = [
+  'dependencies',
+  'dev_dependencies',
+  'dependency_overrides',
+];
+
+/// A top-level key line, split into the key and whatever follows the colon.
+class _TopLevel {
+  const _TopLevel(this.key, this.rest);
+
+  /// The key with any surrounding quotes removed. `"dependencies":` is legal
+  /// YAML that `flutter pub get` accepts, and it hid the whole section (#86).
+  final String key;
+
+  /// What followed the colon, trailing comment removed and trimmed. Empty
+  /// means the line opens a block; anything else is a value on the same line.
+  final String rest;
 }
 
-int _indentOf(String line) => line.length - line.trimLeft().length;
+_TopLevel? _topLevelOf(String line) {
+  if (line.isEmpty || line.startsWith(' ') || line.startsWith('\t')) {
+    return null;
+  }
+  if (line.trimLeft().startsWith('#')) return null;
+  final match = RegExp('^(?:"([^"]+)"|\'([^\']+)\'|([A-Za-z0-9_]+))\\s*:(.*)\$')
+      .firstMatch(line);
+  if (match == null) return null;
+  final key = match.group(1) ?? match.group(2) ?? match.group(3)!;
+  var rest = match.group(4)!;
+  final hash = rest.indexOf('#');
+  if (hash != -1) rest = rest.substring(0, hash);
+  return _TopLevel(key, rest.trim());
+}
+
+/// The section key a line opens, or null if it opens none.
+///
+/// A line only opens a section when nothing follows the colon. A trailing
+/// comment does not count as something following it: `dependencies: # app deps`
+/// is valid YAML, and matching against the whole line made every dependency
+/// beneath it invisible (#79).
+String? _sectionKeyOf(String line) {
+  final top = _topLevelOf(line);
+  if (top == null || top.rest.isNotEmpty) return null;
+  return top.key;
+}
+
+/// A key line shaped `<name>:`, quoted or not, with its indent.
+final _entryKey = RegExp(
+  '^(\\s*)(?:"([^"]+)"|\'([^\']+)\'|([A-Za-z0-9_]+))\\s*:',
+);
+
+String? _entryNameOf(RegExpMatch match) =>
+    match.group(2) ?? match.group(3) ?? match.group(4);
+
+/// Dependency sections written in a shape this rule cannot read.
+///
+/// This is the rule that matters, and it is the one three passes at #79 and
+/// #86 were missing. Every previous fix taught the parser one more spelling of
+/// YAML, and every time another legal spelling turned up that the rule saw as
+/// nothing at all:
+///
+///     dependencies: {path_provider: ^2.1.0}    # flow mapping
+///     dependencies: &deps                      # anchor
+///     dependencies: *deps                      # alias
+///
+/// `flutter pub get --enforce-lockfile` accepts all three. So rather than
+/// recognising them one at a time, anything that is not a plain block opener
+/// is refused **because** the rule cannot read it. "I cannot read this" must
+/// never render as "there is nothing here" — that is the whole defect class.
+List<Offender> unreadableDependencySections(String pubspecText) {
+  final offenders = <Offender>[];
+  final lines = pubspecText.split('\n');
+  for (var i = 0; i < lines.length; i++) {
+    final top = _topLevelOf(lines[i]);
+    if (top == null) continue;
+    if (!dependencySections.contains(top.key)) continue;
+    if (top.rest.isEmpty) continue;
+    offenders.add(
+      Offender(
+        'pubspec.yaml:${i + 1}',
+        '${top.key}: ${top.rest}',
+        'this section is not written as a plain block, so the justification '
+            'rule cannot read it — an unreadable shape is refused, never '
+            'ignored (invariant 3)',
+      ),
+    );
+  }
+  return offenders;
+}
 
 List<_Entry> _sectionEntries(String pubspecText, String section) {
   final entries = <_Entry>[];
@@ -231,6 +327,12 @@ List<_Entry> _sectionEntries(String pubspecText, String section) {
       entryIndent = null;
       continue;
     }
+    // A top-level line that is not a block opener still ends the section.
+    if (_topLevelOf(line) != null) {
+      inSection = false;
+      entryIndent = null;
+      continue;
+    }
     if (!inSection) continue;
     if (line.trimLeft().startsWith('#')) continue;
 
@@ -238,12 +340,14 @@ List<_Entry> _sectionEntries(String pubspecText, String section) {
     // belongs to a multi-line entry whose key line was already seen. Two
     // spaces is the convention, not the rule — four-space pubspecs are legal
     // and used to escape this scan entirely (#79).
-    final match = RegExp(r'^\s*([A-Za-z0-9_]+):').firstMatch(line);
+    final match = _entryKey.firstMatch(line);
     if (match == null) continue;
-    final indent = _indentOf(line);
+    final name = _entryNameOf(match);
+    if (name == null) continue;
+    final indent = match.group(1)!.length;
     entryIndent ??= indent;
     if (indent != entryIndent) continue;
-    entries.add(_Entry(match.group(1)!, line, i + 1));
+    entries.add(_Entry(name, line, i + 1));
   }
   return entries;
 }
