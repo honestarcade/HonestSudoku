@@ -6,6 +6,10 @@ version: 1.0.0+1
 
 environment:
   sdk: ^3.13.4
+  # A range, not a pin: an exact version here makes `flutter pub get`
+  # refuse every other one. The exact version CI uses is in .fvmrc,
+  # and a guard asserts the two agree (#18).
+  flutter: ">=3.47.0"
 
 dependencies:
   flutter:

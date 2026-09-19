@@ -1,0 +1,157 @@
+# Prove the secrets work, before a tag depends on them.
+#
+# Two independent checks, both `if: always()`, so one dispatch tells you which
+# half is wrong rather than stopping at the first. Neither changes anything: the
+# Play check opens a throwaway edit and deletes it, so the account is left
+# exactly as it was.
+#
+# Nothing here prints a secret. The keystore check prints the alias and the
+# certificate fingerprint, which are public by nature — the fingerprint is
+# committed to this repository as android/signing/upload_certificate.pem, and
+# this check exists partly to confirm the two still match.
+name: Play API check
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: play-api-check
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - id: checkout
+        name: Checkout
+        uses: actions/checkout@v7
+
+      - id: java
+        name: Set up Java
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - id: play
+        name: Play access
+        if: always()
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          PACKAGE: com.honestarcade.sudoku
+        run: |
+          set -euo pipefail
+          if [ -z "$PLAY_SERVICE_ACCOUNT_JSON" ]; then
+            echo "PLAY_SERVICE_ACCOUNT_JSON is not set" >&2
+            exit 1
+          fi
+          umask 077
+          key="$RUNNER_TEMP/play-sa.json"
+          printf '%s' "$PLAY_SERVICE_ACCOUNT_JSON" > "$key"
+          gcloud auth activate-service-account --key-file "$key" --quiet
+          token="$(gcloud auth print-access-token \
+            --scopes=https://www.googleapis.com/auth/androidpublisher)"
+          echo "::add-mask::$token"
+
+          api="https://androidpublisher.googleapis.com/androidpublisher/v3/applications"
+          body="$RUNNER_TEMP/edit.json"
+          status="$(curl -sS -o "$body" -w '%{http_code}' -X POST \
+            -H "Authorization: Bearer $token" -H "Content-Type: application/json" \
+            -d '{}' "$api/$PACKAGE/edits")"
+          if [ "$status" != "200" ]; then
+            echo "could not open an edit for $PACKAGE (HTTP $status)" >&2
+            echo "  403 usually means the service account has not been invited in the Console." >&2
+            echo "  404 usually means the app entry does not exist yet." >&2
+            sed -n '1,15p' "$body" >&2
+            exit 1
+          fi
+          edit="$(sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$body" | head -1)"
+
+          tracks="$RUNNER_TEMP/tracks.json"
+          curl -sS -o "$tracks" -H "Authorization: Bearer $token" \
+            "$api/$PACKAGE/edits/$edit/tracks" > /dev/null
+          names="$(tr -d ' \n' < "$tracks" |
+            sed -n 's/.*/&/p' | grep -oE '"track":"[a-z]+"' | cut -d'"' -f4 | sort -u | tr '\n' ' ')"
+
+          curl -sS -o /dev/null -X DELETE -H "Authorization: Bearer $token" \
+            "$api/$PACKAGE/edits/$edit" || true
+          rm -f "$key"
+
+          # An empty list passes: a brand-new app has no tracks until its first
+          # upload, and that is a correct state rather than a failure.
+          {
+            echo "### Play access"
+            echo ""
+            echo "Opened and deleted a throwaway edit for \`$PACKAGE\`."
+            echo ""
+            echo "Tracks: ${names:-none yet, which is expected before the first upload}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - id: keystore
+        name: Keystore secrets
+        if: always()
+        env:
+          HS_KEYSTORE_B64: ${{ secrets.HS_KEYSTORE_B64 }}
+          HS_KEYSTORE_PASS: ${{ secrets.HS_KEYSTORE_PASS }}
+          HS_KEY_ALIAS: ${{ secrets.HS_KEY_ALIAS }}
+          HS_KEY_PASS: ${{ secrets.HS_KEY_PASS }}
+        run: |
+          set -euo pipefail
+          for name in HS_KEYSTORE_B64 HS_KEYSTORE_PASS HS_KEY_ALIAS HS_KEY_PASS; do
+            if [ -z "${!name:-}" ]; then
+              echo "$name is not set" >&2
+              exit 1
+            fi
+          done
+          umask 077
+          ks="$RUNNER_TEMP/upload.keystore"
+          base64 -d <<< "$HS_KEYSTORE_B64" > "$ks"
+
+          # Proves the store password opens it, and prints only the alias and
+          # the fingerprint — both public.
+          listing="$RUNNER_TEMP/listing.txt"
+          keytool -list -v -keystore "$ks" -storetype PKCS12 \
+            -storepass:env HS_KEYSTORE_PASS > "$listing"
+          alias_seen="$(sed -n 's/^Alias name: //p' "$listing" | head -1)"
+          bundle_fp="$(grep -m1 -oE 'SHA256: [0-9A-F:]+' "$listing" | sed 's/^SHA256: //')"
+
+          # Proves the KEY password too, which the store password does not.
+          keytool -certreq -alias "$HS_KEY_ALIAS" -keystore "$ks" \
+            -storetype PKCS12 -storepass:env HS_KEYSTORE_PASS \
+            -keypass:env HS_KEY_PASS > /dev/null
+
+          pem_fp="$(keytool -printcert -file android/signing/upload_certificate.pem |
+            grep -m1 -oE 'SHA256: [0-9A-F:]+' | sed 's/^SHA256: //')"
+          rm -f "$ks"
+
+          {
+            echo "### Keystore secrets"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| alias | \`$alias_seen\` |"
+            echo "| secret fingerprint | \`$bundle_fp\` |"
+            echo "| committed certificate | \`$pem_fp\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$bundle_fp" != "$pem_fp" ]; then
+            echo "the keystore in the secret is NOT the one this repository committed" >&2
+            exit 1
+          fi
+          echo "the keystore secret matches the committed certificate"
+
+      - id: forget
+        name: Forget the credentials
+        if: always()
+        run: |
+          set -euo pipefail
+          rm -f "$RUNNER_TEMP/play-sa.json" "$RUNNER_TEMP/upload.keystore"
+          gcloud auth revoke --all --quiet || true

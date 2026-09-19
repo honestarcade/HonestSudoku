@@ -1,0 +1,248 @@
+# Pushing a version tag ships.
+#
+# The order is the safety property: the identical gate re-runs on the tagged
+# commit, then the bundle is built from secrets, scanned for permissions, and
+# its signing certificate checked against the committed one — and only then
+# does anything reach Play. A failure at any earlier step uploads nothing.
+#
+# Production is never touched here. The upload track is `internal`, and
+# promotion to closed testing is a separate, manually dispatched workflow.
+# Production remains a human act in the Console (owner's call, 2026-09-18).
+#
+# Secrets are supplied as step-level `env:` on the four steps that need them,
+# never job-wide, so a step with no business seeing the keystore password does
+# not have it in scope. No step prints one; a guard asserts that and refuses
+# `set -x` anywhere in this directory.
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: play-release
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  gate:
+    # The same file the pull-request gate uses, not a copy of its steps.
+    uses: ./.github/workflows/ci.yml
+    secrets: inherit
+
+  ship:
+    needs: gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write    # release asset upload only
+    env:
+      FLUTTER_SUPPRESS_ANALYTICS: "true"
+    steps:
+      - id: checkout
+        name: Checkout
+        uses: actions/checkout@v7
+
+      # First, so a missing secret fails in seconds rather than after a build.
+      # Each is tested for emptiness; none is printed.
+      - id: secrets_present
+        name: Assert every secret is present
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          HS_KEYSTORE_B64: ${{ secrets.HS_KEYSTORE_B64 }}
+          HS_KEYSTORE_PASS: ${{ secrets.HS_KEYSTORE_PASS }}
+          HS_KEY_ALIAS: ${{ secrets.HS_KEY_ALIAS }}
+          HS_KEY_PASS: ${{ secrets.HS_KEY_PASS }}
+        run: |
+          set -euo pipefail
+          missing=""
+          for name in PLAY_SERVICE_ACCOUNT_JSON HS_KEYSTORE_B64 HS_KEYSTORE_PASS HS_KEY_ALIAS HS_KEY_PASS; do
+            if [ -z "${!name:-}" ]; then missing="$missing $name"; fi
+          done
+          if [ -n "$missing" ]; then
+            echo "missing repository secrets:$missing" >&2
+            exit 1
+          fi
+          echo "all five secrets are present"
+
+      # Refuses a malformed tag before anything is built. stdout is the
+      # contract; it is tee'd so the log shows what the next steps will use.
+      - id: version
+        name: Resolve version from tag
+        run: |
+          set -euo pipefail
+          tools/ci_version.sh "$GITHUB_REF_NAME" "$GITHUB_RUN_NUMBER" "$GITHUB_RUN_ATTEMPT" \
+            | tee -a "$GITHUB_OUTPUT"
+
+      - id: java
+        name: Set up Java
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      - id: flutter
+        name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version-file: .fvmrc
+          cache: true
+
+      - id: deps
+        name: Resolve dependencies
+        run: flutter pub get --enforce-lockfile
+
+      - id: keystore
+        name: Decode the upload keystore
+        env:
+          HS_KEYSTORE_B64: ${{ secrets.HS_KEYSTORE_B64 }}
+        run: |
+          set -euo pipefail
+          umask 077
+          base64 -d <<< "$HS_KEYSTORE_B64" > "$RUNNER_TEMP/upload.keystore"
+          test -s "$RUNNER_TEMP/upload.keystore"
+
+      # Proves the decoded file is a keystore and that the store password
+      # opens it, before a four-minute build discovers otherwise.
+      - id: keystore_check
+        name: Check the keystore opens
+        env:
+          HS_KEYSTORE_PASS: ${{ secrets.HS_KEYSTORE_PASS }}
+        run: |
+          set -euo pipefail
+          keytool -list -keystore "$RUNNER_TEMP/upload.keystore" \
+            -storetype PKCS12 -storepass:env HS_KEYSTORE_PASS > /dev/null
+          echo "the keystore opens"
+
+      # HS_RELEASE=1 makes a missing signing input a hard failure in
+      # build.gradle.kts rather than a silent fall back to the debug key.
+      - id: build
+        name: Build the signed bundle
+        env:
+          HS_KEYSTORE_PATH: ${{ runner.temp }}/upload.keystore
+          HS_KEYSTORE_PASS: ${{ secrets.HS_KEYSTORE_PASS }}
+          HS_KEY_ALIAS: ${{ secrets.HS_KEY_ALIAS }}
+          HS_KEY_PASS: ${{ secrets.HS_KEY_PASS }}
+          HS_RELEASE: "1"
+        run: |
+          set -euo pipefail
+          flutter build appbundle --release --no-pub \
+            --build-name="${{ steps.version.outputs.name }}" \
+            --build-number="${{ steps.version.outputs.code }}"
+
+      - id: scan
+        name: Scan the bundle for permissions
+        run: tools/check_aab.sh
+
+      - id: cert
+        name: Verify the signing certificate
+        run: tools/verify_upload_cert.sh
+
+      - id: artifact
+        name: Upload the signed bundle as an artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: honest-sudoku-signed-${{ github.ref_name }}
+          path: build/app/outputs/bundle/release/app-release.aab
+          retention-days: 30
+          if-no-files-found: error
+
+      # The release already exists: /n8-release creates it and the tag
+      # together. A missing release is not a failure — the bundle is still on
+      # Play and in the artifact.
+      - id: asset
+        name: Attach the bundle to the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          aab=build/app/outputs/bundle/release/app-release.aab
+          if ! gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            echo "no GitHub release for this tag; skipping asset"
+            exit 0
+          fi
+          sha256sum "$aab" > "$aab.sha256"
+          gh release upload "$GITHUB_REF_NAME" "$aab" "$aab.sha256" --clobber
+          gh release download "$GITHUB_REF_NAME" --pattern 'app-release.aab' \
+            --dir "$RUNNER_TEMP/verify" --clobber
+          local_hash="$(sha256sum "$aab" | cut -d' ' -f1)"
+          remote_hash="$(sha256sum "$RUNNER_TEMP/verify/app-release.aab" | cut -d' ' -f1)"
+          if [ "$local_hash" != "$remote_hash" ]; then
+            echo "the uploaded asset does not match what was built" >&2
+            exit 1
+          fi
+          echo "asset attached and its hash re-verified"
+
+      # Last, so that every verification above has already passed.
+      - id: play
+        name: Upload to the Play internal track
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: com.honestarcade.sudoku
+          releaseFiles: build/app/outputs/bundle/release/app-release.aab
+          track: internal
+          status: completed
+
+      - id: summary
+        name: Write the summary
+        if: always()
+        run: |
+          set -euo pipefail
+          aab=build/app/outputs/bundle/release/app-release.aab
+          {
+            echo "### Release ${{ github.ref_name }}"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| version name | ${{ steps.version.outputs.name }} |"
+            echo "| version code | ${{ steps.version.outputs.code }} |"
+            echo "| package | com.honestarcade.sudoku |"
+            echo "| track | internal |"
+            if [ -f "$aab" ]; then
+              echo "| bundle SHA-256 | $(sha256sum "$aab" | cut -d' ' -f1) |"
+            fi
+            echo ""
+            echo "Native debug symbols are not uploaded: this is a Flutter"
+            echo "default build with no obfuscation mapping to attach."
+            echo ""
+            echo "Play Console: https://play.google.com/console"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - id: name_failure
+        name: Name the failed step
+        if: failure()
+        run: |
+          set -euo pipefail
+          echo '${{ toJSON(steps) }}' \
+            | grep -B2 '"outcome": "failure"' \
+            | tee -a "$GITHUB_STEP_SUMMARY" || true
+
+      # Always, including after a failure: a decoded keystore must not outlive
+      # the job on a runner, however the job ended.
+      - id: shred
+        name: Remove the decoded keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/upload.keystore"
+
+  report-gate-failure:
+    needs: gate
+    if: failure()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - id: say
+        name: Say nothing shipped
+        run: |
+          set -euo pipefail
+          echo "gate failed on ${{ github.ref_name }}; nothing shipped" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
