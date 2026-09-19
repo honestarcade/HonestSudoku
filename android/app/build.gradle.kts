@@ -4,6 +4,38 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+// Release signing comes from the environment, never from a file in the tree:
+// there is no key.properties to leak and no literal to grep for.
+//
+// Three behaviours, deliberately different:
+//   * all four HS_* set          -> sign with the upload key
+//   * none set, HS_RELEASE unset -> fall back to the debug key and WARN, so
+//                                   `flutter run --release` still works locally
+//   * HS_RELEASE=1, any missing  -> fail configuration naming the variable, so
+//                                   an unsigned bundle can never reach Play by
+//                                   accident
+val hsSigningVars = listOf("HS_KEYSTORE_PATH", "HS_KEYSTORE_PASS", "HS_KEY_ALIAS", "HS_KEY_PASS")
+val hsPresent = hsSigningVars.filter { !System.getenv(it).isNullOrBlank() }
+val hsReleaseRequested = System.getenv("HS_RELEASE") == "1"
+val hsSigningComplete = hsPresent.size == hsSigningVars.size
+
+// Partly set is always an error, in any mode: it almost certainly means a typo
+// in the variable name, and silently signing with the debug key would hide it.
+if (hsPresent.isNotEmpty() && !hsSigningComplete) {
+    val missing = hsSigningVars.first { System.getenv(it).isNullOrBlank() }
+    throw GradleException("$missing is not set")
+}
+if (hsReleaseRequested && !hsSigningComplete) {
+    val missing = hsSigningVars.first { System.getenv(it).isNullOrBlank() }
+    throw GradleException("$missing is not set")
+}
+if (hsReleaseRequested) {
+    val keystore = file(System.getenv("HS_KEYSTORE_PATH"))
+    if (!keystore.exists() || !keystore.canRead()) {
+        throw GradleException("HS_KEYSTORE_PATH does not exist: ${keystore.path}")
+    }
+}
+
 android {
     namespace = "com.honestarcade.sudoku"
     compileSdk = flutter.compileSdkVersion
@@ -29,12 +61,32 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        if (hsSigningComplete) {
+            create("release") {
+                storeFile = file(System.getenv("HS_KEYSTORE_PATH"))
+                storePassword = System.getenv("HS_KEYSTORE_PASS")
+                keyAlias = System.getenv("HS_KEY_ALIAS")
+                keyPassword = System.getenv("HS_KEY_PASS")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            if (hsSigningComplete) {
+                signingConfig = signingConfigs.getByName("release")
+            } else {
+                // Both, deliberately. logger.warn is the Gradle-idiomatic
+                // call, but `flutter build` filters warn-level output at its
+                // default verbosity (visible only with -v), and a warning
+                // nobody sees cannot do the job it exists for.
+                logger.warn("HS_* signing variables not set — release build signed with the DEBUG key; set HS_RELEASE=1 to make this an error")
+                println("HS_* signing variables not set — release build signed with the DEBUG key; set HS_RELEASE=1 to make this an error")
+                signingConfig = signingConfigs.getByName("debug")
+            }
         }
+        // profile stays on debug signing deliberately; it is never uploaded.
     }
 }
 

@@ -379,3 +379,22 @@ Ad-hoc entries (changes made outside the n8SDLC commands that deviate from plann
 - **Decision:** The README's audio paragraph is written in the future tense ("when licensed sound effects ship") and says the synthesised placeholders are MIT-covered.
   **Why:** #16's criterion describes the carve-out, but no audio exists yet and M5 #49 ships placeholders before M6 #63 replaces them. Claiming a licence carve-out over files that do not exist would be false today; M6 #63 rewrites this paragraph in the present tense when the real clips land, which that story's criteria already require.
   **Issue:** #16
+
+- **Decision:** `build.gradle.kts` prints the debug-fallback warning with **both** `logger.warn` and `println`.
+  **Why:** #13 specifies `logger.warn(...)` and that is implemented verbatim, but `flutter build` filters Gradle's warn-level output at default verbosity — the line only appeared under `-v`. A warning nobody sees cannot tell a developer their release build is debug-signed, which is the entire reason the criterion asks for one.
+  **Issue:** #13
+
+- **Decision:** A partly-set signing environment fails configuration in **every** mode, not only under `HS_RELEASE=1`.
+  **Why:** #13's criterion asks for this ("with the variables only partly set in any mode"), and the reason is worth recording: a half-set environment is almost always a typo in a variable name, and falling back to debug signing would hide it until an unsigned bundle reached the Console.
+  **Issue:** #13
+
+- **Decision (Rule 1 — own bug):** The credentials file's first line was prose, so `source`-ing it errored, despite the file being documented as an env template. It is a comment now, in the script and in the already-generated file.
+  **Why:** Found by using it rather than reading it — sourcing the file to run the signed build printed `command not found: Honest`.
+  **Issue:** #13
+
+- **Decision (Rule 3 — blocker):** `.gitignore` gains `/android/build/`.
+  **Why:** Gradle writes a reports directory there, and the existing `/build/` pattern is anchored to the repository root, so it was about to be committed. Caught by reading `git status` before committing rather than trusting it.
+  **Issue:** #13
+
+- **Note:** the upload keystore was generated with a 40-character random password. The value was never printed, never passed as an argument, and was verified absent from both the tracked files and the working tree by searching for the literal. It exists only in `~/HonestArcadeApps/secrets/sudoku-signing-credentials.txt` (chmod 600), which the owner must move into a password manager and delete.
+  **Issue:** #13
