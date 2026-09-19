@@ -274,3 +274,45 @@ Ad-hoc entries (changes made outside the n8SDLC commands that deviate from plann
 - **Decision:** Audit emphases refreshed, still provisional (M7 unplanned). M6 adds device-only suites that CI never runs, a hard audio gate and the first ARM determinism check — all things a later audit should re-test rather than trust.
   **Why:** The analysis is final only once the highest feature milestone and every lower one are planned.
   **Issue:** M8
+
+## /n8-plan M7 — 2026-09-19
+
+- **Decision:** The store listing and every App content declaration are completed before the closed test, not alongside it.
+  **Why:** Play refuses a completed release outside the internal track while an app is still a draft. Frog Across discovered this only when its own promotion came back as a draft release. Item 17 therefore blocks item 19.
+  **Issue:** #71, #72
+
+- **Decision:** The act that takes the app out of draft — publishing the closed-testing release — belongs to #72, and #71 only clears the obstacles to it.
+  **Why:** The coverage check found the act orphaned: each of the two stories named the other as the publisher, which is the same failure the milestone exists to avoid. The second check found the corrected criterion still contradicted by that story's title, summary, stated truth, artifact line and discretion; all five were rewritten.
+  **Issue:** #71, #72
+
+- **Decision:** Countries and regions are set explicitly, once for the closed-testing track and once for production.
+  **Why:** The plan had no item for them at all. A tester outside the selected set cannot install and looks exactly like one who never opted in; a 100% rollout to no countries is live nowhere.
+  **Issue:** #72, #74
+
+- **Decision:** The closed test starts at the beginning of M7 rather than running in parallel with M6, and recruiting starts on the milestone's first day with a target of fifteen.
+  **Why:** Owner's calls ("At the start of M7", "None yet", 2026-09-19). The fourteen days are therefore added to the schedule rather than absorbed into it. Fifteen because Play restarts the count on a dip below twelve.
+  **Issue:** #70, #73
+
+- **Decision:** The fourteen-day log records joiners and leavers, not only a daily headcount, and the Console's own qualification indicator closes the criterion.
+  **Why:** Play counts per tester — twelve people each need fourteen consecutive days — so a roster that churns can show twelve every single day while nobody accumulates fourteen.
+  **Issue:** #73
+
+- **Decision:** The owner performs every Play Console action personally; the agent prepares an entry sheet for each page and never drives the Console. GitHub is the agent's: tags, workflows, releases and records.
+  **Why:** Owner's call ("You do it; I prepare everything", 2026-09-19). Browser control was available and deliberately not used: the Console is the owner's Google account, and a form submitted before they read it is not a form they agreed to.
+  **Issue:** #68, #69, #70, #71, #72, #73, #74
+
+- **Decision:** A blocking defect found during the hold ships as v1.0.1 to the testers, with its own release notes and GitHub release; the fourteen days do not restart and the production rollout promotes the newer code.
+  **Why:** Owner's call ("Ship 1.0.1 to the testers", 2026-09-19). Play counts testers opted in to the track, not to a version. The launch record is written against the version actually released, not the one first planned.
+  **Issue:** #73, #74, #75
+
+- **Decision:** On release day the promote workflow is dispatched once at production, expecting refusal, and the run URL is quoted.
+  **Why:** M1 proved the service account cannot reach production; this proves it has not drifted on the one day it matters. A permission granted in the meantime would silently widen what CI can do.
+  **Issue:** #74
+
+- **Decision:** Audit emphases are now final rather than provisional, since M7 is the highest feature milestone and every lower one is planned.
+  **Why:** The analysis can only be final once nothing below it can still change. Added since the last revision: store-truth (does the listing still describe the build?) and a check that the service account still cannot reach production.
+  **Issue:** M8
+
+- **Decision:** Two project skills approved for building: a Play Console launch runbook and a Sudoku techniques reference. An owner-task tracking issue (#76) lists all eleven owner actions in plan order.
+  **Why:** Owner's calls (2026-09-19). The runbook pays off on the studio's third app; the techniques reference is read by both the engine's grading and the difficulty tuning. The tracker exists because three owner tasks gate long waits and the label alone does not show what is coming.
+  **Issue:** #76
