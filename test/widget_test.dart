@@ -28,11 +28,3 @@ void main() {
     expect(find.text('1'), findsOneWidget);
   });
 }
-
-// CI SMOKE TEST — deliberately broken to prove the gate blocks a merge.
-// This branch is never merged; it exists so #18's claim that a red gate
-// blocks the merge button is demonstrated rather than asserted.
-void main2() {}
-
-// ignore: unused_element
-int _smokeBreak() => 'this does not compile as an int';
