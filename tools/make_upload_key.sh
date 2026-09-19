@@ -24,13 +24,24 @@ CREDENTIALS="$SECRETS_DIR/sudoku-signing-credentials.txt"
 ALIAS="upload"
 KEYTOOL="${HS_KEYTOOL:-/opt/homebrew/opt/openjdk@21/bin/keytool}"
 
-if [ -e "$KEYSTORE" ]; then
-  echo "make_upload_key: $KEYSTORE already exists — refusing to overwrite." >&2
-  echo "  This key is the app's identity with Play. If you genuinely need a new" >&2
-  echo "  one, use the Play Console's upload-key reset flow and move the old" >&2
-  echo "  file aside deliberately." >&2
-  exit 1
-fi
+# Either output existing is a refusal, not just the keystore.
+#
+# The credentials file is the only record of the generated password until the
+# owner moves it into a password manager, and the keystore it unlocks cannot be
+# regenerated once Play has enrolled it — so overwriting that file is the one
+# irreversible thing this script can do. It used to refuse on the keystore
+# alone, which meant a run with the keystore moved aside silently replaced the
+# password of a key that still existed (#93).
+for hs_existing in "$KEYSTORE" "$CREDENTIALS"; do
+  if [ -e "$hs_existing" ]; then
+    echo "make_upload_key: $hs_existing already exists — refusing to overwrite." >&2
+    echo "  This key is the app's identity with Play, and the credentials file" >&2
+    echo "  is the only copy of its password until you move it to a password" >&2
+    echo "  manager. If you genuinely need a new key, use the Play Console's" >&2
+    echo "  upload-key reset flow and move BOTH files aside deliberately." >&2
+    exit 2
+  fi
+done
 
 if [ -z "${HS_KEYSTORE_PASS:-}" ]; then
   echo "make_upload_key: set HS_KEYSTORE_PASS in the environment." >&2

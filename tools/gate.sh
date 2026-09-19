@@ -46,20 +46,36 @@ SIGNING_VARS=(HS_KEYSTORE_PATH HS_KEYSTORE_PASS HS_KEY_ALIAS HS_KEY_PASS)
 # told they were on the debug fallback one line before the build stopped with
 # "HS_KEY_PASS is not set" (#82). The message was wrong exactly where a correct
 # one saves the most time — which is why this one names the missing variable.
+# Blank, not merely empty. build.gradle.kts decides with Kotlin's
+# isNullOrBlank(), which treats whitespace as unset; this used to decide with
+# [ -n "$var" ], which does not. For `HS_KEY_PASS=" "` the two disagreed, and
+# the disagreement ran the wrong way: the gate announced the upload key, Gradle
+# took the debug fallback, the build SUCCEEDED and GATE PASSED was printed over
+# a debug-signed bundle (#91). #82 was cosmetic because the gate failed either
+# way. This one passed, which is why the two checks must agree exactly.
+hs_is_blank() {
+  [ -z "$(printf '%s' "${1:-}" | tr -d '[:space:]')" ]
+}
+
 signing_mode() {
   local set_count=0
   local missing=""
   local name
   for name in "${SIGNING_VARS[@]}"; do
-    if [ -n "${!name:-}" ]; then
+    if hs_is_blank "${!name:-}"; then
+      if [ -z "$missing" ]; then missing="$name"; fi
+    else
       set_count=$((set_count + 1))
-    elif [ -z "$missing" ]; then
-      missing="$name"
     fi
   done
 
   if [ "$set_count" -eq "${#SIGNING_VARS[@]}" ]; then
-    if [ "${HS_RELEASE:-}" = "1" ]; then
+    # Say what the build will do, not what the variables suggest. Promising
+    # the upload key while the keystore is missing is the same class of
+    # false headline as the blank check above.
+    if [ ! -r "${HS_KEYSTORE_PATH}" ]; then
+      echo "HS_* set but HS_KEYSTORE_PATH is not readable — the build will fail"
+    elif [ "${HS_RELEASE:-}" = "1" ]; then
       echo "HS_* set, HS_RELEASE=1 — signing with the upload key"
     else
       echo "HS_* set — signing with the upload key"
@@ -89,6 +105,10 @@ while [ "$i" -lt "$total" ]; do
   command="${COMMANDS[$i]}"
 
   if [ "$step" -eq 5 ]; then
+    # The path GATE PASSED names must hold this run's artefact or nothing. A
+    # failed build used to leave the previous run's bundle sitting exactly
+    # where a human, or M1's upload step, would look for it (#93).
+    rm -f "$BUNDLE"
     echo "[$step/$total] $label ($(signing_mode))"
   else
     echo "[$step/$total] $label"
