@@ -1,0 +1,122 @@
+# Move a build from one testing track to another. Nothing is built here.
+#
+# Two barriers stand between this workflow and production, at different layers.
+# The first step below refuses a bad track before any API call and exits 1; the
+# script it then calls performs its own allowlist check and exits 2. Either
+# alone would be enough, which is the point — a change to one does not silently
+# remove the guarantee. The service account's Console permission set is the
+# third, and the only one a human can alter without a diff.
+#
+# Production is a human act in the Play Console (owner's call, 2026-09-18).
+name: Play track promote
+
+on:
+  workflow_dispatch:
+    inputs:
+      from_track:
+        description: Track to promote from
+        required: true
+        default: internal
+      to_track:
+        description: Track to promote to
+        required: true
+        default: alpha
+
+permissions:
+  contents: read
+
+concurrency:
+  group: play-promote
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - id: refuse
+        name: Refuse anything that is not a testing track
+        env:
+          FROM_TRACK: ${{ inputs.from_track }}
+          TO_TRACK: ${{ inputs.to_track }}
+        run: |
+          set -euo pipefail
+          for track in "$FROM_TRACK" "$TO_TRACK"; do
+            if [ "$track" = "production" ]; then
+              echo "production is a human act in the Play Console" >&2
+              exit 1
+            fi
+            case "$track" in
+            internal | alpha | beta) ;;
+            *)
+              echo "'$track' is not one of: internal alpha beta" >&2
+              exit 1
+              ;;
+            esac
+          done
+          if [ "$FROM_TRACK" = "$TO_TRACK" ]; then
+            echo "source and target are the same track" >&2
+            exit 1
+          fi
+          echo "$FROM_TRACK -> $TO_TRACK accepted"
+
+      - id: checkout
+        name: Checkout
+        uses: actions/checkout@v7
+
+      # gcloud is preinstalled on ubuntu-latest, so nothing is downloaded here.
+      - id: token
+        name: Mint a Play API token
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+        run: |
+          set -euo pipefail
+          umask 077
+          key="$RUNNER_TEMP/play-sa.json"
+          printf '%s' "$PLAY_SERVICE_ACCOUNT_JSON" > "$key"
+          gcloud auth activate-service-account --key-file "$key" --quiet
+          token="$(gcloud auth print-access-token \
+            --scopes=https://www.googleapis.com/auth/androidpublisher)"
+          echo "::add-mask::$token"
+          echo "PLAY_TOKEN=$token" >> "$GITHUB_ENV"
+          rm -f "$key"
+
+      - id: promote
+        name: Promote
+        env:
+          FROM_TRACK: ${{ inputs.from_track }}
+          TO_TRACK: ${{ inputs.to_track }}
+        run: |
+          set -euo pipefail
+          tools/play_promote.sh com.honestarcade.sudoku "$FROM_TRACK" "$TO_TRACK" \
+            | tee "$RUNNER_TEMP/promote.out"
+
+      - id: summary
+        name: Write the summary
+        if: always()
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/promote.out"
+          {
+            echo "### Play track promote"
+            echo ""
+            if [ -f "$out" ]; then
+              codes="$(sed -n 's/^promoted=//p' "$out")"
+              status="$(sed -n 's/^status=//p' "$out")"
+              echo "Promoted on Play: versionCode [$codes], ${{ inputs.from_track }} -> ${{ inputs.to_track }} (release status: $status)"
+            else
+              echo "Nothing was promoted."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - id: forget
+        name: Forget the token
+        if: always()
+        run: |
+          set -euo pipefail
+          rm -f "$RUNNER_TEMP/play-sa.json"
+          gcloud auth revoke --all --quiet || true
