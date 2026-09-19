@@ -76,14 +76,18 @@ chmod 700 "$SECRETS_DIR"
 chmod 600 "$KEYSTORE"
 
 umask 177
+# Quoted, because this file documents itself as sourceable. An unquoted value
+# containing a space breaks `. this-file`, and one containing a shell
+# metacharacter executes on it. The generator produces alphanumerics today, but
+# the file is written to be read and edited by a human (#108).
 cat > "$CREDENTIALS" <<EOF
 # Honest Sudoku upload keystore credentials — MOVE TO YOUR PASSWORD MANAGER,
 # then delete this file. Every line is a comment or an export, so this file can
 # be sourced directly: \`set -a; . this-file; set +a\`.
-export HS_KEYSTORE_PATH=$KEYSTORE
-export HS_KEYSTORE_PASS=$HS_KEYSTORE_PASS
-export HS_KEY_ALIAS=$ALIAS
-export HS_KEY_PASS=$HS_KEYSTORE_PASS
+export HS_KEYSTORE_PATH="$KEYSTORE"
+export HS_KEYSTORE_PASS="$HS_KEYSTORE_PASS"
+export HS_KEY_ALIAS="$ALIAS"
+export HS_KEY_PASS="$HS_KEYSTORE_PASS"
 # NOTE: PKCS12 keystores use ONE password for store and key — HS_KEY_PASS
 # equals HS_KEYSTORE_PASS by format design, not by an oversight.
 # This file doubles as an env template: source it to build a signed release.

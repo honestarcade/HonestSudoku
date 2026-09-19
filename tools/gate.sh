@@ -121,6 +121,18 @@ BUILD_LOG="$(mktemp -t hs-gate-build)"
 trap 'rm -f "$BUILD_LOG"' EXIT
 SIGNING_MODE=""
 
+# Runs one step as an array of words.
+#
+# `eval` was the dispatcher, which #17's own discretion forbade in writing
+# ("executes each step as an array of words via a function (no `eval`)"). No
+# exploit today, since COMMANDS holds literals — but the stated contract is
+# that M1's CI consumes this, and there was no function for it to call (#108).
+run_step() {
+  local -a words
+  read -r -a words <<< "$1"
+  "${words[@]}"
+}
+
 total=${#LABELS[@]}
 i=0
 while [ "$i" -lt "$total" ]; do
@@ -144,10 +156,10 @@ while [ "$i" -lt "$total" ]; do
   if [ "$step" -eq 5 ]; then
     # Captured as well as streamed, so the cross-check below can read what
     # Gradle actually said. PIPESTATUS, not $?, because $? here would be tee.
-    eval "$command" 2>&1 | tee "$BUILD_LOG"
+    run_step "$command" 2>&1 | tee "$BUILD_LOG"
     status=${PIPESTATUS[0]}
   else
-    eval "$command" || status=$?
+    run_step "$command" || status=$?
   fi
   if [ "$status" -ne 0 ]; then
     echo "GATE FAILED at $label"
