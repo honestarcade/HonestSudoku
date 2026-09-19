@@ -152,3 +152,33 @@ Ad-hoc entries (changes made outside the n8SDLC commands that deviate from plann
 - **Decision:** No `TODO` comments in code: the gate runs `dart analyze --fatal-infos` and `todo` is an info. Temporary code is marked with a plain `// M4 replaces …` comment.
   **Why:** Found by the executor simulation; a TODO would have failed the gate.
 - **Decision:** M3 launches straight into a 9×9 Medium board with a plain loading placeholder and placeholder routes; M4 replaces them with the designed screens.
+
+## /n8-plan M4 — 2026-09-19
+
+- **Decision:** Ten stories (#37–#46), no spikes, no subtasks; chain #37 → #38 → #39 → #40 → {#41, #42, #43, #44 → #45} → #46.
+- **Decision:** Plugins `path_provider` and `url_launcher` adopted after manifest checks (no permissions declared; url_launcher adds only an internal activity), with `# why:` lines carrying the check date.
+  **Why:** Owner approved both over hand-written platform channels.
+  **Issue:** #38, #44
+- **Decision:** Android automatic backup stays on; the privacy policy (M0 #16) gains a sentence saying Android's own backup may copy saved progress to the player's Google account and the studio never receives it.
+  **Why:** Owner chose it so a new phone keeps stats. Amends #16 (unexecuted) via #38.
+- **Decision:** Returning to the board (menu Continue, back from Rules or Settings) lands paused; a fresh generation enters playing.
+  **Why:** Owner chose it; consistent with "no time counted you didn't play". Diverges from the prototype.
+  **Issue:** #39
+- **Decision:** A loss or an abandoned puzzle ends the streak; starting a new board while one is unfinished counts as started-not-solved.
+  **Why:** Owner chose it; matches "Finished without giving up".
+  **Issue:** #37, #39
+- **Decision:** One `AppSettings` document (game toggles, theme, sound toggles, last setup incl. next-board strike/announce modes) with a single `updateSettings`; setup edits the next board's modes, Settings edits the running game's; a restored game's modes become the running modes and are written back.
+  **Why:** The prototype shared one value between both screens; the executor simulation showed the two screens need different targets once a game can be in progress.
+  **Issue:** #38, #41, #42, #39
+- **Decision:** The saved game stores the puzzle's solution and givens so restore never regenerates; a finished game is deleted at launch; stats persist with the game writes, not per second.
+  **Issue:** #38, #39
+- **Decision:** M3's win card (#35) is amended to show the recorded streak (no `+ 1`); the win is recorded before the card mounts.
+  **Why:** Avoids a double count.
+  **Issue:** #37, #39
+- **Decision:** Version from a build-time `HS_VERSION` define (gate and release workflow), no package-info plugin; the About screen drops the design's install-size text.
+  **Issue:** #40, #42, #44
+- **Decision:** Non-board screens use logical points, scroll, and honour the system text scale; a parameterised overflow test at 1.3× covers every route.
+  **Issue:** #40, #46
+- **Decision:** Route destinations follow the design's `goMenu`/`goBack` split (setup, stats and About the App always to the menu; settings, how-to and studio to the board when opened from the pause card, else the menu); route helpers live in one file so only they push the board or menu routes.
+  **Issue:** #40, #46
+- **Decision:** One second-pass simulation agent stalled for hours without reporting; it was replaced by a fresh run rather than waited on.
