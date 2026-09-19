@@ -130,3 +130,25 @@ Ad-hoc entries (changes made outside the n8SDLC commands that deviate from plann
 - **Decision:** `package:meta` is allowed inside the engine (ships with the SDK) for `@visibleForTesting`.
   **Issue:** #22, #27
 - **Decision:** The engine is pure Dart under `lib/engine/` with an import guard; the game-state model (place, undo, strikes) is M3's first story, built on this engine.
+
+## /n8-plan M3 — 2026-09-18
+
+- **Decision:** Nine stories (#28–#36), no spikes, no subtasks; chain #28 → #29 → #30; #31 after #29; #32, #33, #34, #35 after #31; #36 last.
+- **Decision:** The board layout scales with screen width (cap 430/390), top-aligned inside a safe area.
+  **Why:** Owner chose it over fixed pixel sizes.
+  **Issue:** #36
+- **Decision:** Android back on the board pauses; back while paused goes to the main menu; backgrounding auto-pauses and the game stays paused on return.
+  **Why:** Owner chose both.
+  **Issue:** #36
+- **Decision:** The strike counter counts a wrong entry immediately even in announce-at-end mode (as the prototype); pencil marks use a fixed slot per value (unlike the prototype's packed order).
+  **Why:** Owner's calls.
+  **Issue:** #34, #31
+- **Decision:** Divergences from the prototype recorded for verification: redo recomputes won/lost; check and hint idle when the game is over or paused; a pencil-mark toggle on a filled cell is a no-op; the hinted cell's yellow clears on any selection or notice change; lowering the strike limit mid-game loses only on the next wrong entry; both overlays hide the board; Zen's grid-full message drops "the ones in red"; hover borders become a press dip.
+  **Why:** Each closes a hole or a self-contradiction the prototype leaves; all are listed in the milestone's REFINED lines.
+- **Decision:** No state-management package. The game model is pure Dart under `lib/game/` with its own imports guard; a `ChangeNotifier` controller under `lib/ui/board/` owns state, clock and lifecycle.
+  **Why:** Invariant 3; the model stays unit-testable without Flutter.
+  **Issue:** #28, #36
+- **Decision:** Board text ignores the system text scale in M3; M5's accessibility story revisits font scaling with the large-digits setting.
+- **Decision:** No `TODO` comments in code: the gate runs `dart analyze --fatal-infos` and `todo` is an info. Temporary code is marked with a plain `// M4 replaces …` comment.
+  **Why:** Found by the executor simulation; a TODO would have failed the gate.
+- **Decision:** M3 launches straight into a 9×9 Medium board with a plain loading placeholder and placeholder routes; M4 replaces them with the designed screens.
