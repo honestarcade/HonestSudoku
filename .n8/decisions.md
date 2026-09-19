@@ -182,3 +182,53 @@ Ad-hoc entries (changes made outside the n8SDLC commands that deviate from plann
 - **Decision:** Route destinations follow the design's `goMenu`/`goBack` split (setup, stats and About the App always to the menu; settings, how-to and studio to the board when opened from the pause card, else the menu); route helpers live in one file so only they push the board or menu routes.
   **Issue:** #40, #46
 - **Decision:** One second-pass simulation agent stalled for hours without reporting; it was replaced by a fresh run rather than waited on.
+
+## /n8-plan M5 — 2026-09-19
+
+- **Decision:** Sound plays through a ~60-line in-repo Android `SoundPool` bridge on a method channel, not a plugin.
+  **Why:** `audioplayers` depends on `http`, which #15's blocklist refuses under invariant 1; `just_audio` brings a full media player and `audio_session`; `soundpool` was last published in 2023 against Kotlin 1.5 / compileSdk 31. A bridge adds no package, no permission and no transitive surface. Haptics need no plugin at all (`HapticFeedback`).
+  **Issue:** #49, #55
+
+- **Decision:** Sounds fire on placement, mistake, solve and the last strike; one per entry, by priority. In announce-at-the-end mode a wrong entry plays the ordinary click, not the thud.
+  **Why:** Owner chose the four events. The thud would reveal the mistake that the at-the-end mode exists to hide.
+  **Issue:** #49
+
+- **Decision:** Sounds use `USAGE_GAME`/`CONTENT_TYPE_SONIFICATION`, so they follow media volume and mute, not the ringer switch; flipping Sound effects on plays one confirmation click.
+  **Why:** Owner's calls; matches how games behave and gives immediate proof the sound works at the current volume.
+  **Issue:** #49
+
+- **Decision:** Design colours that fail the 4.5:1 contrast guideline are nudged to the nearest passing shade of the same hue, each recorded in a table; the six brand swatches are never changed.
+  **Why:** Owner chose nudging over exempting. The failures are Paper pencil marks (2.9:1), Paper user digits (4.0), Paper wrong digits (4.4), the dim mono label (3.5) and the card kicker (3.7) — plus anything the guideline runs turn up, including hint-yellow marks on Paper.
+  **Issue:** #52, #56
+
+- **Decision:** Grid cells are exempt from the 48 dp tap-target guideline under a project guideline that skips nodes tagged `grid-cell`; every other control meets it, with pad and tool hit areas reaching 48 dp by inflating the pad's own box.
+  **Why:** A 16×16 cell is 22 pt and cannot be 48. A `RenderBox` rejects hit tests outside its own size, so overlapping keys alone would leave the outer keys' extra area dead.
+  **Issue:** #56
+
+- **Decision:** Grid digits and pencil marks follow only the Large digits setting; the rest of the board screen follows the phone's font size up to 1.3×. The notice banner caps at three lines and the pad follows its measured height, dropping to two lines rather than covering the tools.
+  **Why:** Owner's call on the banner; the grid is geometry-bound, so system scaling there would break the board.
+  **Issue:** #53
+
+- **Decision:** Screens keep M4's 150 ms cross-fade and only the win/out-of-strikes card rises; everything animated collapses to an instant change under the phone's remove-animations setting.
+  **Why:** Owner's calls. The design's `hs-rise` applies to the end-of-game card alone.
+  **Issue:** #50
+
+- **Decision:** Fonts are the static Outfit and IBM Plex Mono instances, fetched from pinned commits by a script, hash-pinned and committed; Outfit becomes the app-wide theme font.
+  **Why:** Invariant 1 forbids fetching fonts at runtime; pinned hashes make the download reproducible and let the guard enforce it.
+  **Issue:** #47
+
+- **Decision:** The launcher ships an adaptive icon plus an Android 13 monochrome layer; the brand sheet's light tile is not shipped. The studio's four-corner mark is verified against a committed copy of Honest Frog Across's brand SVG, which must be copied from that repo rather than retyped.
+  **Why:** Android uses one icon. Honest Chess and Honest Solitaire do not exist yet, so Frog Across holds the canonical studio mark; retyping the paths from the issue would make the guard prove only internal consistency.
+  **Issue:** #54
+
+- **Decision:** Store screenshots are captured by an integration test driven with `flutter drive` on a 1080×1920 emulator, with fixed seeds, pinned status bar and statistics seeded backwards from what the capture run itself records.
+  **Why:** `flutter test` cannot write screenshots. The run's own play fires `recordStart` and `recordAbandon`, so a naively seeded book photographs the wrong numbers.
+  **Issue:** #57
+
+- **Decision:** The coverage check rejected three story ownerships before filing. Map items for grid-size scaling and the palette now point at M3's #31/#36 as the deliverers, with the M5 stories named as evidence only; a twelfth item was added for the menu, About-the-App and About-Honest-Arcade marks.
+  **Why:** #52's only criterion touching the swatches says they are untouched, and #57's screenshots evidence scaling without asserting it. An owner column that names a story which disclaims the work reads as covered while covering nothing.
+  **Issue:** #48, #52, #57
+
+- **Decision:** Audit emphases refreshed and still provisional (M6 and M7 unplanned). M5 adds native and asset surface — the sound bridge, bundled fonts and audio — plus the accessibility exemption, which the audit should re-test rather than trust.
+  **Why:** The whole-project analysis can only be final once the highest feature milestone and every lower one are planned.
+  **Issue:** M8
