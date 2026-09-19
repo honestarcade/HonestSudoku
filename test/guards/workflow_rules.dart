@@ -148,6 +148,60 @@ List<WorkflowOffender> concurrencyOffenders(String path, String text) {
         ];
 }
 
+/// A `run:` block must never print a secret.
+///
+/// GitHub masks a secret's exact value in the log, but masking is a safety
+/// net, not a policy: it fails on a transformed value (base64, a substring,
+/// a value embedded in JSON) and it cannot mask what a shell expands before
+/// the runner sees it. The rule is therefore "do not print it", not "rely on
+/// the mask".
+List<WorkflowOffender> secretEchoOffenders(String path, String text) {
+  final offenders = <WorkflowOffender>[];
+  final lines = text.split('\n');
+  for (var i = 0; i < lines.length; i++) {
+    final line = _stripComment(lines[i]);
+    if (lines[i].trimLeft().startsWith('#')) continue;
+    if (!RegExp(r'secrets\.[A-Za-z_]').hasMatch(line)) continue;
+    if (RegExp(r'(^|[;&|]|\s)(echo|printf|cat)\s').hasMatch(line)) {
+      offenders.add(
+        WorkflowOffender(
+          path,
+          i + 1,
+          'a shell command prints a `secrets.` expression; the log mask is a '
+          'net, not a policy, and it does not survive transformation',
+        ),
+      );
+    }
+  }
+  return offenders;
+}
+
+/// `set -x` traces every expanded command, including expanded secrets.
+///
+/// Matched as a flag cluster, so `set -euxo pipefail` is caught as well as the
+/// obvious `set -x`.
+List<WorkflowOffender> shellTraceOffenders(String path, String text) {
+  final offenders = <WorkflowOffender>[];
+  final lines = text.split('\n');
+  for (var i = 0; i < lines.length; i++) {
+    if (lines[i].trimLeft().startsWith('#')) continue;
+    final match = RegExp(r'(^|[;&|]|\s)set\s+-([A-Za-z]+)')
+        .firstMatch(_stripComment(lines[i]));
+    if (match == null) continue;
+    if (match.group(2)!.contains('x')) {
+      offenders.add(
+        WorkflowOffender(
+          path,
+          i + 1,
+          '`set -${match.group(2)}` traces every expanded command, which in a '
+          'job holding secrets means printing them',
+        ),
+      );
+    }
+  }
+  return offenders;
+}
+
 /// Dependabot must watch both ecosystems this repository has.
 ///
 /// The github-actions one is what justifies pinning at a major tag rather than

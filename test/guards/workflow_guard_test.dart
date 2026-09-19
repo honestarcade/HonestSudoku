@@ -88,6 +88,24 @@ void main() {
       );
     });
 
+    test('no workflow prints a secret or traces its shell', () {
+      final offenders = <String>[];
+      for (final path in _workflowFiles()) {
+        final text = readFile(path);
+        offenders.addAll(
+          secretEchoOffenders(path, text).map((o) => o.toString()),
+        );
+        offenders.addAll(
+          shellTraceOffenders(path, text).map((o) => o.toString()),
+        );
+      }
+      expect(
+        offenders,
+        isEmpty,
+        reason: describeOffenders('secrets', offenders),
+      );
+    });
+
     test('dependabot watches both ecosystems', () {
       final offenders = dependabotOffenders(
         pathExists('.github/dependabot.yml')
@@ -210,6 +228,56 @@ void main() {
         ),
         isEmpty,
       );
+    });
+
+    test('printing a secret is refused, in each spelling', () {
+      for (final bad in const [
+        r'        run: echo ${{ secrets.HS_KEY_PASS }}',
+        r'        run: printf "%s" "${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}"',
+        r'        run: cat <<< "${{ secrets.HS_KEYSTORE_B64 }}"',
+        r'        run: foo && echo "${{ secrets.X }}"',
+      ]) {
+        expect(
+          secretEchoOffenders('bad.yml', '$bad\n'),
+          hasLength(1),
+          reason: 'secret-echo: accepted `$bad`',
+        );
+      }
+    });
+
+    test('using a secret without printing it is allowed', () {
+      for (final good in const [
+        r'          HS_KEY_PASS: ${{ secrets.HS_KEY_PASS }}',
+        r'        run: base64 -d <<< "${{ secrets.HS_KEYSTORE_B64 }}" > "$RUNNER_TEMP/k"',
+        r'        run: echo "the keystore decoded"',
+      ]) {
+        expect(
+          secretEchoOffenders('good.yml', '$good\n'),
+          isEmpty,
+          reason: 'secret-echo-negative: refused `$good`',
+        );
+      }
+    });
+
+    test('a set flag cluster containing x is refused', () {
+      for (final bad in const [
+        'set -x',
+        'set -euxo pipefail',
+        'foo; set -ex',
+      ]) {
+        expect(
+          shellTraceOffenders('bad.yml', '        run: $bad\n'),
+          hasLength(1),
+          reason: 'trace: accepted `$bad`',
+        );
+      }
+      for (final good in const ['set -euo pipefail', 'set -e', 'settle -x']) {
+        expect(
+          shellTraceOffenders('good.yml', '        run: $good\n'),
+          isEmpty,
+          reason: 'trace-negative: refused `$good`',
+        );
+      }
     });
 
     test('a dependabot file missing an ecosystem is refused', () {
