@@ -556,3 +556,7 @@ CI and the tag-to-Play pipeline, on `milestone/m1-ci`. Three stories implemented
 
 - **Blocker:** #19 needs three owner acts — the Play Console app entry, a `gcloud auth login` on this machine, and the Console permission invite for the service account. The automation for all three is written; the credential is not mine to supply. #20 and #21 are implemented and tested for everything that does not need a credential, and their live verification waits on this.
   **Issue:** #19, blocking the live halves of #20 and #21
+
+- **Decision (Rule 1 — own bug, found by CI on its first run):** `tools/gate.sh` used `mktemp -t hs-gate-build`, which works on macOS and fails on GNU coreutils with "too few X's in template".
+  **Why it matters beyond the one line:** this is the first defect in this project found by a machine that is not the author's. Four rounds of local verification could not have found it — the gate passed every time on macOS, where `mktemp -t` treats the argument as a prefix. It failed within two minutes of CI existing. The portable form is an explicit template under `${TMPDIR:-/tmp}`.
+  **Issue:** #18

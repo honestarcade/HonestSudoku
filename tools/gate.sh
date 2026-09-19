@@ -141,7 +141,11 @@ flutter_pin_warning
 # must do so for the whole run — the removal used to sit at step 5, by which
 # time step 4 had already read whatever was there (#108).
 rm -f "$BUNDLE"
-BUILD_LOG="$(mktemp -t hs-gate-build)"
+# Portable across BSD and GNU. `mktemp -t <prefix>` appends a suffix on
+# macOS and demands a template ending in XXX on GNU coreutils — CI found that
+# on its first run, which is the kind of thing only a machine that is not the
+# author's can tell you.
+BUILD_LOG="$(mktemp "${TMPDIR:-/tmp}/hs-gate-build.XXXXXX")"
 trap 'rm -f "$BUILD_LOG"' EXIT
 SIGNING_MODE=""
 
