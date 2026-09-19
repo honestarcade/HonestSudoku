@@ -28,3 +28,7 @@ void main() {
     expect(find.text('1'), findsOneWidget);
   });
 }
+
+// CI SMOKE TEST — deliberately broken to prove the gate blocks a merge.
+// Removed again in the next commit; this branch is never merged.
+int _smokeBreak() => 'this does not compile as an int';
