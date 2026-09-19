@@ -373,13 +373,26 @@ List<Offender> sourceOffenders(String path, String text) {
     'googlefonts.': 'GoogleFonts API — fonts are bundled',
   };
 
-  // Case-sensitive identifiers, whole word: dart:io networking.
+  // Case-sensitive identifiers: dart:io networking.
+  //
+  // Matched as a SUFFIX, not a whole word. `\bSocket\b` correctly spared
+  // `mySocketName` and equally spared `SecureSocket` — the canonical way to
+  // open a TLS connection in Dart, and the name a developer reaches for first
+  // (#90). `SecureSocket`, `RawSecureSocket` and `ServerSocket` all end in a
+  // listed word, so a suffix rule catches the family without listing it.
+  //
+  // The boundary moves to the START of the match: an identifier may end in
+  // `Socket`, but the match must begin at an identifier boundary, so
+  // `mySocketName` and `WebSocketish` still pass. That asymmetry is the whole
+  // trick, and both directions are fixtures.
   final identifiers = <String>[
     'HttpClient',
+    'HttpServer',
     'Socket',
     'WebSocket',
     'RawDatagramSocket',
     'SecurityContext',
+    'InternetAddress',
   ];
 
   // lib/links.dart is the one file allowed to hold a URL.
@@ -404,8 +417,20 @@ List<Offender> sourceOffenders(String path, String text) {
       );
     }
     for (final identifier in identifiers) {
-      if (RegExp('\\b${RegExp.escape(identifier)}\\b').hasMatch(line)) {
-        offenders.add(Offender(at, identifier, 'dart:io networking'));
+      // (?<![A-Za-z0-9_]) — the match may be preceded by nothing that
+      // continues an identifier, so `SecureSocket` matches on `Socket` but
+      // `mySocketName` does not: there, `Socket` is preceded by `my`.
+      // (?![A-Za-z0-9_]) — and nothing may follow, so `WebSocketish` passes.
+      final pattern = RegExp(
+        '(?<![A-Za-z0-9_])'
+        '[A-Z][A-Za-z0-9_]*${RegExp.escape(identifier)}'
+        '(?![A-Za-z0-9_])'
+        '|'
+        '(?<![A-Za-z0-9_])${RegExp.escape(identifier)}(?![A-Za-z0-9_])',
+      );
+      final match = pattern.firstMatch(line);
+      if (match != null) {
+        offenders.add(Offender(at, match.group(0)!, 'dart:io networking'));
       }
     }
   }

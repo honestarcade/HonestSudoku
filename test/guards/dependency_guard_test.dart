@@ -576,6 +576,54 @@ dev_dependencies:
       expect(isScannedSourceFile('test/whatever.dart'), isFalse);
     });
 
+    // #90. The list was matched with `\bSocket\b`, which correctly spared
+    // `mySocketName` and equally spared `SecureSocket` — the canonical way to
+    // open a TLS connection in Dart, and the name a developer reaches for
+    // first. The boundary is now on the START of the match only, so an
+    // identifier may end in a listed word but not begin before one.
+    //
+    // Both directions matter. A rule that starts matching `mySocketName` gets
+    // switched off as fast as one that misses `SecureSocket`, so the true
+    // negatives below are load-bearing, not decoration.
+    for (final entry in const {
+      'SecureSocket.connect(h, 443);': 'SecureSocket',
+      'RawSecureSocket.connect(h, 443);': 'RawSecureSocket',
+      'ServerSocket.bind(a, 80);': 'ServerSocket',
+      'HttpServer.bind(a, 80);': 'HttpServer',
+      "InternetAddress('1.1.1.1');": 'InternetAddress',
+      'Socket.connect(h, 80);': 'Socket',
+      'io.HttpClient();': 'HttpClient',
+    }.entries) {
+      test('the source rule catches ${entry.value}', () {
+        final offenders = sourceOffenders('lib/x.dart', entry.key);
+        expect(
+          offenders.map((o) => o.what),
+          contains(entry.value),
+          reason:
+              'dartio-${entry.value}: `${entry.key}` opens a network '
+              'connection and must not scan clean (#90)',
+        );
+      });
+    }
+
+    for (final innocent in const [
+      'final mySocketName = 1;',
+      'class WebSocketish {}',
+      'const socket = 2;',
+      'var internetAddressBook = 3;',
+      "const label = 'Rocket';",
+    ]) {
+      test('the source rule leaves `$innocent` alone', () {
+        expect(
+          sourceOffenders('lib/x.dart', innocent),
+          isEmpty,
+          reason:
+              'dartio-negative: the suffix rule started matching an innocent '
+              'identifier, which is how a guard gets switched off',
+        );
+      });
+    }
+
     test('a word that merely contains an identifier is not an offender', () {
       // `WebSocketish` and `mySocketName` must not fire: the identifiers are
       // matched at word boundaries. Without this the rule would be unusable.
