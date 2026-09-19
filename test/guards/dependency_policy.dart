@@ -75,9 +75,15 @@ const List<String> blockedNames = [
 /// Refused by shape, for the ones nobody has thought of yet. `*` matches any
 /// run including an empty one, and the pattern is anchored to the whole name.
 const List<String> blockedPatterns = [
+  // Shapes that mean advertising, not letters that spell it. `*ads` and
+  // `*ads_*` were both too broad: they refused `gamepads` (a real package from
+  // the Flame team, and a plausible want for a game), its three federated
+  // platform packages, `downloads_path_provider` and `threads`. A blocklist
+  // that refuses ordinary packages gets deleted, and the glob is also what
+  // catches the ads SDKs nobody has named yet (#97).
   '*_ads',
-  '*ads_*',
-  '*ads',
+  '*_ads_*',
+  'ads_*',
   'admob*',
   '*mobileads*',
   '*analytics*',

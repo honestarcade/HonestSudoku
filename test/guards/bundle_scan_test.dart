@@ -342,6 +342,87 @@ void main() {
     );
   });
 
+  // #103. The first inertness check used one flag set by EITHER matcher, so it
+  // only fired when both went blind at once — and a recurrence of #87 alone
+  // (declarations invisible) or #80 alone (requests invisible) passed the gate
+  // silently. Those are the two bugs it exists to catch. Both halves are now
+  // required, and each missing half is named.
+  test('a Flutter bundle missing the self-permission DECLARATION fails', () {
+    final m = _Manifest()..packageId(_package);
+    m
+      ..element('uses-permission')
+      ..attribute('name', _selfPermission)
+      ..element('meta-data')
+      ..attribute('name', 'flutterEmbedding')
+      ..attribute('value', '2');
+    final scan = _scan(_bundle(tmp, 'inert-declare', m.bytes));
+    expect(
+      scan.exitCode,
+      1,
+      reason:
+          'inert-declare: androidx.core puts the self-permission in every '
+          'build as BOTH a declaration and a request. Finding only the '
+          'request means the declaration decoder went blind (#103).\n'
+          '${scan.output}',
+    );
+    expect(scan.stderr, contains('<permission> declaration'));
+  });
+
+  test('a Flutter bundle missing the self-permission REQUEST fails', () {
+    final m = _Manifest()..packageId(_package);
+    m
+      ..element('permission')
+      ..attribute('name', _selfPermission)
+      ..attribute('protectionLevel', 'signature')
+      ..element('meta-data')
+      ..attribute('name', 'flutterEmbedding')
+      ..attribute('value', '2');
+    final scan = _scan(_bundle(tmp, 'inert-request', m.bytes));
+    expect(
+      scan.exitCode,
+      1,
+      reason: 'inert-request: the other half (#103).\n${scan.output}',
+    );
+    expect(scan.stderr, contains('<uses-permission> request'));
+  });
+
+  test('a non-Flutter bundle with no permissions is left alone', () {
+    // The control. The inertness check keys on `flutterEmbedding`, so it must
+    // not fire on a bundle that legitimately has no permission elements.
+    final m = _Manifest()..packageId(_package);
+    m
+      ..element('application')
+      ..attribute('label', 'Something Else');
+    final scan = _scan(_bundle(tmp, 'not-flutter', m.bytes));
+    expect(
+      scan.exitCode,
+      0,
+      reason:
+          'inert-control: this bundle is not a Flutter app, so finding no '
+          'permission element is the truth rather than a blind decoder.\n'
+          '${scan.output}',
+    );
+  });
+
+  test('the android:permission attribute is not read as a declaration', () {
+    // Why the two element-start patterns are deliberately asymmetric. Widening
+    // the declaration pattern to match the request one was tried and caught:
+    // `permission` is also an attribute name — `android:permission` on a
+    // receiver — and its run is bare, so the wider pattern read the DUMP
+    // access restriction as a declared permission and failed the real bundle.
+    final scan = _scan(
+      _bundle(tmp, 'attr-not-element', _realisticBase().bytes),
+    );
+    expect(
+      scan.exitCode,
+      0,
+      reason:
+          'attr-not-element: the DUMP restriction is an attribute, not a '
+          '<permission> element.\n${scan.output}',
+    );
+    expect(scan.stderr, isNot(contains('DUMP (declared)')));
+  });
+
   test('a wrong package id fails with its own exit code', () {
     final m = _Manifest()..packageId('com.honestarcade.sudoku.honest_sudoku');
     final scan = _scan(_bundle(tmp, 'wrong-package', m.bytes));

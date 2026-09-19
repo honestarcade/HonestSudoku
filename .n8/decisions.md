@@ -481,3 +481,48 @@ Scoped to the nine bugs `/n8-verify M0` filed against `74e1f629` (#86–#94), on
 - **Decision (correction, same run):** #92's guarantee moved from the test into `tools/check_aab.sh`, reversing the approach I had committed an hour earlier.
   **Why:** having the test build its own bundle raced. `flutter test` runs files concurrently, and `signing_guard_test.dart` asserts a refused build leaves the bundle untouched, so the build started by `bundle_scan_test.dart` changed the file under it and the gate went red. Two tests fighting over one artefact is worse than the problem being solved. Reordering the gate would fix the race but makes every failing unit test wait on a release build and changes the step order the README and CLAUDE.md publish. The scanner now refuses a bundle that is recognisably a Flutter app yet yields no permission element at all — the signature of an inert decoder, which is what #80 was — and that runs against the real artefact at step 6 of every gate run. Found only by running the gate from an empty `build/` directory; both earlier runs had a bundle already on disk and passed.
   **Issue:** #92
+
+## /n8-exec M0 (third fix pass) — 2026-09-19
+
+Scoped to the thirteen bugs the third `/n8-verify M0` filed against `a6494a7` (#96–#108), on `milestone/m0-fixes-3`. I had reported that a fourth round on this surface was likely worth less than M1's CI; the owner re-ran `/n8-exec M0`, so that is their call and all thirteen were fixed.
+
+- **Decision (the structural one):** where two pieces of code decide the same thing, one of them stops deciding.
+  **Why:** `tools/gate.sh` and `build.gradle.kts` both answered "is this variable set", and drifted apart twice — once on ASCII whitespace (#91), once on 0x1C and U+3000 (#106), each time with the gate announcing the upload key over a debug-signed bundle. Narrowing `tr` a third time would have been wrong for the next character class. So Gradle now states which key it used in both branches, and the gate reads that back and **fails if its own prediction disagreed**. The ASCII range is still classified exactly, for the diagnostic; the residual multi-byte gap is now harmless rather than merely unlikely, because drift is itself a gate failure. Proven: four U+3000 values, which `tr` still misses, now stop the gate instead of passing.
+  **Issue:** #106
+
+- **Decision:** rules normalise their input rather than being made line-ending-aware.
+  **Why:** Dart's `.` excludes `\r` and its non-multiline `$` anchors before it, so a CRLF pubspec made every rule read an empty file — invariant 3 unenforced, `dependency_overrides` unrefused, direct dependencies mislabelled. A guard whose correctness depends on line endings is not a guard. `.gitattributes` pins the working tree too, so the file a contributor edits is the file CI reads.
+  **Issue:** #96
+
+- **Decision:** fail-closed extended from section headers to section entries.
+  **Why:** #86 applied the refusal to the header and `_sectionEntries` went on silently skipping what it could not parse, so YAML's explicit-key form walked through. The principle was right and applied one level too shallow.
+  **Issue:** #96
+
+- **Decision (correction of my own, caught by running):** the two element-start patterns in `check_aab.sh` stay asymmetric.
+  **Why:** #103 asked for them to be made the same shape. I did that and the real bundle immediately failed with `PERMISSION: android.permission.DUMP (declared)` — `permission` is also an *attribute* name, `android:permission` on a receiver, and its run is bare. `uses-permission` never appears as an attribute name, which is why only it can afford the looser match. The asymmetry now carries the reason and a fixture.
+  **Issue:** #103
+
+- **Decision:** the ads globs were tightened and the allow list extended, amending #15's AC further.
+  **Why:** `*ads` and `*ads_*` matched any name containing those letters and refused `gamepads`, a real package from the Flame team, plus five others. The allow list added in #94 had seventeen names and none ended in `ads`, so the case that mattered was the one not asserted. Tightening nearly lost `ads_helper`, an ads-prefixed name, which an existing fixture caught — `ads_*` restores it.
+  **Issue:** #97, amends #15
+
+- **Decision:** pinned policy sentences stay literal, but the message changed.
+  **Why:** the privacy policy is a public document a non-engineer may edit, and matching whole sentences produced "the policy no longer states X" when someone had merely reworded. The prose comparison now ignores case, commas and markdown emphasis, and where the wording genuinely is the thing being protected the message names what is pinned, why, and what to do. "No longer states" reads as an accusation, and the fastest way past an accusation is to delete the check.
+  **Issue:** #102
+
+- **Decision:** `analysis_options.yaml` stops claiming TODOs block the gate, rather than making them block it.
+  **Why:** `dart analyze` does not surface the `todo` diagnostic from the command line, so `--fatal-infos` never sees one. Making it true needs a separate check, and whether TODOs should be bannable in a project this young is a decision for the owner rather than a config line. The comment now says what is true and what the alternative would cost.
+  **Issue:** #107
+
+- **Decision:** epic #7's third and fifth acceptance criteria were reworded, and the coverage map's housekeeping annotations reconciled to CLAUDE.md.
+  **Why:** AC3 said the release build "strips" the INTERNET permission, describing the one mechanism invariant 1 forbids and `permissions_guard_test.dart` fails on; the reword was decided at planning time, logged here, and never applied. AC5 claimed determinism guards were already wired into the suite, which was never true in M0. Both edits are to the plan record, not to scope, and each carries a dated note saying what changed and why.
+  **Issue:** #100
+
+- **Note (own overclaim, third occurrence, now recorded in the artefact itself):** `.n8/memory/android-toolchain.md` has been corrected three times and each pass introduced or kept a claim nobody checked — most recently a confident but false explanation of why `flutter doctor` lists no Android Studio section. Flutter does search `~/Applications`; this Flutter version simply has no Android Studio validator. The file's preamble now warns the reader not to treat "everything was verified" as a guarantee, because this file has broken that promise once.
+  **Issue:** #99
+
+- **Note (own overclaim, mechanical):** two commit messages in this pass carried wrong test counts and were amended before push. That is the fourth and fifth instance in this milestone of a number asserted rather than read.
+  **Issue:** #96
+
+- **Note (a bug reproduced while fixing a bug):** `verify_upload_cert.sh`'s first keytool probe was `cmd | grep -q`, and with `set -o pipefail` the stub's non-zero exit made the pipeline false even when grep matched — so the check never fired and the macOS stub was used as though it worked. Identical in shape to the SIGPIPE race fixed in `check_aab.sh` during the first pass. Captured first now.
+  **Issue:** #108

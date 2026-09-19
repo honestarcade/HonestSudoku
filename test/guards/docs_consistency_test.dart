@@ -150,7 +150,7 @@ void main() {
         );
         expect(
           policyOffenders(broken, applicationId).join('\n'),
-          contains('no longer states'),
+          contains('pinned sentence'),
         );
       });
     }
@@ -163,18 +163,40 @@ void main() {
           '# Honest Sudoku\n\nThe privacy page has been taken '
           'down.\n';
       expect(siteIndexOffenders(broken), isNotEmpty);
-      // And the real link shape still passes, in each spelling Jekyll accepts.
+      // The spellings Jekyll accepts and that actually resolve. The previous
+      // version of this list contained `](/privacy)` and called it "a real
+      // link" — on a project page that resolves to
+      // honestarcade.github.io/privacy, which 404s. A negative fixture that
+      // blesses a broken URL is worse than no fixture, because the next
+      // person to write the correct form is told they are wrong (#101).
       for (final good in const [
         '- [Privacy policy](privacy)',
-        '- [Privacy policy](/privacy)',
         '- [Privacy policy](privacy.html)',
+        '- [Privacy policy](privacy.md)',
+        '- [Privacy policy](privacy "Policy")',
+        '- [Privacy policy]({{ site.baseurl }}/privacy)',
+        "- [Privacy policy]({{ '/privacy' | relative_url }})",
+        '- [Privacy policy](https://honestarcade.github.io/HonestSudoku/privacy)',
+        '- [Privacy policy][pp]\n\n[pp]: privacy',
+        '<a href="privacy">Privacy policy</a>',
       ]) {
         expect(
           siteIndexOffenders(good),
           isEmpty,
-          reason: 'site-index-negative: refused a real link: $good',
+          reason: 'site-index-negative: refused a link that resolves: $good',
         );
       }
+
+      // And the root-absolute form is refused BY NAME, with the reason.
+      final rootAbsolute = siteIndexOffenders('- [Privacy policy](/privacy)');
+      expect(
+        rootAbsolute,
+        isNotEmpty,
+        reason:
+            'site-index-root-absolute: this 404s on a project page and the '
+            'guard used to bless it',
+      );
+      expect(rootAbsolute.single, contains('PROJECT page'));
     });
 
     test('an MIT header over a non-MIT body is caught', () {
@@ -282,6 +304,126 @@ void main() {
       expect(
         policyOffenders(broken, applicationId).join('\n'),
         contains('invariant 1'),
+      );
+    });
+
+    // #104. Three things the guard was satisfied while missing.
+
+    test('a LICENSE that loses the MIT grant condition is caught', () {
+      // The licence's ONE condition. Without it this is a bare grant with no
+      // attribution requirement and is not MIT — and the whole suite stayed
+      // green when it was deleted.
+      final broken = readFile('LICENSE').replaceAll(
+        RegExp(
+          r'The above copyright notice and this permission notice shall be '
+          r'included in all\ncopies or substantial portions of the Software\.\n\n',
+        ),
+        '',
+      );
+      expect(
+        broken,
+        isNot(readFile('LICENSE')),
+        reason: 'fixture-integrity: the mutation changed nothing',
+      );
+      expect(
+        licenceOffenders(broken).join('\n'),
+        contains('The above copyright notice'),
+      );
+    });
+
+    test('a policy that inverts its headline claim is caught', () {
+      final broken = policy.replaceAll(
+        'collects **no data**. None.',
+        'collects diagnostics and usage analytics.',
+      );
+      expect(broken, isNot(policy), reason: 'fixture-integrity');
+      expect(
+        policyOffenders(broken, applicationId).join('\n'),
+        contains('collects nothing'),
+      );
+    });
+
+    for (final claim in const {
+      // Contiguous substrings: the policy is hard-wrapped, so mutating the
+      // rule's own claim key would be a no-op. The fixture-integrity
+      // assertion below is what caught that, again.
+      'collected from children': "children's privacy",
+      'ask us to delete': 'nothing to request',
+      'Uninstalling the app deletes them': 'uninstalling',
+    }.entries) {
+      test('deleting the "${claim.value}" paragraph is caught', () {
+        final broken = policy.replaceAll(claim.key, 'something else entirely');
+        expect(broken, isNot(policy), reason: 'fixture-integrity');
+        expect(
+          policyOffenders(broken, applicationId).join('\n'),
+          contains('pinned sentence'),
+        );
+      });
+    }
+
+    // #102 and #98. The other direction: ordinary edits that change no meaning
+    // must not turn the suite red with a message implying a fact was removed.
+    test('legal spellings of the same fact are accepted', () {
+      for (final spelling in const [
+        'permalink: "/privacy"',
+        "permalink: '/privacy'",
+      ]) {
+        final edited = policy.replaceAll('permalink: /privacy', spelling);
+        expect(
+          policyOffenders(
+            edited,
+            applicationId,
+          ).where((o) => o.contains('permalink')),
+          isEmpty,
+          reason: 'overshoot: `$spelling` is legal YAML for the same value',
+        );
+      }
+
+      for (final title in const [
+        'title: "Honest Sudoku"',
+        "title: 'Honest Sudoku'",
+        'title: Honest Sudoku # the published <title>',
+      ]) {
+        expect(
+          siteConfigOffenders('$title\ntheme: jekyll-theme-primer\n'),
+          isEmpty,
+          reason: 'overshoot: `$title` is legal YAML for the same value',
+        );
+      }
+
+      for (final notice in const [
+        'Copyright (c) 2026-2027 Honest Arcade',
+        'Copyright (C) 2026 Honest Arcade',
+        'Copyright © 2026 Honest Arcade',
+      ]) {
+        final edited = readFile('LICENSE')
+            .replaceAll('Copyright (c) 2026 Honest Arcade', notice);
+        expect(
+          licenceOffenders(edited).where((o) => o.contains('Copyright')),
+          isEmpty,
+          reason: 'overshoot: `$notice` is an ordinary way to write it',
+        );
+      }
+
+      expect(
+        readmeOffenders(readme.replaceAll('trademark', 'trade mark'))
+            .where((o) => o.contains('trademark rights')),
+        isEmpty,
+        reason: 'overshoot: "trade mark" is the British spelling',
+      );
+
+      // An Oxford comma in the SDK sentence must not break the build.
+      final oxford = policy.replaceAll(
+        'attribution or crash-reporting',
+        'attribution, or crash-reporting',
+      );
+      expect(oxford, isNot(policy), reason: 'fixture-integrity');
+      expect(
+        policyOffenders(oxford, applicationId),
+        isEmpty,
+        reason:
+            'overshoot: one comma turned the suite red with a message '
+            'saying the policy no longer stated something it plainly did',
       );
     });
 

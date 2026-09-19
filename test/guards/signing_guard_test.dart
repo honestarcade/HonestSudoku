@@ -285,17 +285,195 @@ void _signingModeTests() {
     }
   });
 
-  test('the gate clears a stale bundle before building', () {
-    // #93. The path GATE PASSED names must hold this run's artefact or
-    // nothing; a failed build used to leave the previous run's bundle there.
+  // #106. #91 fixed ASCII whitespace by stripping POSIX [:space:]. Kotlin's
+  // Character.isWhitespace also counts 0x1C-0x1F — single ASCII bytes a
+  // mangled paste really produces — and several multi-byte characters. With
+  // four 0x1C values the gate announced one thing, the build did another, and
+  // the gate PASSED over a debug-signed bundle.
+  //
+  // Parameterised over the difference set, not over one more example: a
+  // fixture that checks one space and one empty string is what let this
+  // survive twice.
+  test('every ASCII character Java calls whitespace counts as missing', () {
+    const javaAsciiWhitespace = {
+      '\u0009': 'tab',
+      '\u000A': 'line feed',
+      '\u000B': 'vertical tab',
+      '\u000C': 'form feed',
+      '\u000D': 'carriage return',
+      '\u001C': 'file separator',
+      '\u001D': 'group separator',
+      '\u001E': 'record separator',
+      '\u001F': 'unit separator',
+      '\u0020': 'space',
+    };
+    javaAsciiWhitespace.forEach((char, name) {
+      final all = {for (final v in _signingVars) v: char};
+      expect(
+        _signingMode(all),
+        contains('debug fallback'),
+        reason:
+            'blank-$name: Gradle treats this as unset, so the gate must too, '
+            'or the headline contradicts the build (#106)',
+      );
+
+      final one = Map<String, String>.from(_allFour)..[_keystorePath] = char;
+      expect(
+        _signingMode(one),
+        contains('partial'),
+        reason: 'blank-$name: one blank variable is a partial set',
+      );
+    });
+  });
+
+  test('a non-breaking space counts as SET, because Java says so', () {
+    // The control, and the reason the fix is an explicit list rather than
+    // "strip anything unprintable". Character.isWhitespace is FALSE for
+    // U+00A0, U+2007 and U+202F, so classifying them as blank would be a new
+    // disagreement in the other direction.
+    final env = {for (final v in _signingVars) v: '\u00A0'};
+    expect(
+      _signingMode(env),
+      isNot(contains('debug fallback')),
+      reason:
+          'nbsp: Java does not call U+00A0 whitespace, so neither may the gate',
+    );
+  });
+
+  test('the gate cross-checks its prediction against what Gradle did', () {
+    // The part that cannot drift. `signing_mode` is a prediction; the build is
+    // the fact. They have disagreed twice (#91, #106), each time with the gate
+    // announcing the upload key over a debug-signed bundle. A disagreement is
+    // now a gate failure, which is what makes the residual multi-byte gap in
+    // `hs_is_blank` harmless rather than merely unlikely.
     final gate = readFile('tools/gate.sh');
     expect(
       gate,
-      contains('rm -f "\$BUNDLE"'),
+      contains('signed with the UPLOAD key'),
       reason:
-          'stale-bundle: nothing removes the bundle before the build step, so '
-          'a failed run leaves the previous artefact where the success line '
-          'points',
+          'cross-check: the gate no longer reads back which key Gradle used',
+    );
+    expect(gate, contains('signed with the DEBUG key'));
+    expect(
+      gate,
+      contains(r'GATE FAILED at $label: the header said'),
+      reason:
+          'cross-check: a disagreement between the header and the build must '
+          'fail the gate, not be printed and ignored',
+    );
+
+    // And the build file must say which key it used in BOTH branches, or the
+    // cross-check has nothing to read.
+    final gradle = readFile(_gradle);
+    expect(
+      gradle,
+      contains('signed with the UPLOAD key'),
+      reason:
+          'cross-check: build.gradle.kts announces the debug fallback but not '
+          'the upload key, so the gate cannot tell the two apart',
+    );
+    expect(gradle, contains('signed with the DEBUG key'));
+  });
+
+  test('the gate dispatches through a function, not eval', () {
+    // #17's acceptance criterion says the parallel arrays are "run by one
+    // function", and its discretion says "(no `eval`)". The file had a
+    // top-level loop calling eval. No exploit today, since COMMANDS holds
+    // literals — it matters because M1's CI is meant to consume this and
+    // there was no function for it to call (#108).
+    final gate = readFile('tools/gate.sh');
+    expect(gate, contains('run_step() {'));
+    expect(
+      gate,
+      isNot(contains(r'eval "$command"')),
+      reason: 'no-eval: the dispatcher is still eval',
+    );
+  });
+
+  test('the upload certificate can be checked against a bundle', () {
+    // #13's discretion specified this "so M1 can reuse it" and it was never
+    // written (#108). It is the only check that catches a release signed with
+    // the wrong key before Play rejects it.
+    const script = 'tools/verify_upload_cert.sh';
+    expect(pathExists(script), isTrue, reason: 'verify-cert: $script missing');
+
+    ProcessResult run(List<String> args, [Map<String, String>? extra]) =>
+        Process.runSync(
+          script,
+          args,
+          workingDirectory: repoRoot.path,
+          includeParentEnvironment: false,
+          environment: {
+            'PATH': Platform.environment['PATH'] ?? '/usr/bin:/bin',
+            'HOME': Platform.environment['HOME'] ?? '',
+            ...?extra,
+          },
+          stdoutEncoding: utf8,
+          stderrEncoding: utf8,
+        );
+
+    final missing = run(['/tmp/hs-definitely-not-a-bundle.aab']);
+    expect(
+      missing.exitCode,
+      2,
+      reason:
+          'verify-cert: a missing input must be its own exit code, not a '
+          'mismatch.\n${missing.stderr}',
+    );
+
+    // The macOS /usr/bin/keytool is a stub: it exists, it is executable, and
+    // it cannot run. Mistaking it for a working keytool is the trap the
+    // toolchain memory documents for `java`.
+    final stub = run(const [], {'HS_KEYTOOL': '/usr/bin/keytool'});
+    if (stub.stderr.toString().contains('macOS stub')) {
+      expect(
+        stub.exitCode,
+        3,
+        reason: 'verify-cert: the stub must be reported, not used',
+      );
+    } else {
+      // ignore: avoid_print
+      print(
+        'verify-cert: /usr/bin/keytool is not the stub on this machine, so '
+        'that branch was not exercised.',
+      );
+    }
+  });
+
+  test('the credentials file quotes its values', () {
+    // It documents itself as sourceable. An unquoted value containing a space
+    // breaks `. this-file`, and one containing a shell metacharacter executes
+    // on it (#108).
+    final script = readFile('tools/make_upload_key.sh');
+    for (final name in _signingVars) {
+      expect(
+        script,
+        contains('export $name="'),
+        reason: 'credentials-quoting: $name is written unquoted',
+      );
+    }
+  });
+
+  test('the gate pins its locale', () {
+    // Without this the multi-byte whitespace rules behave differently in a
+    // UTF-8 shell and in the C locale a bare CI runner has, so a CI failure
+    // could not be reproduced by hand (#106).
+    expect(readFile('tools/gate.sh'), contains('export LC_ALL=C'));
+  });
+
+  test('the stale bundle is cleared before the first step, not the fifth', () {
+    // #108. The removal sat at step 5, by which time step 4 had already read
+    // whatever was at that path.
+    final gate = readFile('tools/gate.sh');
+    final removal = gate.indexOf(r'rm -f "$BUNDLE"');
+    final loop = gate.indexOf(r'while [ "$i" -lt "$total" ]');
+    expect(removal, greaterThan(-1));
+    expect(
+      removal,
+      lessThan(loop),
+      reason:
+          'stale-bundle: the removal must precede the loop, so the path holds '
+          "this run's artefact for every step and not just the last two",
     );
   });
 

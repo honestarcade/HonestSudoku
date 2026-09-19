@@ -8,9 +8,16 @@ metadata:
 # Android toolchain (owner's machine)
 
 Recorded while executing #12 on 2026-09-19, corrected on the same day (#81, #88).
-Every claim below was re-checked against the machine on 2026-09-19 — including
-the ones that were not being changed, which is the step the first correction
-skipped.
+Claims here were checked against the machine on 2026-09-19, and the ones that
+were merely kept were checked too — that is the step the first correction
+skipped (#88).
+
+**Do not read that as a guarantee.** The second correction then invented a
+mechanism to explain the first error and shipped it unchecked under exactly
+such a promise (#99). A blanket "everything was verified" is only ever as good
+as the pass that wrote it, and this file has now broken one. Treat each
+statement below on its own, and prefer the ones that say what was observed
+over the ones that say why.
 
 ## JDK
 
@@ -29,12 +36,15 @@ skipped.
 
 - SDK root: `~/Library/Android/sdk`.
 - **Android Studio 2026.1 IS installed**, at `~/Applications/Android Studio.app`.
-  This file previously said there was none, which was wrong from the day it was
-  written (#88). The mistake is worth understanding rather than just correcting:
-  `flutter doctor` lists **no Android Studio section at all** on this machine,
-  because Studio is in the user-local `~/Applications` rather than `/Applications`
-  and doctor does not look there. "doctor doesn't mention it" was read as "it
-  isn't there".
+  An earlier version of this file said there was none (#88).
+- **`flutter doctor` lists no Android Studio section at all**, and the reason
+  is not where it looks. An earlier correction to this file guessed that doctor
+  skips `~/Applications` (#99). It does not — `flutter_tools`'s
+  `android_studio.dart` checks `/Applications` and `~/Applications` and runs a
+  Spotlight query besides. The real reason is that **this Flutter version ships
+  no Android Studio validator**: there is no `android_studio_validator.dart`
+  and `doctor.dart` assembles none, so no machine gets that section. Do not
+  use doctor's output to decide whether Studio is installed.
 - **Nothing in this project's build path uses it.** The build is Gradle via
   `flutter build`, the JDK comes from Flutter's own config, and the emulator is
   driven from the command line. Studio is available if you want a GUI; no

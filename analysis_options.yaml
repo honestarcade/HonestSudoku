@@ -14,9 +14,18 @@ analyzer:
     strict-inference: true
     strict-raw-types: true
   errors:
-    # TODOs are info, and the gate makes info fatal — so a TODO is visible in
-    # review AND blocks the gate. Land the work or open an issue; do not leave
-    # a note in the source and call it tracked.
+    # TODOs are raised to info so editors surface them in review.
+    #
+    # This does NOT block the gate, and the comment here used to claim it did.
+    # `dart analyze` does not report the `todo` diagnostic from the command
+    # line at any severity, so `--fatal-infos` never sees one: appending
+    # `// TODO: x` to a source file and running the gate prints
+    # `No issues found!` (#107). `--fatal-infos` itself works — a real
+    # info-level lint does fail the gate — the gap is specific to TODOs.
+    #
+    # Blocking them would need a separate check, and that is a decision about
+    # whether TODOs should be bannable in a project this young rather than a
+    # config line. Until someone makes it, this comment says what is true.
     todo: info
   exclude:
     - build/**
