@@ -232,3 +232,45 @@ Ad-hoc entries (changes made outside the n8SDLC commands that deviate from plann
 - **Decision:** Audit emphases refreshed and still provisional (M6 and M7 unplanned). M5 adds native and asset surface — the sound bridge, bundled fonts and audio — plus the accessibility exemption, which the audit should re-test rather than trust.
   **Why:** The whole-project analysis can only be final once the highest feature milestone and every lower one are planned.
   **Issue:** M8
+
+## /n8-plan M6 — 2026-09-19
+
+- **Decision:** The roadmap's phase 4 — the release-candidate dry run — is executed first, not last, and M6 opens with #59.
+  **Why:** An acceptance criterion that reads "the owner confirms on device" cannot be met without an installable build, and the build is what a release produces. Frog Across recorded this circularity across five rounds of device testing and resolved it the same way: cut to the internal track first.
+  **Issue:** #59
+
+- **Decision:** The candidate tag is pushed directly with `git tag`, not through `/n8-release`.
+  **Why:** That command's argument grammar is `X.Y.Z` or a bump keyword with no prerelease form, and its hard stops require every included milestone to be verified-closed with no open `confirmed` bugs. M6 is neither while its own first story runs — which is the point of a dry run.
+  **Issue:** #59
+
+- **Decision:** M6's fixes land on `main` in batches rather than in one milestone pull request at the end, and each batch that needs owner re-testing becomes the next `-rc.N`.
+  **Why:** Every batch has to become a build the owner can install and replay; waiting for a single merge at the end would make the repeat passes impossible. This departs from the n8SDLC branch-per-milestone convention in CLAUDE.md, so it is recorded as drift rather than assumed.
+  **Issue:** #59, #64, #67
+
+- **Decision:** The device matrix is the owner's one modern phone plus two emulators — API 24 at 720×1280 and a large modern one — and the plan states what that cannot prove.
+  **Why:** Owner has one phone ("One modern phone I own", 2026-09-19). Android 7 has no hardware behind it, so the outcome says so instead of claiming a device pass.
+  **Issue:** #61, #64
+
+- **Decision:** A defect blocks the release when it crashes, breaks a rule of play, makes a control unreachable, reports wrong statistics or breaks accessibility; cosmetic drift moves to the backlog epic #10 with the owner's explicit say-so. The judgement rides on the existing `sev:*` labels, since no `blocking` label exists.
+  **Why:** Owner's bar ("Anything that misleads or blocks play", 2026-09-19).
+  **Issue:** #67
+
+- **Decision:** The real sound effects are generated in M6 with the owner's ElevenLabs key on the Creator plan, auditioned through a release build on the phone, and a build carrying any placeholder becomes unshippable — the placeholder check moves before the Play upload step and step order is asserted by parsing the workflow.
+  **Why:** Owner chose to generate in M6 on the Creator plan (2026-09-19). Proving the gate by pushing a scratch tag would spend the signing key and the service-account secret and risk an accidental upload, so the check is extracted to a script and the ordering asserted mechanically.
+  **Issue:** #63
+
+- **Decision:** Invariant 4 gains its first assertion on ARM: the soak recomputes #26's golden-seed fingerprints on the device and compares them with the committed host values.
+  **Why:** The coverage check found that invariant 4's guard has only ever run on the development machine. A host-only determinism check cannot see a host/device divergence, which is exactly the class of defect this milestone exists to find.
+  **Issue:** #65
+
+- **Decision:** The generation timeout path is exercised deliberately with a lowered ceiling rather than hoped for, and rotation is tested as a lock rather than a feature.
+  **Why:** A 16×16 Evil board that completes in time never exercises the failure path, so it would ship unrun. The app is portrait-only, so the original criterion tested a behaviour that must not exist.
+  **Issue:** #61, #64
+
+- **Decision:** Device stories install with `bundletool` through `tools/install_build.sh`, not `adb install`.
+  **Why:** The second coverage run caught that `adb install` cannot take an AAB, which every device story depended on.
+  **Issue:** #61
+
+- **Decision:** Audit emphases refreshed, still provisional (M7 unplanned). M6 adds device-only suites that CI never runs, a hard audio gate and the first ARM determinism check — all things a later audit should re-test rather than trust.
+  **Why:** The analysis is final only once the highest feature milestone and every lower one are planned.
+  **Issue:** M8
