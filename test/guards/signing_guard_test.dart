@@ -175,8 +175,181 @@ void _signingModeTests() {
   });
 }
 
+const _bundle = 'build/app/outputs/bundle/release/app-release.aab';
+
+/// Output that means the Android toolchain is not usable here, rather than
+/// that the build was refused for the reason under test.
+const _toolchainAbsent = [
+  'No Android SDK found',
+  'Unable to locate a Java Runtime',
+  'Android sdkmanager not found',
+  'No valid Android SDK platforms found',
+];
+
+/// Runs a release build under exactly `env` and returns what came out, after
+/// recording whether the bundle on disk survived untouched.
+///
+/// Returns null when the Android toolchain is not usable here, having said so
+/// out loud. Printed rather than skipped: a skipped test reads as a passing
+/// one, and the whole point of this check is that it cannot be satisfied by
+/// absence.
+_BuildOutcome? _releaseBuild(Map<String, String> env) {
+  final file = File('${repoRoot.path}/$_bundle');
+  final existedBefore = file.existsSync();
+  final sizeBefore = existedBefore ? file.lengthSync() : -1;
+  final modifiedBefore = existedBefore ? file.lastModifiedSync() : null;
+
+  late ProcessResult result;
+  try {
+    result = Process.runSync(
+      'flutter',
+      ['build', 'appbundle', '--release', '--no-pub'],
+      workingDirectory: repoRoot.path,
+      includeParentEnvironment: false,
+      environment: {
+        'PATH': Platform.environment['PATH'] ?? '/usr/bin:/bin',
+        'HOME': Platform.environment['HOME'] ?? '',
+        ...env,
+      },
+      stdoutEncoding: utf8,
+      stderrEncoding: utf8,
+    );
+  } on ProcessException catch (e) {
+    // ignore: avoid_print
+    print(
+      'hard-fail: `flutter` is not on PATH ($e) — this check needs the '
+      'Android toolchain. tools/gate.sh runs where it is present.',
+    );
+    return null;
+  }
+
+  final output = '${result.stdout}${result.stderr}';
+  for (final marker in _toolchainAbsent) {
+    if (output.contains(marker)) {
+      // ignore: avoid_print
+      print(
+        'hard-fail: the Android toolchain is unusable here ("$marker"), so '
+        'the refusal under test could not be reached.',
+      );
+      return null;
+    }
+  }
+
+  final after = File('${repoRoot.path}/$_bundle');
+  final bundleUntouched = existedBefore
+      ? after.existsSync() &&
+            after.lengthSync() == sizeBefore &&
+            after.lastModifiedSync() == modifiedBefore
+      : !after.existsSync();
+
+  return _BuildOutcome(result.exitCode, output, bundleUntouched);
+}
+
+class _BuildOutcome {
+  const _BuildOutcome(this.exitCode, this.output, this.bundleUntouched);
+  final int exitCode;
+  final String output;
+
+  /// The bundle is the file it was before — or is still absent, if it was.
+  final bool bundleUntouched;
+}
+
+void _hardFailTests() {
+  // The complement #13 only ever proved by hand. The acceptance criterion is
+  // not "the build fails" — it is that nothing shippable comes out of it. A
+  // change making the GradleException non-fatal would ship a debug-signed
+  // release, and every other assertion in this file would stay green (#83).
+  //
+  // Two cases, because build.gradle.kts has two separate refusals and the
+  // first draft of this test could not tell them apart: it unset one of four
+  // variables, which trips the PARTIAL check, so the HS_RELEASE check was
+  // never reached and the test passed against a build file with that check
+  // deleted. Each case below leaves exactly one refusal able to fire.
+  //
+  // Both cost about two seconds: the exceptions are raised at Gradle
+  // CONFIGURATION time, so nothing compiles.
+
+  test('HS_RELEASE=1 with no secrets at all produces no bundle', () {
+    // Only `hsReleaseRequested && !hsSigningComplete` can refuse this one.
+    final outcome = _releaseBuild(const {'HS_RELEASE': '1'});
+    if (outcome == null) return;
+    expect(
+      outcome.exitCode,
+      isNot(0),
+      reason:
+          'hard-fail-release: HS_RELEASE=1 with nothing set must fail the '
+          'build rather than fall back to the debug key.\n${outcome.output}',
+    );
+    expect(
+      outcome.output,
+      contains('HS_KEYSTORE_PATH is not set'),
+      reason:
+          'hard-fail-release: it must fail for THIS reason, naming the first '
+          'missing variable.\n${outcome.output}',
+    );
+    expect(
+      outcome.bundleUntouched,
+      isTrue,
+      reason:
+          'hard-fail-release: a refused build produced or replaced the '
+          'bundle. That bundle would be signed with the debug key.',
+    );
+  }, timeout: const Timeout(Duration(minutes: 10)));
+
+  test('a partly set environment produces no bundle either', () {
+    // Only `hsPresent.isNotEmpty() && !hsSigningComplete` can refuse this one:
+    // HS_RELEASE is absent, so without that check the build would fall back to
+    // the debug key and succeed.
+    final env = Map<String, String>.from(_allFour)..remove('HS_KEY_PASS');
+    final outcome = _releaseBuild(env);
+    if (outcome == null) return;
+    expect(
+      outcome.exitCode,
+      isNot(0),
+      reason:
+          'hard-fail-partial: a partly set environment must fail the build in '
+          'every mode, not fall back.\n${outcome.output}',
+    );
+    expect(
+      outcome.output,
+      contains('HS_KEY_PASS is not set'),
+      reason:
+          'hard-fail-partial: it must name the variable that is missing.\n'
+          '${outcome.output}',
+    );
+    expect(
+      outcome.bundleUntouched,
+      isTrue,
+      reason:
+          'hard-fail-partial: a refused build produced or replaced the bundle.',
+    );
+  }, timeout: const Timeout(Duration(minutes: 10)));
+
+  test('the release build type has no unconditional debug signing', () {
+    // The static half of the same claim, and the one that survives a machine
+    // with no toolchain: the debug key is reachable only through the fallback
+    // branch, never as the release default.
+    final gradle = readFile(_gradle);
+    expect(
+      gradle,
+      contains('hsReleaseRequested && !hsSigningComplete'),
+      reason:
+          'hard-fail-static: the check that turns HS_RELEASE=1 with a missing '
+          'secret into a GradleException is gone from $_gradle',
+    );
+    expect(
+      gradle,
+      contains('throw GradleException'),
+      reason:
+          'hard-fail-static: nothing in $_gradle throws any more, so a '
+          'missing secret can no longer be a hard failure',
+    );
+  });
+}
+
 void main() {
   group('gate.sh signing mode', _signingModeTests);
+  group('hard failure produces nothing', _hardFailTests);
 
   test('the build file holds no literal secret', () {
     final gradle = readFile(_gradle);

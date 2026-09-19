@@ -25,6 +25,80 @@ class Offender {
   String toString() => '$where: $what ($why)';
 }
 
+/// Why the lockfile itself cannot be trusted to be there and be whole.
+///
+/// `lockOffenders` scans the `packages:` section. Given empty text, or text
+/// with no `packages:` section, it finds no packages and therefore no
+/// offenders — so a truncated, emptied or half-written lockfile reads exactly
+/// like a clean one. That is the blocklist failing open, and the blocklist is
+/// what stands between this project and an ads SDK (#83).
+///
+/// The obvious probe for this — delete `pubspec.lock` and run the suite — does
+/// not work and is not worth re-deriving: `flutter test` runs an implicit
+/// `pub get`, which regenerates the file before a single test loads. Hence a
+/// precondition on the content rather than an experiment on the file.
+///
+/// `minimumPackages` is a floor, not a count: Flutter's own transitive set is
+/// far larger, and the number exists to reject a stub, not to pin a version.
+List<Offender> lockfilePreconditions(
+  String lockText, {
+  int minimumPackages = 10,
+}) {
+  final offenders = <Offender>[];
+  if (lockText.trim().isEmpty) {
+    offenders.add(
+      const Offender(
+        'pubspec.lock',
+        'empty',
+        'an empty lockfile scans clean because there is nothing in it to scan',
+      ),
+    );
+    return offenders;
+  }
+  if (!RegExp(r'^packages:\s*$', multiLine: true).hasMatch(lockText)) {
+    offenders.add(
+      const Offender(
+        'pubspec.lock',
+        'no `packages:` section',
+        'the blocklist scans that section and nothing else, so its absence '
+            'silences the rule entirely',
+      ),
+    );
+    return offenders;
+  }
+  final count = lockedPackageNames(lockText).length;
+  if (count < minimumPackages) {
+    offenders.add(
+      Offender(
+        'pubspec.lock',
+        '$count locked packages',
+        'fewer than $minimumPackages — a Flutter app resolves far more than '
+            'this, so the lockfile is truncated or half-written',
+      ),
+    );
+  }
+  return offenders;
+}
+
+/// Every package name in the lockfile's `packages:` section.
+Set<String> lockedPackageNames(String lockText) {
+  final names = <String>{};
+  var inPackages = false;
+  for (final line in lockText.split('\n')) {
+    if (RegExp(r'^packages:\s*$').hasMatch(line)) {
+      inPackages = true;
+      continue;
+    }
+    if (inPackages && RegExp(r'^[a-z_]+:\s*$').hasMatch(line)) {
+      inPackages = false;
+    }
+    if (!inPackages) continue;
+    final match = RegExp(r'^  ([A-Za-z0-9_]+):\s*$').firstMatch(line);
+    if (match != null) names.add(match.group(1)!);
+  }
+  return names;
+}
+
 /// Blocklisted packages present in the lockfile.
 ///
 /// Scans the `packages:` section only, stopping at `sdks:`, and labels each hit
