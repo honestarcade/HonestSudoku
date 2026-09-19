@@ -367,3 +367,15 @@ Ad-hoc entries (changes made outside the n8SDLC commands that deviate from plann
 - **Decision:** `lib/links.dart` is the single file permitted to contain a URL, enforced by a grammar test (comments, `library;` and single-line `const String` declarations only).
   **Why:** #15's criterion. It also makes the source rule's `https://` ban enforceable without exceptions scattered through the codebase — there is exactly one exception and a test that says what may be in it.
   **Issue:** #15
+
+- **Decision:** The privacy policy's effective date is written as 2026-09-19 and will be re-checked against the milestone pull request's actual open date before the PR is opened.
+  **Why:** #16's criterion defines the date as "the date the M0 PR is opened", which had not happened when the file was written. A date that is merely plausible is worse than none in a document a regulator or a store reviewer may read, so it is pinned to a real event rather than left as the day the file happened to be created.
+  **Issue:** #16
+
+- **Decision:** The docs guard asserts the package id agrees across **three** places — `build.gradle.kts`, `.n8/config.yml` and the policy — rather than the two the criterion names.
+  **Why:** The criterion asks that the policy match the build and that the build match the config. Checking both in one guard means the three can never drift pairwise into agreement while disagreeing overall. The policy is the one that matters: a wrong id there is a public document describing a different app.
+  **Issue:** #16
+
+- **Decision:** The README's audio paragraph is written in the future tense ("when licensed sound effects ship") and says the synthesised placeholders are MIT-covered.
+  **Why:** #16's criterion describes the carve-out, but no audio exists yet and M5 #49 ships placeholders before M6 #63 replaces them. Claiming a licence carve-out over files that do not exist would be false today; M6 #63 rewrites this paragraph in the present tense when the real clips land, which that story's criteria already require.
+  **Issue:** #16
