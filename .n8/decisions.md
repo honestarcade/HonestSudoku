@@ -316,3 +316,9 @@ Ad-hoc entries (changes made outside the n8SDLC commands that deviate from plann
 - **Decision:** Two project skills approved for building: a Play Console launch runbook and a Sudoku techniques reference. An owner-task tracking issue (#76) lists all eleven owner actions in plan order.
   **Why:** Owner's calls (2026-09-19). The runbook pays off on the studio's third app; the techniques reference is read by both the engine's grading and the difficulty tuning. The tracker exists because three owner tasks gate long waits and the label alone does not show what is coming.
   **Issue:** #76
+
+## Ad-hoc — 2026-09-19
+
+- **Change:** Both project skills approved during `/n8-plan M7` — the Play Console launch runbook and the Sudoku techniques reference — were **not built**. The suggestions are recorded on #9 and #25 instead, with what each should encode.
+  **Why:** `/n8-skill`'s own rule: a skill is grounded in real paths and symbols at HEAD, and where that code does not exist yet the suggestion is noted and the skill built after the milestone verifies. Today `lib/` holds only the Flutter scaffold's `main.dart`, there is no `.github/workflows/`, no `tools/`, and no `.n8/memory/play-console.md`. The cold-test gate is also unrunnable without an artefact to prove against. Building either now would produce a document describing how such things usually work rather than how this project's actually do — the failure the rule exists to prevent.
+  **Affects:** nothing in the plan is stale; these are additions to make after M2 (#25) and M7 (#9) verify.
