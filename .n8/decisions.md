@@ -107,3 +107,26 @@ Ad-hoc entries (changes made outside the n8SDLC commands that deviate from plann
 - **Decision:** #20, #21 and #19 verify after the milestone PR merges (a release tag must point at `main`) and close through the post-merge state check; the milestone PR closes #18 only.
   **Why:** Structural; the coverage check flagged the contradiction with "PR closes all stories".
 - **Decision:** Action majors resolved 2026-09-18: checkout v7, setup-java v6, flutter-action v2, upload-artifact v7, upload-google-play v1, action-shellcheck 2.0.0; Dependabot carries them forward.
+
+## /n8-plan M2 — 2026-09-18
+
+- **Decision:** Six stories (#22–#27), no spikes, no subtasks; chain #22 → {#23, #24}; #23 → #25 → #26 → #27.
+- **Decision:** Unsupported size/difficulty pairs (4×4 Expert and Evil, 6×6 Evil) are refused by the engine and greyed out in setup, matching the design's statistics breakdown.
+  **Why:** Owner chose "Unavailable"; small grids cannot honestly require those techniques.
+  **Issue:** #25
+- **Decision:** 16×16 waits for the real board, up to a 15-second ceiling, then fails with a clear message; no relabelled fallback.
+  **Why:** Owner chose it over capping at five seconds.
+  **Issue:** #27
+- **Decision:** Within a band, boards aim at the design's givens counts (keep ratios 0.55/0.46/0.38/0.31/0.25, floor n + n/2) while the solver proves the label; Evil takes whatever count uniqueness allows.
+  **Why:** Owner chose "match the design's counts" so the setup screen can show the count before generation.
+  **Issue:** #25
+- **Decision:** Technique ladder and bands: singles → Easy; locked candidates → Medium; pairs → Hard; triples and X-wing → Expert; anything beyond → Evil. Documented on the `Engine` wiki page.
+  **Issue:** #25
+- **Decision:** Guards for invariants 2 and 4 are #26; the PR gate samples seeds 200/200/40/5 by shape (16×16 Evil weekly only) and a weekly run covers 200 seeds for every pair. Epic #1's "200 seeds per pair in CI" criterion is amended accordingly by #25.
+  **Why:** The full set cannot fit the three-minute guard budget; the executor simulation and coverage check closed the arithmetic.
+- **Decision:** Golden fixtures hash with FNV-1a (no new package); the full-grid construction is pinned to the design's JavaScript output for seed 20260824.
+  **Why:** SHA-256 would add a dependency (invariant 3); the pinned board catches any drift in shuffle nesting.
+  **Issue:** #23
+- **Decision:** `package:meta` is allowed inside the engine (ships with the SDK) for `@visibleForTesting`.
+  **Issue:** #22, #27
+- **Decision:** The engine is pure Dart under `lib/engine/` with an import guard; the game-state model (place, undo, strikes) is M3's first story, built on this engine.
