@@ -1,4 +1,4 @@
-package com.honestarcade.sudoku.honest_sudoku
+package com.honestarcade.sudoku
 
 import io.flutter.embedding.android.FlutterActivity
 

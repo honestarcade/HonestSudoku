@@ -322,3 +322,25 @@ Ad-hoc entries (changes made outside the n8SDLC commands that deviate from plann
 - **Change:** Both project skills approved during `/n8-plan M7` — the Play Console launch runbook and the Sudoku techniques reference — were **not built**. The suggestions are recorded on #9 and #25 instead, with what each should encode.
   **Why:** `/n8-skill`'s own rule: a skill is grounded in real paths and symbols at HEAD, and where that code does not exist yet the suggestion is noted and the skill built after the milestone verifies. Today `lib/` holds only the Flutter scaffold's `main.dart`, there is no `.github/workflows/`, no `tools/`, and no `.n8/memory/play-console.md`. The cold-test gate is also unrunnable without an artefact to prove against. Building either now would produce a document describing how such things usually work rather than how this project's actually do — the failure the rule exists to prevent.
   **Affects:** nothing in the plan is stale; these are additions to make after M2 (#25) and M7 (#9) verify.
+
+## /n8-exec M0 — 2026-09-19
+
+- **Decision:** Merged PR #11 (the planning state) before starting, as the run's first act.
+  **Why:** `main` carried the init commit only. The four project invariants were not in CLAUDE.md, and `.n8/config.yml` still listed all six platforms with no `android.application_id`. #12 implements that id and #14/#15 are guard stories for invariants that were not written down on the branch they would have been built from. Executing M0 off that `main` would have meant implementing stories whose own configuration answers did not exist in the tree.
+  **Issue:** precondition for all of M0
+
+- **Decision:** `minSdk = 24` pinned literally in `android/app/build.gradle.kts` rather than inherited from `flutter.minSdkVersion`, with an inline comment pointing here.
+  **Why:** #12's acceptance criterion. The value happens to equal Flutter 3.47's default today, so inheriting would look identical and silently move when Flutter raises its floor. Pinning records the choice: Android 7.0 and newer, which is every device that can install from Play.
+  **Issue:** #12
+
+- **Decision (Rule 1 — own bug):** The identity guard's "old id absent" walk decoded every tracked file under `android/` as UTF-8 and crashed on the launcher PNGs. Changed to decode bytes as latin1.
+  **Why:** The walk must cover binaries — an id string can appear in one — and latin1 never throws while still matching an ASCII id byte for byte. Caught by running the guard, not by reading it.
+  **Issue:** #12
+
+- **Decision (Rule 3 — blocker):** Pointed Flutter at Homebrew's `/opt/homebrew/opt/openjdk@21` with `flutter config --jdk-dir`.
+  **Why:** `/usr/bin/java` on this machine is the macOS stub that reports "Unable to locate a Java Runtime", so Gradle had no JDK. The planned toolchain note named this exact remedy. No shell rc file was edited; the setting lives in Flutter's own config.
+  **Issue:** #12
+
+- **Decision:** Rewrote `pubspec.yaml` rather than editing it in place, keeping a two-line header.
+  **Why:** #12's discretion asks for every scaffold comment block removed, and those blocks are most of the file — the scaffold's iOS, Windows and web versioning notes, the asset and font examples. Rewriting is legible; a dozen deletions are not.
+  **Issue:** #12
