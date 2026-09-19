@@ -412,3 +412,42 @@ Ad-hoc entries (changes made outside the n8SDLC commands that deviate from plann
 
 - **Post-merge (M0):** GitHub Pages enabled by the API — the manual click was not needed. `https://honestarcade.github.io/HonestSudoku/privacy` returns 200 with the policy text, the package id and the effective date; the site root returns 200. Repository `homepage` and `description` set. `.n8/memory/pages.md` corrected from "intended method" to what actually happened.
   **Issue:** #16
+
+## /n8-exec M0 (fix pass) — 2026-09-19
+
+Scoped to the six bugs `/n8-verify M0` filed (#79–#84), on `milestone/m0-fixes`.
+
+- **Decision (Rule 1 — own bug, found twice):** `tools/check_aab.sh` now decodes each `uses-permission` element from the protobuf manifest instead of pattern-matching names across the whole file.
+  **Why:** The first version matched `uses-permission` as a whole printable run, and the encoding packs the next field's tag onto the element name, so the run reads `uses-permission"y` and the check never fired — a bundle requesting `com.evilads.sdk.TRACK_USER` exited 0 (#80). The obvious replacement, matching the run start and then hunting the manifest for dotted permission-shaped tokens, failed the real release bundle with fourteen imaginary permissions drawn from intent actions and framework class names. A scan that cries wolf on a clean build gets switched off, so it is no better than blind. The structure is regular — element, namespace, attribute name, length-prefixed value — so the name is simply the run after the one that is exactly `name`. Alternative considered and rejected: `aapt2`, which cannot read an `.aab` directly, and `bundletool`, which is a jar download and a new third party inside the guard.
+  **Issue:** #80
+
+- **Decision:** An element whose permission name cannot be decoded is a failure, not a pass.
+  **Why:** Fail closed. A request nobody can name is still a request, and an encoding this decoder has not seen must never read as "clean". It also means the verdict never depends on the decode succeeding — only the wording of the message does, which is why the 128-character varint limitation is acceptable and documented rather than solved.
+  **Issue:** #80
+
+- **Decision:** Synthetic bundles became a permanent fixture suite (`test/guards/bundle_scan_test.dart`), including a realistic clean bundle that must pass.
+  **Why:** Both bugs above lived in the same blind spot: the scanner had only ever been run against real bundles, and a real bundle is clean, so every run agreed with every other run and nobody learned anything. The clean fixture is as important as the dirty ones — it is what would have caught the second bug in a second. Because the fixtures model the encoding rather than being `aapt2` output, a further test pins the model to reality whenever a real bundle exists on disk.
+  **Issue:** #80
+
+- **Decision:** `tools/gate.sh` gains a `--signing-mode` flag that reports and exits.
+  **Why:** The wrong message shipped because the branch was unreachable by anything but a human watching a real run, and a real run has either all four variables or none — so the case that was wrong was the only case nobody ever saw. A branch nobody can call is a branch nobody can assert. Ten assertions now drive every branch.
+  **Issue:** #82
+
+- **Decision:** The `#13` complement is tested by running a real release build, not by inspecting the build file.
+  **Why:** It costs two seconds, because the `GradleException` is raised at Gradle configuration time and nothing compiles. Two cases, not one: build.gradle.kts has two separate refusals, and the first draft of the test could not tell them apart — it unset one of four variables, which trips the *partial* check, so the `HS_RELEASE` check was never reached and the test passed against a build file with that check deleted. Caught by mutating the build file rather than trusting a green run.
+  **Issue:** #83
+
+- **Decision:** The docs rules moved into `test/guards/docs_rules.dart` as pure functions over strings.
+  **Why:** The guard held presence and equality assertions only, so verification had to copy the tree and mutate it four ways by hand to learn whether it worked. Writing the fixtures immediately found a real bug in a new rule: the policy is hard-wrapped, so "requests no permissions at all" is split across two lines and a literal match on it finds nothing. A rule that silently misses the sentence it exists to protect is the failure this whole pass is about, and it surfaced only because a fixture demanded the rule fire.
+  **Issue:** #83
+
+- **Decision:** The `## Android SDK` section of `.n8/memory/android-toolchain.md` was rewritten too, though #81 only named `## No device`.
+  **Why:** It was stale in the same way and for the same reason — written partway through #12 and never revisited. Correcting one section and leaving the other would leave the file half-wrong, which is worse than uniformly stale: a reader cannot tell which half to trust. `.n8/decisions.md` keeps its planning-time line about no AVD existing, because that ledger records what was decided when.
+  **Issue:** #81
+
+- **Decision (housekeeping the previous run owed):** M0's coverage map was rewritten to resolve every item to an issue number, and CLAUDE.md's invariant 1 and 3 annotations to `(merged)`.
+  **Why:** The map still read `→ S1, S2` — planning labels that mean nothing to a later reader, which defeats the point of a map whose purpose is to let someone check the claim rather than trust it. Both were listed as housekeeping in M0's own plan and neither was done. Noted on PR #77 by verification.
+  **Issue:** #84
+
+- **Note (own process error, already reported on PR #77):** during `/n8-verify M0` six verifier subagents were pointed at one shared worktree and several were told to mutate it. They collided, and three reported transient red runs caused by each other's fixtures. Both blocking findings were re-confirmed by hand in fresh worktrees before being filed. Recorded here so the next verification gives each agent its own worktree.
+  **Issue:** #83
