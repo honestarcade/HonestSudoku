@@ -87,6 +87,91 @@ void main() {
       expect(() => readFile('pubspec.lock.does-not-exist'), throwsStateError);
     });
 
+    // The rest of this group is #83. The assertion above never called a rule
+    // and tested a filename that will never exist, and the probe it stood in
+    // for is unreachable anyway: `flutter test` runs an implicit `pub get`,
+    // which regenerates a deleted `pubspec.lock` before a test loads. So
+    // deleting the file and watching the suite pass proves nothing about the
+    // guard.
+    //
+    // The reachable hole is one layer down. `lockOffenders` scans the
+    // `packages:` section, so a lockfile with no such section — empty,
+    // truncated, half-written — yields no packages and therefore no offenders,
+    // and reads exactly like a clean one. That is the blocklist failing open.
+
+    test('the real lockfile passes its own preconditions', () {
+      final offenders = lockfilePreconditions(readFile('pubspec.lock'));
+      expect(
+        offenders,
+        isEmpty,
+        reason: describeOffenders(
+          'lockfile-scannable',
+          offenders.map((o) => o.toString()).toList(),
+        ),
+      );
+    });
+
+    test('an empty lockfile is refused rather than read as clean', () {
+      expect(
+        lockOffenders('', readFile('pubspec.yaml')),
+        isEmpty,
+        reason: 'the hole itself: the blocklist finds nothing in nothing',
+      );
+      expect(
+        lockfilePreconditions('').map((o) => o.what),
+        contains('empty'),
+        reason:
+            'lockfile-empty: which is why the precondition, not the '
+            'blocklist, is what catches it',
+      );
+    });
+
+    test('a lockfile with no packages: section is refused', () {
+      const headerless = '''
+sdks:
+  dart: ">=3.0.0"
+''';
+      expect(lockOffenders(headerless, readFile('pubspec.yaml')), isEmpty);
+      expect(
+        lockfilePreconditions(headerless).single.what,
+        contains('packages:'),
+      );
+    });
+
+    test('a truncated lockfile is refused', () {
+      const truncated = '''
+packages:
+  async:
+    dependency: transitive
+    version: "2.11.0"
+sdks:
+  dart: ">=3.0.0"
+''';
+      expect(
+        lockfilePreconditions(truncated).single.what,
+        contains('1 locked packages'),
+        reason: 'lockfile-truncated: one package is not a resolved Flutter app',
+      );
+    });
+
+    test('the precondition counts packages, not lines', () {
+      final names = lockedPackageNames(readFile('pubspec.lock'));
+      expect(
+        names,
+        contains('flutter_lints'),
+        reason:
+            'lockfile-names: a dev dependency that is really in the lockfile',
+      );
+      expect(
+        names,
+        isNot(contains('dart')),
+        reason:
+            'lockfile-names: `dart` is an entry under sdks:, past the end of '
+            'the section the blocklist scans — counting it would let a '
+            'lockfile that stops at sdks: look populated',
+      );
+    });
+
     test('fires on a direct blocklisted package', () {
       const lock = '''
 packages:
@@ -126,6 +211,30 @@ dependencies:
       final offenders = lockOffenders(lock, pubspec);
       expect(offenders, hasLength(1));
       expect(offenders.single.what, contains('transitive'));
+    });
+
+    test('a four-space pubspec still labels a direct dependency direct', () {
+      const lock = '''
+packages:
+  http:
+    dependency: "direct main"
+    version: "1.2.0"
+sdks:
+  dart: ">=3.0.0"
+''';
+      const pubspec = '''
+dependencies:
+    http: ^1.2.0  # why: fixture
+''';
+      final offenders = lockOffenders(lock, pubspec);
+      expect(offenders, hasLength(1));
+      expect(
+        offenders.single.what,
+        contains('direct'),
+        reason:
+            'indentation must not turn a direct dependency into a '
+            'transitive one — the label is what tells you whose fault it is',
+      );
     });
 
     test('stops at sdks: and does not scan past it', () {
@@ -196,6 +305,76 @@ dependency_overrides:
 ''';
       final offenders = unjustifiedDependencies(pubspec);
       expect(offenders.map((o) => o.what), contains('dependency_overrides'));
+    });
+
+    // The three bypasses #79 found. Each was a legal pubspec that flutter
+    // pub get accepts, and each made the rule silently see nothing. They are
+    // fixtures rather than one-off checks because the rule's earlier fixtures
+    // only ever fed it canonically formatted input, which is precisely why the
+    // holes were invisible.
+    test(
+      'a trailing comment on the section header does not disable the rule',
+      () {
+        const pubspec = '''
+dependencies: # app deps
+  flutter:
+    sdk: flutter
+  path_provider: ^2.1.0
+''';
+        final offenders = unjustifiedDependencies(pubspec);
+        expect(
+          offenders,
+          hasLength(1),
+          reason: 'a commented section header must not hide its dependencies',
+        );
+        expect(offenders.single.what, 'path_provider');
+      },
+    );
+
+    test('a commented dependency_overrides header is still refused', () {
+      const pubspec = '''
+dependencies:
+  flutter:
+    sdk: flutter
+dependency_overrides:  # sneaky
+  collection: 1.0.0
+''';
+      expect(
+        unjustifiedDependencies(pubspec).map((o) => o.what),
+        contains('dependency_overrides'),
+      );
+    });
+
+    test('dependency_overrides entries need justification too', () {
+      const pubspec = '''
+dependencies:
+  flutter:
+    sdk: flutter
+dependency_overrides:
+  collection: 1.0.0
+''';
+      // Two offenders: the section itself, and the unjustified entry inside it.
+      // An override can swap any package for another, so it is the last place
+      // an unexplained entry should be allowed.
+      final offenders = unjustifiedDependencies(pubspec);
+      expect(offenders.map((o) => o.what), contains('dependency_overrides'));
+      expect(offenders.map((o) => o.what), contains('collection'));
+    });
+
+    test('indentation other than two spaces does not escape the rule', () {
+      const pubspec = '''
+dependencies:
+    flutter:
+        sdk: flutter
+    path_provider: ^2.1.0
+''';
+      final offenders = unjustifiedDependencies(pubspec);
+      expect(
+        offenders,
+        hasLength(1),
+        reason: 'four-space keys are valid YAML and must still be seen',
+      );
+      expect(offenders.single.what, 'path_provider');
     });
 
     test('exempt packages need no justification', () {

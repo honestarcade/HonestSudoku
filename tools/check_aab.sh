@@ -88,6 +88,7 @@ FOUND_PERMS="$(printf '%s\n' "$STRINGS" | grep -o 'android\.permission\.[A-Z_]*'
 
 OFFENDERS=""
 ALLOWED_SEEN=""
+SELF_PERM_SEEN=""
 while IFS= read -r perm; do
   [ -z "$perm" ] && continue
   if [ "$perm" = "$ALLOWED_RESTRICTION" ]; then
@@ -100,14 +101,83 @@ done <<EOF
 $FOUND_PERMS
 EOF
 
-# A bare `uses-permission` run means an element with no readable name — that is
-# always suspicious and never allowlisted. A bare `permission` run is the
-# self-permission element described above and is expected.
-BARE="$(printf '%s\n' "$STRINGS" | grep -x -E 'uses-permission|uses-permission-sdk-23' | sort -u || true)"
-if [ -n "$BARE" ]; then
-  OFFENDERS="$OFFENDERS$BARE
+# Custom permissions — anything REQUESTED that is not an android.permission.*.
+#
+# The first attempt at this matched `uses-permission` as a whole run and so
+# never fired at all: the protobuf packs the next field's tag straight onto the
+# element name, and the real run reads `uses-permission"y`. A bundle requesting
+# `com.evilads.sdk.TRACK_USER` passed clean (#80).
+#
+# The second attempt matched the run START and then hunted the WHOLE manifest
+# for dotted, permission-shaped tokens. That fired on every intent action and
+# every framework class name in the file and failed the real bundle. A scan that
+# cries wolf on a clean build gets switched off, so it is no better than blind.
+#
+# So this decodes the element instead of guessing at it. The encoding is
+# regular, and the four runs of a permission entry look like this:
+#
+#     uses-permission"y                              <- element name + next tag
+#     *http://schemas.android.com/apk/res/android    <- the android namespace
+#     name                                           <- the attribute's name
+#     @com.honestarcade.sudoku.DYNAMIC_...PERMISSION(   <- length byte + value
+#
+# so the value is the run after the one that is exactly `name`, minus the
+# length byte in front and the next field's tag behind.
+#
+# What this does NOT cover: a permission name of 128 characters or more takes a
+# two-byte length varint, and only one byte is stripped, so such a name is
+# reported with one stray character in front. It still fails — the verdict never
+# depends on decoding the name, only the message does.
+#
+# The one expected entry is allowlisted: androidx.core makes every app declare
+# <package>.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION on itself, at signature
+# level, so dynamically-registered receivers are not world-readable. It grants
+# the app nothing beyond its own signature, and Play does not show custom
+# signature permissions to users.
+ALLOWED_SELF_PERMISSION="${PACKAGE}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+
+# One line per uses-permission element: `VAL <run>`, or `UNDECODED` when the
+# element is there but its name could not be read. Undecodable is a failure, not
+# a pass — a request nobody can name is still a request.
+PERM_ENTRIES="$(printf '%s\n' "$STRINGS" | awk '
+  function flush() { if (inperm) { print "UNDECODED"; inperm = 0 } }
+  /^uses-permission(-sdk-23)?([^A-Za-z0-9_-]|$)/ {
+    flush(); inperm = 1; window = 0; want = 0; next
+  }
+  inperm {
+    if ($0 == "") next
+    if (++window > 12) { flush(); next }
+    if (want) { print "VAL " $0; inperm = 0; want = 0; next }
+    if ($0 == "name") { want = 1; next }
+    if (index($0, "schemas.android.com/apk/res")) next
+    # Fallback for a manifest this decoder has not seen the shape of: a run that
+    # looks like a permission name (a dotted id ending in a SHOUTING segment).
+    if ($0 ~ /\.[A-Z][A-Z0-9_]*(\(|$)/) { print "VAL " $0; inperm = 0; next }
+  }
+  END { flush() }
+' || true)"
+
+while IFS= read -r entry; do
+  [ -z "$entry" ] && continue
+  if [ "$entry" = "UNDECODED" ]; then
+    OFFENDERS="$OFFENDERS<uses-permission with an unreadable name>
 "
-fi
+    continue
+  fi
+  run="${entry#VAL }"
+  # Drop the next field's tag and everything after it, then the length byte.
+  value="${run%%(*}"
+  if [ "$value" = "$ALLOWED_SELF_PERMISSION" ] || [ "${value#?}" = "$ALLOWED_SELF_PERMISSION" ]; then
+    SELF_PERM_SEEN="$ALLOWED_SELF_PERMISSION"
+    continue
+  fi
+  name="$(printf '%s' "$value" | grep -oE '[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$' || true)"
+  [ -z "$name" ] && name="$value"
+  OFFENDERS="$OFFENDERS$name
+"
+done <<EOF
+$PERM_ENTRIES
+EOF
 
 OFFENDERS="$(printf '%s' "$OFFENDERS" | grep -v '^$' | sort -u || true)"
 
@@ -146,5 +216,8 @@ fi
 
 if [ -n "$ALLOWED_SEEN" ]; then
   echo "note: $ALLOWED_SEEN present as a receiver access restriction, not a request (allowlisted)" >&2
+fi
+if [ -n "${SELF_PERM_SEEN:-}" ]; then
+  echo "note: $SELF_PERM_SEEN is this app's own signature-level permission, added by androidx.core (allowlisted)" >&2
 fi
 echo "no permissions declared (package $PACKAGE)"

@@ -25,6 +25,80 @@ class Offender {
   String toString() => '$where: $what ($why)';
 }
 
+/// Why the lockfile itself cannot be trusted to be there and be whole.
+///
+/// `lockOffenders` scans the `packages:` section. Given empty text, or text
+/// with no `packages:` section, it finds no packages and therefore no
+/// offenders — so a truncated, emptied or half-written lockfile reads exactly
+/// like a clean one. That is the blocklist failing open, and the blocklist is
+/// what stands between this project and an ads SDK (#83).
+///
+/// The obvious probe for this — delete `pubspec.lock` and run the suite — does
+/// not work and is not worth re-deriving: `flutter test` runs an implicit
+/// `pub get`, which regenerates the file before a single test loads. Hence a
+/// precondition on the content rather than an experiment on the file.
+///
+/// `minimumPackages` is a floor, not a count: Flutter's own transitive set is
+/// far larger, and the number exists to reject a stub, not to pin a version.
+List<Offender> lockfilePreconditions(
+  String lockText, {
+  int minimumPackages = 10,
+}) {
+  final offenders = <Offender>[];
+  if (lockText.trim().isEmpty) {
+    offenders.add(
+      const Offender(
+        'pubspec.lock',
+        'empty',
+        'an empty lockfile scans clean because there is nothing in it to scan',
+      ),
+    );
+    return offenders;
+  }
+  if (!RegExp(r'^packages:\s*$', multiLine: true).hasMatch(lockText)) {
+    offenders.add(
+      const Offender(
+        'pubspec.lock',
+        'no `packages:` section',
+        'the blocklist scans that section and nothing else, so its absence '
+            'silences the rule entirely',
+      ),
+    );
+    return offenders;
+  }
+  final count = lockedPackageNames(lockText).length;
+  if (count < minimumPackages) {
+    offenders.add(
+      Offender(
+        'pubspec.lock',
+        '$count locked packages',
+        'fewer than $minimumPackages — a Flutter app resolves far more than '
+            'this, so the lockfile is truncated or half-written',
+      ),
+    );
+  }
+  return offenders;
+}
+
+/// Every package name in the lockfile's `packages:` section.
+Set<String> lockedPackageNames(String lockText) {
+  final names = <String>{};
+  var inPackages = false;
+  for (final line in lockText.split('\n')) {
+    if (RegExp(r'^packages:\s*$').hasMatch(line)) {
+      inPackages = true;
+      continue;
+    }
+    if (inPackages && RegExp(r'^[a-z_]+:\s*$').hasMatch(line)) {
+      inPackages = false;
+    }
+    if (!inPackages) continue;
+    final match = RegExp(r'^  ([A-Za-z0-9_]+):\s*$').firstMatch(line);
+    if (match != null) names.add(match.group(1)!);
+  }
+  return names;
+}
+
 /// Blocklisted packages present in the lockfile.
 ///
 /// Scans the `packages:` section only, stopping at `sdks:`, and labels each hit
@@ -84,7 +158,7 @@ List<Offender> unjustifiedDependencies(String pubspecText) {
   final lines = pubspecText.split('\n');
 
   for (var i = 0; i < lines.length; i++) {
-    if (RegExp(r'^dependency_overrides:\s*$').hasMatch(lines[i])) {
+    if (_sectionKeyOf(lines[i]) == 'dependency_overrides') {
       offenders.add(
         Offender(
           'pubspec.yaml:${i + 1}',
@@ -95,7 +169,14 @@ List<Offender> unjustifiedDependencies(String pubspecText) {
     }
   }
 
-  for (final section in ['dependencies', 'dev_dependencies']) {
+  // dependency_overrides is walked for justification as well as refused
+  // outright: an override can substitute any package for any other, so it is
+  // the last place an unexplained entry belongs (#79).
+  for (final section in [
+    'dependencies',
+    'dev_dependencies',
+    'dependency_overrides',
+  ]) {
     for (final entry in _sectionEntries(pubspecText, section)) {
       if (exemptFromJustification.contains(entry.name)) continue;
       if (!_hasWhy(entry.line)) {
@@ -122,29 +203,47 @@ class _Entry {
   final int lineNumber;
 }
 
+/// The section key a line opens, or null if it opens none.
+///
+/// A trailing comment must not hide the header: `dependencies: # app deps` is
+/// valid YAML that `flutter pub get` accepts, and matching against the whole
+/// line made every dependency beneath it invisible to this rule (#79).
+String? _sectionKeyOf(String line) {
+  if (line.isEmpty || line.startsWith(' ') || line.startsWith('#')) return null;
+  final match = RegExp(r'^([A-Za-z0-9_]+):\s*(#.*)?$').firstMatch(line);
+  return match?.group(1);
+}
+
+int _indentOf(String line) => line.length - line.trimLeft().length;
+
 List<_Entry> _sectionEntries(String pubspecText, String section) {
   final entries = <_Entry>[];
   final lines = pubspecText.split('\n');
   var inSection = false;
+  int? entryIndent;
   for (var i = 0; i < lines.length; i++) {
     final line = lines[i];
-    if (RegExp('^$section:\\s*\$').hasMatch(line)) {
-      inSection = true;
+    if (line.trim().isEmpty) continue;
+
+    final key = _sectionKeyOf(line);
+    if (key != null) {
+      inSection = key == section;
+      entryIndent = null;
       continue;
     }
-    if (inSection &&
-        line.trim().isNotEmpty &&
-        !line.startsWith(' ') &&
-        !line.startsWith('#')) {
-      inSection = false;
-    }
     if (!inSection) continue;
-    // Dependency keys sit at exactly two spaces; anything deeper belongs to a
-    // multi-line entry whose key line was already seen.
-    final match = RegExp(r'^  ([A-Za-z0-9_]+):').firstMatch(line);
-    if (match != null) {
-      entries.add(_Entry(match.group(1)!, line, i + 1));
-    }
+    if (line.trimLeft().startsWith('#')) continue;
+
+    // The first indented key sets this section's entry depth; anything deeper
+    // belongs to a multi-line entry whose key line was already seen. Two
+    // spaces is the convention, not the rule — four-space pubspecs are legal
+    // and used to escape this scan entirely (#79).
+    final match = RegExp(r'^\s*([A-Za-z0-9_]+):').firstMatch(line);
+    if (match == null) continue;
+    final indent = _indentOf(line);
+    entryIndent ??= indent;
+    if (indent != entryIndent) continue;
+    entries.add(_Entry(match.group(1)!, line, i + 1));
   }
   return entries;
 }
