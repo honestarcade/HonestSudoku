@@ -101,15 +101,27 @@ jobs:
         run: |
           set -euo pipefail
           out="$RUNNER_TEMP/promote.out"
+          codes=""
+          status=""
+          if [ -f "$out" ]; then
+            codes="$(sed -n 's/^promoted=//p' "$out")"
+            status="$(sed -n 's/^status=//p' "$out")"
+          fi
+          # Gated on the step's outcome AND on there being codes to name. The
+          # file alone proved nothing: `tee` creates it the moment the promote
+          # step starts, so every failure after that printed
+          # "Promoted on Play: versionCode []" and called itself a success
+          # (#130). An honesty-first project must not publish that line.
           {
             echo "### Play track promote"
             echo ""
-            if [ -f "$out" ]; then
-              codes="$(sed -n 's/^promoted=//p' "$out")"
-              status="$(sed -n 's/^status=//p' "$out")"
+            if [ "${{ steps.promote.outcome }}" = "success" ] && [ -n "$codes" ]; then
               echo "Promoted on Play: versionCode [$codes], ${{ inputs.from_track }} -> ${{ inputs.to_track }} (release status: $status)"
             else
-              echo "Nothing was promoted."
+              echo "**Nothing was promoted.** The promote step ended as"
+              echo "\`${{ steps.promote.outcome }}\`; see its log for the refusal."
+              echo ""
+              echo "Requested: ${{ inputs.from_track }} -> ${{ inputs.to_track }}"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 

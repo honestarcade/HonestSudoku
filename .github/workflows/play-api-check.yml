@@ -76,10 +76,27 @@ jobs:
           edit="$(sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$body" | head -1)"
 
           tracks="$RUNNER_TEMP/tracks.json"
-          curl -sS -o "$tracks" -H "Authorization: Bearer $token" \
-            "$api/$PACKAGE/edits/$edit/tracks" > /dev/null
+          tracks_status="$(curl -sS -o "$tracks" -w '%{http_code}' \
+            -H "Authorization: Bearer $token" \
+            "$api/$PACKAGE/edits/$edit/tracks")"
+          if [ "$tracks_status" != "200" ]; then
+            echo "could not list tracks for $PACKAGE (HTTP $tracks_status)" >&2
+            echo "  This is not the same as an app with no tracks yet." >&2
+            sed -n '1,15p' "$tracks" >&2
+            curl -sS -o /dev/null -X DELETE -H "Authorization: Bearer $token" \
+              "$api/$PACKAGE/edits/$edit" || true
+            rm -f "$key"
+            exit 1
+          fi
+          # `|| true` because grep exits 1 when it matches nothing, and under
+          # `set -o pipefail` that killed the step before the summary below —
+          # so the "empty list passes" case, which is the state of a brand-new
+          # app, was the one case that could not pass (#127). A 403 took the
+          # identical path, so a missing Console invite and a correct empty app
+          # were indistinguishable; the status check above now separates them.
           names="$(tr -d ' \n' < "$tracks" |
-            sed -n 's/.*/&/p' | grep -oE '"track":"[a-z]+"' | cut -d'"' -f4 | sort -u | tr '\n' ' ')"
+            { grep -oE '"track":"[a-z]+"' || true; } |
+            cut -d'"' -f4 | sort -u | tr '\n' ' ')"
 
           curl -sS -o /dev/null -X DELETE -H "Authorization: Bearer $token" \
             "$api/$PACKAGE/edits/$edit" || true
@@ -122,6 +139,19 @@ jobs:
             -storepass:env HS_KEYSTORE_PASS > "$listing"
           alias_seen="$(sed -n 's/^Alias name: //p' "$listing" | head -1)"
           bundle_fp="$(grep -m1 -oE 'SHA256: [0-9A-F:]+' "$listing" | sed 's/^SHA256: //')"
+
+          # Asserted, not just printed. This used to be reported in the summary
+          # and compared to nothing, so a keystore whose alias was not the
+          # configured one passed the check that exists to catch exactly that
+          # (#127). keytool lowercases alias names, so the comparison does too.
+          alias_want="$(printf '%s' "$HS_KEY_ALIAS" | tr '[:upper:]' '[:lower:]')"
+          alias_got="$(printf '%s' "$alias_seen" | tr '[:upper:]' '[:lower:]')"
+          if [ "$alias_got" != "$alias_want" ]; then
+            echo "the keystore's alias is '$alias_seen', but HS_KEY_ALIAS says '$HS_KEY_ALIAS'" >&2
+            echo "  The release build signs by alias, so it would fail with this pair." >&2
+            rm -f "$ks"
+            exit 1
+          fi
 
           # Proves the KEY password too, which the store password does not.
           keytool -certreq -alias "$HS_KEY_ALIAS" -keystore "$ks" \

@@ -125,4 +125,58 @@ void main() {
           'script is ever called',
     );
   });
+
+  test('the refusal is the first step, and precedes the credential', () {
+    // Ordering is the whole claim — "production is refused before any API
+    // call" is worth nothing if the refusal runs after the token is minted.
+    // Asserting only that the file contains the words survived moving the
+    // step to last, with the suite still green (#136).
+    final workflow = readFile('.github/workflows/play-promote.yml');
+    final stepIds = RegExp(
+      r'^      - id: (\w+)',
+      multiLine: true,
+    ).allMatches(workflow).map((m) => m.group(1)!).toList();
+
+    expect(
+      stepIds,
+      isNotEmpty,
+      reason: 'step-order: no `- id:` steps found; has the layout changed?',
+    );
+    expect(
+      stepIds.first,
+      'refuse',
+      reason: 'step-order: the refusal must be the first step. Found: $stepIds',
+    );
+    for (final later in const ['token', 'promote']) {
+      expect(
+        stepIds.indexOf(later),
+        greaterThan(stepIds.indexOf('refuse')),
+        reason:
+            'step-order: `$later` must run after `refuse`, or a refused '
+            'track reaches a credential. Found: $stepIds',
+      );
+    }
+  });
+
+  test('the step-order rule can fail', () {
+    // The complement: a rule that cannot fail is exactly what #136 was.
+    const moved =
+        '      - id: token\n'
+        '        run: mint\n'
+        '      - id: refuse\n'
+        '        run: exit 1\n'
+        '      - id: promote\n'
+        '        run: go\n';
+    final stepIds = RegExp(
+      r'^      - id: (\w+)',
+      multiLine: true,
+    ).allMatches(moved).map((m) => m.group(1)!).toList();
+    expect(stepIds, ['token', 'refuse', 'promote']);
+    expect(
+      stepIds.first,
+      isNot('refuse'),
+      reason: 'step-order-negative: the fixture must violate the rule',
+    );
+    expect(stepIds.indexOf('token'), lessThan(stepIds.indexOf('refuse')));
+  });
 }
