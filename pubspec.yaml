@@ -19,6 +19,9 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+  # Test-only. It never ships: `flutter build` does not resolve
+  # dev_dependencies, and the release bundle is byte-scanned every run.
+  yaml: ^3.1.4 # why: guards must assert workflow STRUCTURE; a line scan cannot (#154)
 
 flutter:
   uses-material-design: true

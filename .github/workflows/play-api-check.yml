@@ -135,8 +135,11 @@ jobs:
           # Proves the store password opens it, and prints only the alias and
           # the fingerprint — both public.
           listing="$RUNNER_TEMP/listing.txt"
+          # `-alias` like release.yml's keystore_check (#138): without it
+          # `alias_seen` is merely the FIRST alias in the listing, so a
+          # multi-entry keystore passes here and fails there (#165).
           keytool -list -v -keystore "$ks" -storetype PKCS12 \
-            -storepass:env HS_KEYSTORE_PASS > "$listing"
+            -storepass:env HS_KEYSTORE_PASS -alias "$HS_KEY_ALIAS" > "$listing"
           alias_seen="$(sed -n 's/^Alias name: //p' "$listing" | head -1)"
           bundle_fp="$(grep -m1 -oE 'SHA256: [0-9A-F:]+' "$listing" | sed 's/^SHA256: //')"
 

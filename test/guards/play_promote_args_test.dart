@@ -22,6 +22,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'repo_files.dart';
+import 'workflow_yaml.dart';
 
 const _script = 'tools/play_promote.sh';
 const _package = 'com.honestarcade.sudoku';
@@ -55,41 +56,49 @@ const _unreachableApi = 'http://127.0.0.1:1';
   return (code: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString());
 }
 
-/// The steps of a workflow job, as raw text blocks in file order.
-///
-/// A block starts at a `- ` list item under `steps:` and runs to the next one.
-/// Reading whole blocks rather than grepping `- id:` lines is what makes the
-/// assertions below survive a step that has no `id:`, a duplicate `id:`, and
-/// an `if:` that disables it — all three defeated the line-scan version with
-/// a green suite (#146).
-List<String> _stepBlocks(String workflow) {
-  final lines = workflow.split('\n');
-  final start = lines.indexWhere((l) => RegExp(r'^    steps:\s*$').hasMatch(l));
-  if (start < 0) return const [];
-  final blocks = <String>[];
-  final buffer = StringBuffer();
-  for (var i = start + 1; i < lines.length; i++) {
-    final line = lines[i];
-    if (line.trim().isEmpty) {
-      if (buffer.isNotEmpty) buffer.writeln(line);
-      continue;
-    }
-    final indent = line.length - line.trimLeft().length;
-    if (indent <= 4) break; // left the steps: block
-    if (RegExp(r'^      - ').hasMatch(line)) {
-      if (buffer.isNotEmpty) blocks.add(buffer.toString());
-      buffer.clear();
-    }
-    buffer.writeln(line);
-  }
-  if (buffer.isNotEmpty) blocks.add(buffer.toString());
-  return blocks;
-}
+/// The refusal must be reached, unconditionally, before anything that could
+/// mint a credential — in every job of the file, not just the first.
+void _assertPromoteShape(Workflow wf) {
+  expect(wf.problem, isNull, reason: 'refusal: ${wf.problem}');
+  expect(wf.jobs, isNotEmpty, reason: 'refusal: no jobs parsed');
 
-String? _stepId(String block) => RegExp(
-  r'^\s*-?\s*id:\s*(\S+)',
-  multiLine: true,
-).firstMatch(block)?.group(1);
+  for (final job in wf.jobs) {
+    if (job.steps.isEmpty) continue;
+    final refusals = job.steps
+        .where((s) => (s.run ?? '').contains('exit 1'))
+        .toList();
+    expect(
+      refusals,
+      isNotEmpty,
+      reason:
+          'refusal: job `${job.name}` has no step that refuses. A job '
+          'without one can mint the credential and promote unchecked',
+    );
+    final refuse = job.steps.first;
+    expect(
+      refuse.run ?? '',
+      contains('exit 1'),
+      reason:
+          'refusal: the first step of job `${job.name}` must be the '
+          'refusal; found `${refuse.id ?? refuse.name}`',
+    );
+    expect(
+      refuse.isUnconditional,
+      isTrue,
+      reason:
+          'refusal: the refusal in `${job.name}` is conditional '
+          '(if: ${refuse.ifExpression}, continue-on-error: '
+          '${refuse.continueOnError}) — it would be skipped or ignored',
+    );
+    expect(
+      refuse.run,
+      contains('production'),
+      reason:
+          'refusal: the first step of `${job.name}` does not mention the '
+          'track it exists to refuse',
+    );
+  }
+}
 
 void main() {
   test('the script exists and is executable', () {
@@ -176,100 +185,61 @@ void main() {
     );
   });
 
-  test(
-    'the refusal is the first step, runs unconditionally, and is unique',
-    () {
-      final workflow = readFile('.github/workflows/play-promote.yml');
-      final blocks = _stepBlocks(workflow);
-      final ids = blocks.map(_stepId).toList();
+  test('the refusal is first, unconditional, and nothing else mints a credential', () {
+    // Parsed, not grepped. The line-scan version was defeated four ways with a
+    // green suite: `exit 1` present only in a comment, `continue-on-error` on
+    // the refusal, `if: always()` on the steps after it, and an entire second
+    // job with no refusal at all (#154).
+    _assertPromoteShape(
+      Workflow.parse(
+        '.github/workflows/play-promote.yml',
+        readFile('.github/workflows/play-promote.yml'),
+      ),
+    );
+  });
 
-      expect(
-        blocks,
-        isNotEmpty,
-        reason: 'step-order: no steps parsed; has the layout changed?',
-      );
-      expect(
-        _stepId(blocks.first),
-        'refuse',
-        reason:
-            'step-order: the first step must be the refusal — including a step '
-            'with no `id:`, which would still mint a credential. Found: $ids',
-      );
-      expect(
-        ids.where((id) => id == 'refuse').length,
-        1,
-        reason:
-            'step-order: exactly one step may be `refuse`; a decoy first and '
-            'the real one last passes any check that only reads the first id. '
-            'Found: $ids',
-      );
-      expect(
-        RegExp(r'^\s+if:', multiLine: true).hasMatch(blocks.first),
-        isFalse,
-        reason:
-            'step-order: the refusal must not be conditional — `if: false` '
-            'leaves it first and stops it running',
-      );
-      expect(
-        blocks.first,
-        contains('exit 1'),
-        reason: 'step-order: the first step does not refuse anything',
-      );
-      for (final later in const ['token', 'promote']) {
-        expect(
-          ids.indexOf(later),
-          greaterThan(0),
-          reason:
-              'step-order: `$later` must run after the refusal, or a refused '
-              'track reaches a credential. Found: $ids',
+  test('the refusal rule catches each way it was defeated', () {
+    final text = readFile('.github/workflows/play-promote.yml');
+    final mutations = <String, String Function(String)>{
+      'refusal moved to last': (t) {
+        final blocks = t.split(RegExp(r'^(?=      - )', multiLine: true));
+        final refuse = blocks.firstWhere(
+          (b) => b.startsWith('      - id: refuse'),
         );
-      }
-    },
-  );
-
-  test('the step-order rule catches each way it was defeated', () {
-    // Every one of these passed the line-scan version with a green suite.
-    const head = 'jobs:\n  a:\n    steps:\n';
-    const refuse = '      - id: refuse\n        run: exit 1\n';
-    const token = '      - id: token\n        run: mint\n';
-    const promote = '      - id: promote\n        run: go\n';
-
-    // 1. Disabled in place.
-    const disabled =
-        '$head      - id: refuse\n        if: false\n'
-        '        run: exit 1\n$token$promote';
-    expect(
-      RegExp(r'^\s+if:', multiLine: true).hasMatch(_stepBlocks(disabled).first),
-      isTrue,
-      reason: 'step-order-negative: an `if:` on the refusal must be visible',
-    );
-
-    // 2. An id-less step slipped in front.
-    const idless =
-        '$head      - name: mint early\n        run: gcloud auth\n'
-        '$refuse$token$promote';
-    expect(
-      _stepId(_stepBlocks(idless).first),
-      isNot('refuse'),
-      reason: 'step-order-negative: an id-less first step must not be missed',
-    );
-
-    // 3. A decoy carrying the same id, with the real refusal last.
-    const decoy =
-        '$head      - id: refuse\n        run: echo ok\n'
-        '$token$promote      - id: refuse_real\n        run: exit 1\n';
-    expect(
-      _stepBlocks(decoy).map(_stepId).where((id) => id == 'refuse').length,
-      1,
-      reason: 'sanity: the decoy fixture has exactly one `refuse`',
-    );
-    expect(
-      _stepBlocks(decoy).first,
-      isNot(contains('exit 1')),
-      reason: 'step-order-negative: a decoy that refuses nothing must be seen',
-    );
-
-    // And the shape that should pass.
-    expect(_stepId(_stepBlocks('$head$refuse$token$promote').first), 'refuse');
+        final rest = blocks.where((b) => b != refuse).toList();
+        return rest.join() + refuse;
+      },
+      'refusal disabled with if: false': (t) => t.replaceFirst(
+        '      - id: refuse\n',
+        '      - id: refuse\n        if: false\n',
+      ),
+      'refusal made advisory with continue-on-error': (t) => t.replaceFirst(
+        '      - id: refuse\n',
+        '      - id: refuse\n        continue-on-error: true\n',
+      ),
+      'an id-less step mints the credential first': (t) => t.replaceFirst(
+        '      - id: refuse\n',
+        '      - name: mint early\n'
+            '        run: gcloud auth activate-service-account\n'
+            '      - id: refuse\n',
+      ),
+      'a second job with no refusal': (t) =>
+          '$t\n  sneaky:\n    runs-on: ubuntu-latest\n    steps:\n'
+          '      - id: token\n        run: gcloud auth activate-service-account\n'
+          '      - id: promote\n        run: tools/play_promote.sh pkg internal production\n',
+      'the refusal stops refusing': (t) => t.replaceFirst(
+        RegExp(r'^(\s*)exit 1$', multiLine: true),
+        r'$1: # exit 1',
+      ),
+    };
+    mutations.forEach((why, mutate) {
+      final mutated = mutate(text);
+      expect(mutated, isNot(text), reason: 'sanity: "$why" changed nothing');
+      expect(
+        () => _assertPromoteShape(Workflow.parse('play-promote.yml', mutated)),
+        throwsA(isA<TestFailure>()),
+        reason: 'refusal-negative: "$why" was not caught',
+      );
+    });
   });
 }

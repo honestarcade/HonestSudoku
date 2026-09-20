@@ -290,11 +290,11 @@ Ad-hoc entries (changes made outside the n8SDLC commands that deviate from plann
   **Issue:** #72, #74
 
 - **Decision:** The closed test starts at the beginning of M7 rather than running in parallel with M6, and recruiting starts on the milestone's first day with a target of fifteen.
-  **Why:** Owner's calls ("At the start of M7", "None yet", 2026-09-19). The fourteen days are therefore added to the schedule rather than absorbed into it. Fifteen because Play restarts the count on a dip below twelve.
+  **Why:** Owner's calls ("At the start of M7", "None yet", 2026-09-19). The fourteen days are therefore added to the schedule rather than absorbed into it. Fifteen because a dip below twelve is treated as restarting the count — the stricter reading, which holds either way; how Play actually counts is unresolved (#148, #164).
   **Issue:** #70, #73
 
 - **Decision:** The fourteen-day log records joiners and leavers, not only a daily headcount, and the Console's own qualification indicator closes the criterion.
-  **Why:** a roster that churns can show twelve every single day while nobody accumulates fourteen.
+  **Why:** a roster that churns can show twelve every single day while nobody accumulates fourteen — *if* Play counts per tester, which is the unresolved question recorded in `.n8/memory/play-console.md` and amended into #70 and #73 on 2026-09-19 (#148, #164). Logging joiners and leavers is the right call under either reading, so the decision stands; the sentence above previously presupposed the per-tester one.
   **Issue:** #73
 
 - **Decision:** The owner performs every Play Console action personally; the agent prepares an entry sheet for each page and never drives the Console. GitHub is the agent's: tags, workflows, releases and records.
@@ -620,3 +620,23 @@ CI and the tag-to-Play pipeline, on `milestone/m1-ci`. Three stories implemented
 - **Decision:** the secret rule was inverted rather than extended.
   **Why:** three rounds of adding patterns (#131, #141) each closed the spellings the report named. `set -v`, `set -euo pipefail; set -x`, `secrets['NAME']`, `cat<<EOF`, `cat <<'E-OF'` and `bash -x script.sh` all passed the third version, and it had begun refusing a legitimate `cat <<EOF > key.properties`. Enumerating shell syntax is unwinnable. Forbidding the interpolation itself is one rule, cannot be spelled around, and needed no workflow changes because every one here already passes secrets as step-level `env:`.
   **Issue:** #141, #142
+
+## /n8-exec M1 fixes, third pass — 2026-09-20
+
+- **Decision (amends a stated convention):** `package:yaml` is a dev dependency, and `test/guards/repo_files.dart`'s "guards add no dependencies" rule is narrowed to *runtime* dependencies.
+  **Why:** three rounds asserted workflow structure with line scans and three rounds of bypasses followed. The substring version of the release-shape test was satisfied by a **comment** — with the strings left in one, the gate job became a no-op, the permission scan and certificate check became `true`, and the track became `production`, with 289 tests green. The original reasoning holds for a package the app ships, which invariant 3 governs and which a build could silently drop; a test-only package that went missing fails to compile the guards instead. Proven not to ship: the built bundle contains no `package:yaml`, while the control `package:flutter/` is findable by the same scan.
+  **Issue:** #154, and the owner chose this over keeping the scans or adding actionlint
+
+- **Decision (Rule 1):** the two dispatch inputs on `play-promote.yml` are `type: choice` with an explicit option list.
+  **Why:** free text let a crafted `to_track` append a forged "Promoted on Play … -> production" line to the run summary and title a refused run "Promote internal to production" in the Actions list (#165). The refusal step stays — two barriers, and GitHub's cannot be bypassed by dispatching the API directly.
+  **Issue:** #165
+
+- **Decision:** `report-gate-failure` triggers on `needs.gate.result != 'success'` rather than `failure()`.
+  **Why:** a cancelled gate is not a failure, so the "nothing shipped" line never appeared for one — the case an operator is most likely to misread.
+  **Issue:** #165
+
+- **Note (unlogged deviations, now recorded):** `play-promote.yml` and `play-api-check.yml` use `timeout-minutes: 15` where the plan said 10; `tools/play_promote.sh` collapses the plan's exit codes 3 and 4 into 5, which #133 named and neither fix restored; the promote summary lists version codes space-separated where the plan said comma-separated; `tools/setup_play_ci.sh` `chmod 700`s the secrets directory rather than refusing a loose one, and implements no `--rotate`. Each is defensible and none was in the ledger.
+  **Issue:** #165
+
+- **Correction:** `#148`'s ad-hoc entry claimed the per-tester reading was withdrawn from "the two ledger lines above". One was edited and one was not, and the edited one kept the presupposition rather than the attribution. Both now carry the qualification, and `.n8/memory/play-console.md` no longer attributes the word "continuous" to #19, which does not use it, nor claims the API check "proves all five work" when `HS_KEY_PASS` is proved by nothing.
+  **Issue:** #164

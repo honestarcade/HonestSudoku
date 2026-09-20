@@ -14,14 +14,24 @@ run-name: Promote ${{ inputs.from_track }} to ${{ inputs.to_track }}
 on:
   workflow_dispatch:
     inputs:
+      # `choice` rather than free text. Free text let a crafted `to_track`
+      # append a forged "Promoted on Play ... -> production" line to the run
+      # summary, and title a refused run "Promote internal to production" in
+      # the Actions list. The refusal step below stays: two barriers, and this
+      # one is GitHub's, so it cannot be bypassed by dispatching the API
+      # directly (#165).
       from_track:
         description: Track to promote from
         required: true
         default: internal
+        type: choice
+        options: [internal, alpha, beta]
       to_track:
         description: Track to promote to
         required: true
         default: alpha
+        type: choice
+        options: [internal, alpha, beta]
 
 permissions:
   contents: read
@@ -136,9 +146,13 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - id: forget
-        name: Forget the token
+        name: Remove the credentials
         if: always()
         run: |
           set -euo pipefail
+          # Named for what it does. `gcloud auth revoke` removes the LOCAL
+          # service-account credential; the bearer token already minted stays
+          # valid for its lifetime and stays in $GITHUB_ENV for the rest of the
+          # job. Calling that "forget the token" overclaimed (#165).
           rm -f "$RUNNER_TEMP/play-sa.json"
           gcloud auth revoke --all --quiet || true

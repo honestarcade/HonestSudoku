@@ -76,21 +76,25 @@ chmod 700 "$SECRETS_DIR"
 chmod 600 "$KEYSTORE"
 
 umask 177
-# Quoted, because this file documents itself as sourceable. An unquoted value
-# containing a space breaks `. this-file`, and one containing a shell
-# metacharacter executes on it. The generator produces alphanumerics today, but
-# the file is written to be read and edited by a human (#108).
+# Quoted, because the file is read and edited by a human and a value
+# containing a space must survive. It is parsed, never sourced — see the header
+# written into the file itself (#119, #165).
 cat > "$CREDENTIALS" <<EOF
 # Honest Sudoku upload keystore credentials — MOVE TO YOUR PASSWORD MANAGER,
-# then delete this file. Every line is a comment or an export, so this file can
-# be sourced directly: \`set -a; . this-file; set +a\`.
+# then delete this file.
+#
+# Do NOT source this file. tools/set_ci_secrets.sh PARSES it instead, because
+# the values below are double-quoted: a password containing a command
+# substitution or a backtick would execute on a dot-source, and the value you
+# would get back is the expanded form rather than the one the keystore was made
+# with. That is issue #119, still open. Earlier text here told you to source it
+# (#165).
 export HS_KEYSTORE_PATH="$KEYSTORE"
 export HS_KEYSTORE_PASS="$HS_KEYSTORE_PASS"
 export HS_KEY_ALIAS="$ALIAS"
 export HS_KEY_PASS="$HS_KEYSTORE_PASS"
 # NOTE: PKCS12 keystores use ONE password for store and key — HS_KEY_PASS
 # equals HS_KEYSTORE_PASS by format design, not by an oversight.
-# This file doubles as an env template: source it to build a signed release.
 EOF
 chmod 600 "$CREDENTIALS"
 
