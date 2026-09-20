@@ -87,10 +87,18 @@ api() {
   local out status
   out="$(mktemp)"
   API_BODY_FILE="$out"
+  API_BODY_FILES+=("$out")
+  # `|| true` because curl's own failure — refused connection, DNS, timeout —
+  # is an API failure to report, not a reason for `set -e` to kill the script
+  # mid-edit with a bare exit 7 (#147).
   if [ -n "$body" ]; then
-    status="$(curl -sS -o "$out" -w '%{http_code}' -X "$method" "${auth[@]}" "${json[@]}" -d "$body" "$path")"
+    status="$(curl -sS --connect-timeout 10 --max-time 60 -o "$out" -w '%{http_code}' -X "$method" "${auth[@]}" "${json[@]}" -d "$body" "$path" || true)"
   else
-    status="$(curl -sS -o "$out" -w '%{http_code}' -X "$method" "${auth[@]}" "$path")"
+    status="$(curl -sS --connect-timeout 10 --max-time 60 -o "$out" -w '%{http_code}' -X "$method" "${auth[@]}" "$path" || true)"
+  fi
+  if [ -z "$status" ] || [ "$status" = "000" ]; then
+    echo "play_promote: $method $path could not be reached" >&2
+    return 1
   fi
   if [ "${status:0:1}" != "2" ]; then
     echo "play_promote: $method $path returned $status" >&2
@@ -106,12 +114,21 @@ api() {
 
 EDIT_ID=""
 API_BODY_FILE=""
+API_BODY_FILES=()
 cleanup() {
-  [ -n "$API_BODY_FILE" ] && rm -f "$API_BODY_FILE"
+  # Every kept response body, not only the one API_BODY_FILE currently names:
+  # a later successful call overwrote the variable and the earlier file
+  # survived the run (#150).
+  # `${a[@]+"${a[@]}"}` because bash 3.2 — the macOS default — treats an
+  # empty array's expansion as an unbound variable under `set -u`, and the
+  # array is empty on every path that fails before the first request.
+  for body_file in ${API_BODY_FILES[@]+"${API_BODY_FILES[@]}"}; do
+    [ -n "$body_file" ] && rm -f "$body_file"
+  done
   # Any edit that was not committed is deleted, so a failed run leaves no
   # pending change on the account.
   if [ -n "$EDIT_ID" ]; then
-    curl -sS -o /dev/null -X DELETE "${auth[@]}" \
+    curl -sS --connect-timeout 10 --max-time 30 -o /dev/null -X DELETE "${auth[@]}" \
       "$API/$PACKAGE/edits/$EDIT_ID" 2>/dev/null || true
   fi
 }
@@ -152,7 +169,7 @@ CODES_JSON="[$(printf '%s' "$CODES" | tr ' ' '\n' | sed 's/^/"/; s/$/"/' | paste
 # it for the trap: each attempt below opens its own edit and overwrites
 # EDIT_ID, so the trap would only ever see the last one and this one would be
 # left pending on the account.
-curl -sS -o /dev/null -X DELETE "${auth[@]}" "$API/$PACKAGE/edits/$EDIT_ID" 2> /dev/null || true
+curl -sS --connect-timeout 10 --max-time 30 -o /dev/null -X DELETE "${auth[@]}" "$API/$PACKAGE/edits/$EDIT_ID" 2> /dev/null || true
 EDIT_ID=""
 
 # One attempt is open-edit -> PUT -> commit, because the draft-app rule can be
@@ -178,6 +195,17 @@ attempt_promotion() {
   # $1 = release status. Returns 0 on a committed promotion, 1 otherwise,
   # leaving REFUSAL set to the lowercased body of whatever refused it.
   local release_status="$1"
+
+  # Delete the edit a previous attempt left open before opening another.
+  # Without this the completed attempt's edit was orphaned the moment the
+  # draft attempt overwrote EDIT_ID, and cleanup() only ever sees the last
+  # one — the same hazard the read-only edit above is deleted to avoid
+  # (#144). The AC is "the read-only edit and any failed edit are deleted".
+  if [ -n "$EDIT_ID" ]; then
+    curl -sS --connect-timeout 10 --max-time 30 -o /dev/null -X DELETE "${auth[@]}" \
+      "$API/$PACKAGE/edits/$EDIT_ID" 2> /dev/null || true
+    EDIT_ID=""
+  fi
 
   EDIT_ID="$(api POST "$API/$PACKAGE/edits" '{}' |
     sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)" || {
@@ -240,15 +268,17 @@ if [ "$STATUS_USED" = "completed" ] && [ "$TARGET_CODES" != "$CODES" ]; then
   die_api "the '$TO' track reads back as [$TARGET_CODES], not the promoted [$CODES]"
 fi
 if [ "$STATUS_USED" = "draft" ]; then
-  # A draft release is not a completed one, so the helper will not find it.
-  # Fall back to asserting each promoted code appears in the track's JSON.
-  FLAT="$(printf '%s' "$TARGET" | tr -d ' \n')"
-  for code in $CODES; do
-    case "$FLAT" in
-    *"\"$code\""*) ;;
-    *) die_api "the '$TO' track reads back without the promoted code $code" ;;
-    esac
-  done
+  # Compared as a set, like the completed path. This used to substring-match
+  # the flattened JSON for `"<code>"`, which accepted a pre-existing release
+  # and even accepted a release whose *name* was the version code (#145).
+  set +e
+  TARGET_DRAFT="$(printf '%s' "$TARGET" | python3 "$CODES_HELPER" draft)"
+  DRAFT_RC=$?
+  set -e
+  [ "$DRAFT_RC" = 0 ] ||
+    die_api "the '$TO' track reads back with no draft release"
+  [ "$TARGET_DRAFT" = "$CODES" ] ||
+    die_api "the '$TO' track reads back as [$TARGET_DRAFT], not the promoted [$CODES]"
 fi
 
 echo "promoted=$CODES"

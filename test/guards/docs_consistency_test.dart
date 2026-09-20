@@ -103,6 +103,28 @@ void main() {
       );
     });
 
+    test('a valid Release section that is the last section passes', () {
+      // The shape the `\Z` bug broke, and the one the real README cannot
+      // exercise because `## Privacy` follows it. Without this fixture a
+      // reintroduced lookahead-style slice would be masked exactly as before
+      // (#151).
+      const lastSection =
+          '# Honest Sudoku\n\n'
+          '## Quality gate\n\nRun it.\n\n'
+          '## Release\n\n'
+          'Tag `v0.1.0` and push. `release.yml` ships it; `ci_version.sh` '
+          'computes the code. Never re-tag a version.\n\n'
+          '| Secret |\n|---|\n'
+          '| `HS_KEYSTORE_B64` |\n| `HS_KEYSTORE_PASS` |\n'
+          '| `HS_KEY_ALIAS` |\n| `HS_KEY_PASS` |\n'
+          '| `PLAY_SERVICE_ACCOUNT_JSON` |\n';
+      expect(
+        readmeReleaseOffenders(lastSection),
+        isEmpty,
+        reason: 'readme-release: refused a valid section that ends the file',
+      );
+    });
+
     test('the Release rule refuses a README without one', () {
       // The complement. #132 was a criterion reported met with nothing
       // asserting it, so this rule is worth nothing unless it can fail.

@@ -51,16 +51,38 @@ read_credential() {
     head -1 |
     awk '{
       line = $0
-      sub(/[[:space:]]+$/, "", line)
-      if (line ~ /^".*"$/) {
-        line = substr(line, 2, length(line) - 2)
-        gsub(/\\"/, "\"", line)
-        gsub(/\\\$/, "$", line)
-        gsub(/\\\\/, "\\", line)
-      } else if (line ~ /^\047.*\047$/) {
-        line = substr(line, 2, length(line) - 2)
+      if (substr(line, 1, 1) == "\"") {
+        # Scan to the matching quote, honouring \" so a password containing a
+        # quote survives. Everything after it — a comment, stray spaces — is
+        # not part of the value. Anchoring the strip to end-of-line instead
+        # meant `export HS_KEY_PASS="pw" # note` uploaded the quotes and the
+        # comment as the password, silently (#143).
+        out = ""
+        for (i = 2; i <= length(line); i++) {
+          c = substr(line, i, 1)
+          if (c == "\\" && i < length(line)) {
+            n = substr(line, i + 1, 1)
+            if (n == "\"" || n == "$" || n == "\\") { out = out n; i++; continue }
+            out = out c; continue
+          }
+          if (c == "\"") break
+          out = out c
+        }
+        print out
+      } else if (substr(line, 1, 1) == "\047") {
+        out = ""
+        for (i = 2; i <= length(line); i++) {
+          c = substr(line, i, 1)
+          if (c == "\047") break
+          out = out c
+        }
+        print out
+      } else {
+        # Unquoted: a `#` after whitespace starts a comment, as in a shell.
+        sub(/[[:space:]]+#.*$/, "", line)
+        sub(/[[:space:]]+$/, "", line)
+        print line
       }
-      print line
     }'
 }
 
@@ -78,6 +100,21 @@ for pair in "HS_KEYSTORE_PATH:$KEYSTORE_PATH" "HS_KEYSTORE_PASS:$KEYSTORE_PASS" 
     exit 2
   }
 done
+
+# PKCS12 keystores have exactly one password: keytool prints "Different store
+# and key passwords not supported for PKCS12 KeyStores. Ignoring user-specified
+# -keypass value" and exits 0 whatever `-keypass` says. So a `-keypass` check
+# cannot fail, and HS_KEY_PASS was verified nowhere — it passed the parser, the
+# pre-flight, play-api-check and release.yml's keystore_check, and failed four
+# minutes into the Gradle build (#143). Asserting the two are equal is the only
+# honest check available, and it is the truth for a keystore this project made.
+[ "$KEY_PASS" = "$KEYSTORE_PASS" ] || {
+  echo "set_ci_secrets: HS_KEY_PASS differs from HS_KEYSTORE_PASS." >&2
+  echo "  A PKCS12 keystore has one password; keytool ignores a separate key" >&2
+  echo "  password, so a mismatch here cannot be caught later and would fail" >&2
+  echo "  the release build instead. Check $CREDENTIALS." >&2
+  exit 2
+}
 
 [ -r "$KEYSTORE_PATH" ] || {
   echo "set_ci_secrets: the keystore named in the credentials file is not readable:" >&2

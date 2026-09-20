@@ -128,3 +128,26 @@ _pending._ `tools/setup_play_ci.sh` prints the `private_key_id` when it sets
 `PLAY_SERVICE_ACCOUNT_JSON`. Record it here: it is public, it names the key
 rather than being the key, and it is what tells the owner which key to revoke
 when rotating.
+
+## Releasing
+
+The mechanics live in the README's Release section; this records only what is
+Console-side and not obvious from the repository.
+
+- A release is a **tag**. `git tag v0.1.0 && git push origin v0.1.0` runs
+  `.github/workflows/release.yml`, which re-runs the PR gate, builds signed,
+  scans the bundle for permissions, checks it against the committed upload
+  certificate, and uploads to the **internal** track. Nothing is published by
+  hand and nothing reaches production.
+- **Never re-tag a version.** Play refuses a version code it has already seen,
+  and a moved tag would produce a second build claiming to be the same
+  release. Ship the next version instead.
+- Version codes are `1000 + run_number * 10 + run_attempt`
+  (`tools/ci_version.sh`), so they rise strictly across runs and a re-run of a
+  failed run outranks the attempt it replaces.
+- Promotion to closed testing is a separate manual dispatch
+  (`.github/workflows/play-promote.yml`); it refuses `production` in its first
+  step, before any credential is minted.
+- **Play App Signing** is enrolled by the first upload. The upload certificate
+  this repository commits is `android/signing/upload_certificate.pem`; the app
+  signing key is Play's and never leaves it.

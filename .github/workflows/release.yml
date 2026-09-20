@@ -14,6 +14,7 @@
 # not have it in scope. No step prints one; a guard asserts that and refuses
 # `set -x` anywhere in this directory.
 name: Release
+run-name: Release ${{ github.ref_name }}
 
 on:
   push:
@@ -189,7 +190,9 @@ jobs:
           view_err="$RUNNER_TEMP/release-view.err"
           if ! gh release view "$GITHUB_REF_NAME" > /dev/null 2> "$view_err"; then
             if grep -qiE 'release not found|not found \(HTTP 404\)|could not find' "$view_err"; then
-              echo "no GitHub release for this tag; skipping asset"
+                echo "no GitHub release for this tag; skipping asset"
+              echo "no GitHub release for this tag; the bundle is in the run artifact only" \
+                >> "$GITHUB_STEP_SUMMARY"
               exit 0
             fi
             echo "gh release view failed for a reason other than not-found:" >&2
@@ -221,11 +224,16 @@ jobs:
       - id: summary
         name: Write the summary
         if: always()
+        # TAG through env, never interpolated into the script: GitHub pastes
+        # `${{ }}` in as text before bash runs, and `v1.0.0$(id)` is a legal
+        # tag name that matches this workflow's own trigger (#142).
+        env:
+          TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           aab=build/app/outputs/bundle/release/app-release.aab
           {
-            echo "### Release ${{ github.ref_name }}"
+            echo "### Release $TAG"
             echo ""
             echo "| | |"
             echo "|---|---|"
@@ -267,7 +275,9 @@ jobs:
     steps:
       - id: say
         name: Say nothing shipped
+        env:
+          TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          echo "gate failed on ${{ github.ref_name }}; nothing shipped" \
+          echo "gate failed on $TAG; nothing shipped" \
             | tee -a "$GITHUB_STEP_SUMMARY"
