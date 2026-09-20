@@ -98,6 +98,15 @@ jobs:
       - id: summary
         name: Write the summary
         if: always()
+        # Inputs through env, never interpolated. This step is `if: always()`,
+        # so it runs on the refusal path — exactly where the input is arbitrary
+        # text — and a crafted `to_track` could forge a
+        # "Promoted on Play ... -> production" line into the summary, undoing
+        # what #130 fixed (#142).
+        env:
+          PROMOTE_OUTCOME: ${{ steps.promote.outcome }}
+          FROM_TRACK: ${{ inputs.from_track }}
+          TO_TRACK: ${{ inputs.to_track }}
         run: |
           set -euo pipefail
           out="$RUNNER_TEMP/promote.out"
@@ -115,13 +124,13 @@ jobs:
           {
             echo "### Play track promote"
             echo ""
-            if [ "${{ steps.promote.outcome }}" = "success" ] && [ -n "$codes" ]; then
-              echo "Promoted on Play: versionCode [$codes], ${{ inputs.from_track }} -> ${{ inputs.to_track }} (release status: $status)"
+            if [ "$PROMOTE_OUTCOME" = "success" ] && [ -n "$codes" ]; then
+              echo "Promoted on Play: versionCode [$codes], $FROM_TRACK -> $TO_TRACK (release status: $status)"
             else
               echo "**Nothing was promoted.** The promote step ended as"
-              echo "\`${{ steps.promote.outcome }}\`; see its log for the refusal."
+              echo "\`$PROMOTE_OUTCOME\`; see its log for the refusal."
               echo ""
-              echo "Requested: ${{ inputs.from_track }} -> ${{ inputs.to_track }}"
+              echo "Requested: $FROM_TRACK -> $TO_TRACK"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 

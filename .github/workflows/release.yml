@@ -221,11 +221,16 @@ jobs:
       - id: summary
         name: Write the summary
         if: always()
+        # TAG through env, never interpolated into the script: GitHub pastes
+        # `${{ }}` in as text before bash runs, and `v1.0.0$(id)` is a legal
+        # tag name that matches this workflow's own trigger (#142).
+        env:
+          TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           aab=build/app/outputs/bundle/release/app-release.aab
           {
-            echo "### Release ${{ github.ref_name }}"
+            echo "### Release $TAG"
             echo ""
             echo "| | |"
             echo "|---|---|"
@@ -267,7 +272,9 @@ jobs:
     steps:
       - id: say
         name: Say nothing shipped
+        env:
+          TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          echo "gate failed on ${{ github.ref_name }}; nothing shipped" \
+          echo "gate failed on $TAG; nothing shipped" \
             | tee -a "$GITHUB_STEP_SUMMARY"
