@@ -41,7 +41,7 @@ void _writeExecutable(String path, String body) {
   Map<String, String> env = const {},
 }) {
   final r = Process.runSync(
-    'bash',
+    '/bin/bash',
     [script],
     workingDirectory: repoRoot.path,
     includeParentEnvironment: false,
@@ -85,6 +85,17 @@ n=\$(wc -c | tr -d ' ')
 echo "SET bytes=\$n" >> "\$GH_LOG"
 ''');
     File(_ghLog).writeAsStringSync('');
+    // `cd "$(dirname "$0")/.."` runs before any check, so the narrowed PATH
+    // used by the no-gcloud test still needs this one binary.
+    for (final tool in const ['dirname']) {
+      final found = Process.runSync('command', [
+        '-v',
+        tool,
+      ], runInShell: true).stdout.toString().trim();
+      if (found.isNotEmpty) {
+        Link('${_tmp.path}/bin/$tool').createSync(found);
+      }
+    }
   });
 
   tearDown(() => _tmp.deleteSync(recursive: true));
@@ -155,11 +166,20 @@ echo "SET bytes=\$n" >> "\$GH_LOG"
       final keystore = '${_tmp.path}/fake.keystore';
       File(keystore).writeAsStringSync('not a real keystore');
       _writeCredentials(body.replaceAll('<KS>', keystore));
-      // No keytool: the pre-flight skips loudly, which is the documented
-      // behaviour and lets the parse be tested on its own.
+      // A keytool stub that accepts, so the parse is tested on its own.
+      //
+      // Pointing HS_KEYTOOL at a nonexistent path is not enough: the script
+      // then falls back to `command -v keytool`, which finds nothing usable
+      // on this machine but finds a real one on a CI runner with setup-java —
+      // so these passed locally and failed in CI against a fake keystore.
+      // Controlling the pre-flight is the only way to test the parser alone.
+      _writeExecutable(
+        '${_tmp.path}/bin/keytool',
+        '#!/bin/sh\necho "Key and Certificate Management"\nexit 0\n',
+      );
       final r = _run(
         'tools/set_ci_secrets.sh',
-        env: {'HS_KEYTOOL': '/nonexistent/keytool'},
+        env: {'HS_KEYTOOL': '${_tmp.path}/bin/keytool'},
       );
       expect(r.code, 0, reason: '$why: ${r.err}');
       final lengths = _uploadedLengths();
@@ -209,6 +229,58 @@ echo "SET bytes=\$n" >> "\$GH_LOG"
     });
   });
 
+  group('the keystore pre-flight', () {
+    test('a keytool that refuses stops the upload', () {
+      final keystore = '${_tmp.path}/fake.keystore';
+      File(keystore).writeAsStringSync('not a real keystore');
+      _writeCredentials(
+        'export HS_KEYSTORE_PATH="$keystore"\n'
+        'export HS_KEYSTORE_PASS="pw"\n'
+        'export HS_KEY_ALIAS="upload"\n'
+        'export HS_KEY_PASS="pw"\n',
+      );
+      // Answers `-help` so the probe accepts it as a real keytool, and
+      // refuses everything else — a wrong password or alias, in effect.
+      _writeExecutable(
+        '${_tmp.path}/bin/keytool',
+        '#!/bin/sh\n'
+            'if [ "\$1" = "-help" ]; then echo "Key and Certificate Management"; exit 0; fi\n'
+            'exit 1\n',
+      );
+      final r = _run(
+        'tools/set_ci_secrets.sh',
+        env: {'HS_KEYTOOL': '${_tmp.path}/bin/keytool'},
+      );
+      expect(r.code, 2, reason: 'preflight: ${r.err}');
+      expect(r.err, contains('do not open the keystore'));
+      expect(_uploadedLengths(), isEmpty);
+    });
+
+    test('the macOS keytool stub is detected and skipped, loudly', () {
+      // /usr/bin/keytool on macOS exists, is executable and cannot run.
+      // Believing it would refuse every correct credentials file.
+      final keystore = '${_tmp.path}/fake.keystore';
+      File(keystore).writeAsStringSync('not a real keystore');
+      _writeCredentials(
+        'export HS_KEYSTORE_PATH="$keystore"\n'
+        'export HS_KEYSTORE_PASS="pw"\n'
+        'export HS_KEY_ALIAS="upload"\n'
+        'export HS_KEY_PASS="pw"\n',
+      );
+      _writeExecutable(
+        '${_tmp.path}/bin/keytool',
+        '#!/bin/sh\necho "Unable to locate a Java Runtime" >&2\nexit 1\n',
+      );
+      final r = _run(
+        'tools/set_ci_secrets.sh',
+        env: {'HS_KEYTOOL': '${_tmp.path}/bin/keytool'},
+      );
+      expect(r.code, 0, reason: 'stub-keytool: ${r.err}');
+      expect(r.err, contains('pre-flight is SKIPPED'));
+      expect(_uploadedLengths(), hasLength(4));
+    });
+  });
+
   group('setup_play_ci.sh', () {
     void stubGcloud(String account) {
       _writeExecutable('${_tmp.path}/bin/gcloud', '''#!/bin/sh
@@ -218,11 +290,13 @@ exit 0
     }
 
     test('no gcloud on PATH is refused', () {
-      // A minimal PATH on purpose: this machine may well have a real gcloud,
-      // and finding it would test the login check instead of this one.
+      // Only the stub directory: this machine may have a real gcloud, and
+      // ubuntu-latest ships the Google Cloud SDK in /usr/bin, so any wider
+      // PATH tests the login check instead of this one. The script's first
+      // action is `command -v gcloud`, which needs nothing else.
       final r = _run(
         'tools/setup_play_ci.sh',
-        env: {'PATH': '${_tmp.path}/bin:/usr/bin:/bin'},
+        env: {'PATH': '${_tmp.path}/bin'},
       );
       expect(r.code, 3, reason: 'no-gcloud: ${r.err}');
       expect(r.err, contains('gcloud'));
