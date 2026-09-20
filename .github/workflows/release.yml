@@ -117,11 +117,16 @@ jobs:
         name: Check the keystore opens
         env:
           HS_KEYSTORE_PASS: ${{ secrets.HS_KEYSTORE_PASS }}
+          HS_KEY_ALIAS: ${{ secrets.HS_KEY_ALIAS }}
         run: |
           set -euo pipefail
+          # `-alias` matters: without it this returned 0 for a keystore whose
+          # alias is not the configured one, so the wrong-alias case it claims
+          # to catch reached the four-minute build anyway (#138).
           keytool -list -keystore "$RUNNER_TEMP/upload.keystore" \
-            -storetype PKCS12 -storepass:env HS_KEYSTORE_PASS > /dev/null
-          echo "the keystore opens"
+            -storetype PKCS12 -storepass:env HS_KEYSTORE_PASS \
+            -alias "$HS_KEY_ALIAS" > /dev/null
+          echo "the keystore opens, and holds the configured alias"
 
       # HS_RELEASE=1 makes a missing signing input a hard failure in
       # build.gradle.kts rather than a silent fall back to the debug key.
@@ -147,12 +152,24 @@ jobs:
         name: Verify the signing certificate
         run: tools/verify_upload_cert.sh
 
+      # Written here rather than in the asset step, so the artifact carries it
+      # even on a tag with no GitHub release (#138).
+      - id: sidecar
+        name: Write the checksum sidecar
+        run: |
+          set -euo pipefail
+          aab=build/app/outputs/bundle/release/app-release.aab
+          sha256sum "$aab" > "$aab.sha256"
+          cat "$aab.sha256"
+
       - id: artifact
         name: Upload the signed bundle as an artifact
         uses: actions/upload-artifact@v7
         with:
           name: honest-sudoku-signed-${{ github.ref_name }}
-          path: build/app/outputs/bundle/release/app-release.aab
+          path: |
+            build/app/outputs/bundle/release/app-release.aab
+            build/app/outputs/bundle/release/app-release.aab.sha256
           retention-days: 30
           if-no-files-found: error
 
@@ -166,11 +183,19 @@ jobs:
         run: |
           set -euo pipefail
           aab=build/app/outputs/bundle/release/app-release.aab
-          if ! gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
-            echo "no GitHub release for this tag; skipping asset"
-            exit 0
+          # Only "not found" means skip. Treating every failure as absence let
+          # a 5xx, a rate limit or a token-scope problem silently skip both the
+          # upload and the hash re-verification, on a green run (#138).
+          view_err="$RUNNER_TEMP/release-view.err"
+          if ! gh release view "$GITHUB_REF_NAME" > /dev/null 2> "$view_err"; then
+            if grep -qiE 'release not found|not found \(HTTP 404\)|could not find' "$view_err"; then
+              echo "no GitHub release for this tag; skipping asset"
+              exit 0
+            fi
+            echo "gh release view failed for a reason other than not-found:" >&2
+            cat "$view_err" >&2
+            exit 1
           fi
-          sha256sum "$aab" > "$aab.sha256"
           gh release upload "$GITHUB_REF_NAME" "$aab" "$aab.sha256" --clobber
           gh release download "$GITHUB_REF_NAME" --pattern 'app-release.aab' \
             --dir "$RUNNER_TEMP/verify" --clobber

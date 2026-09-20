@@ -309,6 +309,63 @@ List<String> licenceOffenders(String licence) {
 /// hand, and until now nothing would have objected to it coming back. This app
 /// is Android-only and has no web platform directory, so the example would not
 /// even run.
+/// The README must carry a Release section that names the tag flow, the
+/// version-code rule, all five secrets and the never-re-tag rule.
+///
+/// #20's seventh acceptance criterion asked for this section, it was reported
+/// done, and it did not exist — because nothing asserted it (#132). A docs
+/// criterion with no rule is only as strong as the author's memory of having
+/// met it.
+List<String> readmeReleaseOffenders(String readme) {
+  final offenders = <String>[];
+  // Sliced by index rather than with a `(?=^## |\Z)` lookahead: Dart's RegExp
+  // has no `\Z`, so that escape matched a literal `Z` and the section was only
+  // ever found when another `## ` heading happened to follow it.
+  final heading = RegExp(
+    r'^## Release[ \t]*$',
+    multiLine: true,
+  ).firstMatch(readme);
+  if (heading == null) {
+    return ['README.md: no `## Release` section'];
+  }
+  final rest = readme.substring(heading.end);
+  final next = RegExp(r'^## ', multiLine: true).firstMatch(rest);
+  final body = next == null ? rest : rest.substring(0, next.start);
+
+  for (final secret in const [
+    'HS_KEYSTORE_B64',
+    'HS_KEYSTORE_PASS',
+    'HS_KEY_ALIAS',
+    'HS_KEY_PASS',
+    'PLAY_SERVICE_ACCOUNT_JSON',
+  ]) {
+    if (!body.contains(secret)) {
+      offenders.add('README.md: the Release section does not name $secret');
+    }
+  }
+  if (!RegExp(r'never re-?tag', caseSensitive: false).hasMatch(body)) {
+    offenders.add(
+      'README.md: the Release section does not say never to re-tag a version',
+    );
+  }
+  if (!body.contains('release.yml')) {
+    offenders.add(
+      'README.md: the Release section does not name the release workflow',
+    );
+  }
+  if (!body.contains('ci_version.sh')) {
+    offenders.add(
+      'README.md: the Release section does not state the version-code rule',
+    );
+  }
+  if (!RegExp(r'v\d+\.\d+\.\d+').hasMatch(body)) {
+    offenders.add(
+      'README.md: the Release section shows no `v<major>.<minor>.<patch>` tag',
+    );
+  }
+  return offenders;
+}
+
 List<String> readmeOffenders(String readme) {
   final offenders = <String>[];
   const intro =

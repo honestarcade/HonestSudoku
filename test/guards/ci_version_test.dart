@@ -89,6 +89,15 @@ void main() {
       '',
       'vv1.2.3',
       'v1.2.3 ',
+      // A newline used to pass: `grep -qE '^...$'` anchors each line, not the
+      // whole string, so only the first line was validated and the rest rode
+      // into `name=` and on into \$GITHUB_OUTPUT (#138).
+      'v1.2.3\nv9.9.9',
+      'v1.2.3\n',
+      // Leading zeros are not semver, and shipped as name `01.2.3`.
+      'v01.2.3',
+      'v1.02.3',
+      'v1.2.03',
     ]) {
       test('the ref `$bad`', () {
         final r = _run([bad, '7', '1']);
@@ -109,6 +118,10 @@ void main() {
       'run number x': ['v1.0.0', 'x', '1'],
       'attempt 0': ['v1.0.0', '1', '0'],
       'attempt 10': ['v1.0.0', '1', '10'],
+      // The arithmetic overflowed to a negative version code before this
+      // bound existed; Android's ceiling is 2100000000 (#138).
+      'run number of 9 digits': ['v1.0.0', '100000000', '1'],
+      'run number that overflows': ['v1.0.0', '922337203685477581', '1'],
       'attempt x': ['v1.0.0', '1', 'x'],
     }.entries) {
       test(entry.key, () {

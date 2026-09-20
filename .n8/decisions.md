@@ -571,3 +571,34 @@ CI and the tag-to-Play pipeline, on `milestone/m1-ci`. Three stories implemented
   **The fix:** `PUT repos/<repo>/rulesets/23682733` with the body built from the `GET` by `jq`, replacing the one rule and carrying the `pull_request` rule through verbatim — a PUT replaces the whole `rules` array, so rebuilding it from the server's own copy is what keeps the pull-request requirement from being silently dropped. The context is now `{"context": "gate", "integration_id": 15368}`; the `integration_id` was not in the criterion and pins the check to GitHub Actions, so no other app can satisfy a check named `gate`.
   **Verified by binding, not by existence:** `isRequired` is now **true** on the `gate` check run for both open PRs, and the two states discriminate — red `e89d820` → `rollup=FAILURE`, `mergeStateStatus=BLOCKED`; green `63a2c66` → `rollup=SUCCESS`, `mergeStateStatus=CLEAN`. Before the fix both readings were `BLOCKED`. `required_approving_review_count` is still 0, checked after the PUT.
   **Issue:** #18
+
+## Ad-hoc — 2026-09-19
+
+- **Change:** #18's fourth acceptance criterion and its `key_links` line were **amended** after the fact. Both specified the required status-check context as `CI / gate`, i.e. `<workflow name> / <job name>`. A GitHub ruleset matches the **check-run name**, which is `gate`. As written, the criterion blocked every merge to `main` unconditionally. The shipped rule is `{"context": "gate", "integration_id": 15368}`; the `integration_id` is an addition, pinning the requirement to GitHub Actions so nothing else can satisfy a check named `gate`.
+  **Why:** implementing the criterion verbatim produced an inert rule that read as correct from the server and blocked everything in practice. The issue text is the plan, so leaving it uncorrected would have any future reader — including `/n8-verify`, which was told to work from the AC — score the shipped state as non-compliant and "fix" it back. Amended in place on the issue with the old text struck through and dated, rather than silently rewritten.
+  **Affects:** #18 (closed, text amended), #137. No later milestone plans depend on the context string; M7's release work goes through `release.yml`, which does not read it.
+
+## /n8-exec M1 fixes — 2026-09-19
+
+- **Decision (Rule 1):** `tools/play_release_codes.py` is a new Python helper, so the version-code extraction is a real JSON parse instead of a regex over flattened text.
+  **Why:** #128 was two defects in one `sed`, and both were the regex's fault rather than a slip — `[^}]*` cannot cross a nested object, and a greedy `.*` takes the last match. A third regex would have been the third guess. `jq` is not on stock macOS, which is why the regex existed; `python3` is on both stock macOS and `ubuntu-latest`, and the script now says so and fails with a clear message if it is absent. A separate file also makes the logic testable, which the inline `sed` never was.
+  **Issue:** #128
+
+- **Decision (Rule 1):** `HS_PLAY_API` makes the Play endpoint overridable, and the promotion path is exercised against a mock API.
+  **Why:** everything below the argument checks in `tools/play_promote.sh` was unreachable in a test, which is exactly where #128, #129 and #133 all lived — three defects in the one region with no coverage, while the well-covered refusal layer had none. Follows the precedent of `HS_UPLOAD_CERT` in `tools/verify_upload_cert.sh`. Six scenarios now cover the promotion: notes-bearing release, two releases, draft refusal at PUT, draft refusal at commit, a 403, and a read-back mismatch.
+  **Issue:** #128, #129, #133
+
+- **Decision:** `tools/setup_play_ci.sh` now **asks** which Google account to use rather than asserting one.
+  **Why:** #134 wanted the active account asserted to be the Play Console owner. The script cannot know which account that is — nothing in the repository records it, and recording it would be the memory-file-guesses-again failure this project keeps hitting. So it names the account it found and requires a confirmation, with `HS_PLAY_ACCOUNT` for a non-interactive run. That refuses the wrong-account case without inventing the right one.
+  **Issue:** #134
+
+- **Decision:** the keystore pre-flight in `tools/set_ci_secrets.sh` is skipped, loudly, when no real keytool is found, rather than refusing.
+  **Why:** the first version used `command -v keytool`, which on macOS finds a stub that exists, is executable and cannot run — so the pre-flight would have refused every correct credentials file, a worse bug than the one it was added for. It now resolves keytool the way `verify_upload_cert.sh` does and probes it. Refusing outright would make a real keytool a hard requirement for setting secrets, which is not this story's bargain.
+  **Issue:** #126
+
+- **Decision:** the unresolved Play 14-day rule is recorded as unresolved, with the stricter reading recommended, rather than picked.
+  **Why:** `.n8/memory/play-console.md` asserted both readings in consecutive sentences (#139) and nothing in the repository or in #19 sources either. Choosing one would have replaced a visible contradiction with an invisible guess — the exact failure mode of #81/#88/#99/#116. The file now says which part is certain, which is not, and that keeping 12 testers enrolled continuously satisfies both readings.
+  **Issue:** #139
+
+- **Note (method):** the plan-comment-before-code step was skipped for these fourteen bugs. Each was filed by `/n8-verify` with the repro, the cause and the fix already in its body, so the definition of done was written down before any code — which is what that step exists to produce. Evidence comments still go on each issue.
+  **Issue:** #126-#139

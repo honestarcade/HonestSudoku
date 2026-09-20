@@ -94,6 +94,35 @@ void main() {
       );
     });
 
+    test('the README carries a Release section', () {
+      final offenders = readmeReleaseOffenders(readFile('README.md'));
+      expect(
+        offenders,
+        isEmpty,
+        reason: describeOffenders('readme-release', offenders),
+      );
+    });
+
+    test('the Release rule refuses a README without one', () {
+      // The complement. #132 was a criterion reported met with nothing
+      // asserting it, so this rule is worth nothing unless it can fail.
+      expect(
+        readmeReleaseOffenders('# Honest Sudoku\n\n## Privacy\n\nNothing.\n'),
+        contains('README.md: no `## Release` section'),
+      );
+      const missingSecret =
+          '## Release\n\n'
+          'Tag v0.1.0. release.yml ships it. ci_version.sh computes the code.\n'
+          'Never re-tag a version.\n\n'
+          'HS_KEYSTORE_B64 HS_KEYSTORE_PASS HS_KEY_ALIAS HS_KEY_PASS\n';
+      expect(
+        readmeReleaseOffenders(missingSecret),
+        contains(
+          'README.md: the Release section does not name '
+          'PLAY_SERVICE_ACCOUNT_JSON',
+        ),
+      );
+    });
     test('the README makes every claim #12 and #16 require', () {
       final offenders = readmeOffenders(readme);
       expect(

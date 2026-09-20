@@ -20,6 +20,12 @@ in the owner's password manager, nowhere else.
 | type | Game, free |
 | default language | English (US) |
 | Console app id | _pending — the owner creates the entry (#19)_ |
+| developer account id | _pending — the owner records it with the app id_ |
+| owner account | _pending — the Google account that owns the Console_ |
+
+Record all three together: the developer id and the owning account are what
+tell a later session which Console and which login this project lives under,
+and neither is recoverable from the repository.
 
 The package id is immutable after the first upload. It is asserted against the
 build and against the privacy policy by `test/guards/docs_consistency_test.dart`.
@@ -67,9 +73,16 @@ This is a personal Google Play developer account, not an organisation one, and
 the rules are different:
 
 - **Closed testing with at least 12 testers, for 14 continuous days**, before
-  production access is granted.
-- The 14 days are **per tester**, not an aggregate. A tester who opts out
-  restarts their own clock, and a dip below 12 restarts the requirement.
+  production access is granted. This much is in #19 and is not in doubt.
+- **Unresolved, and to be confirmed in the Console before M7 plans around it:**
+  whether the 14 days are counted per tester or across the cohort. This file
+  previously asserted both in consecutive sentences — "the 14 days are **per
+  tester**, not an aggregate" followed by "a dip below 12 restarts the
+  requirement", which is an aggregate rule (#139). Nothing in this repository
+  or in #19 sources either. The safe plan is the stricter reading: keep at
+  least 12 testers enrolled continuously for the whole 14 days, so that both
+  readings are satisfied. Do not encode the looser one anywhere until the
+  Console's own wording has been read.
 - Plan the recruitment before the countdown, not during it.
 
 That constraint is why M7's plan starts the tester recruitment early, and why
@@ -78,5 +91,40 @@ nothing in this repository automates a production release.
 ## The draft-app rule
 
 Until the first release is **published**, Play refuses a `completed` release on
-a testing track. `tools/play_promote.sh` retries as a `draft` release when it
-sees that refusal, and says so in its output rather than substituting silently.
+a testing track. `tools/play_promote.sh` retries as a `draft` release **only
+when the API's response names that rule** — matched case-insensitively on the
+response body, at the track PUT or at the commit, since Play can refuse at
+either. It says so on stderr rather than substituting silently.
+
+Any other refusal — a 403, a quota error, a 5xx — fails the run with the
+response that caused it. It used to retry on any failure at all, so a
+permission denial was reported as "the app is not yet published", the release
+was quietly downgraded to draft, and the run exited 0 (#129).
+
+## For M7, to be filled in as the launch proceeds
+
+Pre-seeded so the answers land here rather than being re-derived. Empty is an
+honest state; a guess is not.
+
+### Data safety
+
+_pending._ The app collects nothing and has no network access, so every answer
+is "no data collected". Record the exact form once submitted, because the
+declaration must match `docs/privacy.md` and the manifest.
+
+### Content rating
+
+_pending._ IARC questionnaire answers, and the ratings they produced.
+
+### Closed-test log
+
+_pending._ Tester count by date, the 14-day window's start, and any dip — the
+evidence for production access. See the unresolved counting rule above before
+treating a dip as harmless.
+
+### Service-account key id
+
+_pending._ `tools/setup_play_ci.sh` prints the `private_key_id` when it sets
+`PLAY_SERVICE_ACCOUNT_JSON`. Record it here: it is public, it names the key
+rather than being the key, and it is what tells the owner which key to revoke
+when rotating.
