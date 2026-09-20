@@ -55,6 +55,15 @@ printf '%s' "$ref" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-
 printf '%s' "$ref" | grep -qE '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-|$)' ||
   die "ref '$ref' has a leading zero in a version component"
 
+# Same counting guard as the ref above, for the same reason: `grep -qE '^…$'`
+# anchors each LINE, so a newline in either number passed, and `7\n8` died with
+# a raw bash arithmetic error instead of the documented exit 2 (#159).
+has_newline() {
+  [ "$(printf '%s' "$1" | tr -cd '\n' | wc -c | tr -d ' ')" -ne 0 ]
+}
+has_newline "$run" && die "run number contains a newline"
+has_newline "$attempt" && die "run attempt contains a newline"
+
 printf '%s' "$run" | grep -qE '^[1-9][0-9]*$' ||
   die "run number '$run' is not a positive integer"
 

@@ -281,6 +281,106 @@ echo "SET bytes=\$n" >> "\$GH_LOG"
     });
   });
 
+  group('no script ever prints a secret value', () {
+    // Both #19 criteria say so ("prints only the secret names it set", "never
+    // prints the key") and nothing asserted it: adding `echo "$KEY_PASS"` to
+    // one script and `cat "$KEY_PATH"` — the whole service-account private key
+    // — to the other passed all 290 tests (#155).
+    //
+    // The values below are distinctive so a partial or transformed leak is
+    // still caught, and every run's stdout AND stderr is searched, including
+    // the failure paths, which is where a debugging echo survives longest.
+    const password = 'S3CRET-PASSWORD-abcdefghijklmnop';
+    const alias = 'S3CRET-ALIAS-qrstuvwx';
+    const keyBody = 'S3CRET-PRIVATE-KEY-yz0123456789';
+
+    void expectNoLeak(({int code, String out, String err}) r, String why) {
+      for (final secret in const [password, alias, keyBody]) {
+        expect(
+          r.out,
+          isNot(contains(secret)),
+          reason: 'leak: $why printed a secret value on stdout',
+        );
+        expect(
+          r.err,
+          isNot(contains(secret)),
+          reason: 'leak: $why printed a secret value on stderr',
+        );
+      }
+    }
+
+    test('set_ci_secrets.sh prints names, never values', () {
+      final keystore = '${_tmp.path}/fake.keystore';
+      File(keystore).writeAsStringSync('not a real keystore');
+      _writeExecutable(
+        '${_tmp.path}/bin/keytool',
+        '#!/bin/sh\necho "Key and Certificate Management"\nexit 0\n',
+      );
+
+      // The happy path, and every refusal that can be reached with a file.
+      final cases = <String, String>{
+        'the happy path':
+            'export HS_KEYSTORE_PATH="$keystore"\n'
+            'export HS_KEYSTORE_PASS="$password"\n'
+            'export HS_KEY_ALIAS="$alias"\n'
+            'export HS_KEY_PASS="$password"\n',
+        'a mismatched key password':
+            'export HS_KEYSTORE_PATH="$keystore"\n'
+            'export HS_KEYSTORE_PASS="$password"\n'
+            'export HS_KEY_ALIAS="$alias"\n'
+            'export HS_KEY_PASS="${password}x"\n',
+        'an unreadable keystore':
+            'export HS_KEYSTORE_PATH="/nonexistent"\n'
+            'export HS_KEYSTORE_PASS="$password"\n'
+            'export HS_KEY_ALIAS="$alias"\n'
+            'export HS_KEY_PASS="$password"\n',
+      };
+      cases.forEach((why, credentials) {
+        _writeCredentials(credentials);
+        final r = _run(
+          'tools/set_ci_secrets.sh',
+          env: {'HS_KEYTOOL': '${_tmp.path}/bin/keytool'},
+        );
+        expectNoLeak(r, why);
+      });
+
+      // And the complement: the harness must be able to see a leak, or it is
+      // asserting nothing.
+      final leaky = Process.runSync(
+        '/bin/bash',
+        ['-c', 'echo "pass: \$HS_LEAK"'],
+        environment: {'HS_LEAK': password},
+        stdoutEncoding: utf8,
+      );
+      expect(
+        leaky.stdout.toString(),
+        contains(password),
+        reason: 'leak-harness: the search cannot see a value it should',
+      );
+    });
+
+    test('setup_play_ci.sh never prints the key it uploads', () {
+      _writeExecutable('${_tmp.path}/bin/gcloud', '''#!/bin/sh
+case "\$1 \$2" in "auth list") echo "owner@example.com"; exit 0 ;; esac
+case "\$1 \$2 \$3 \$4" in
+  "iam service-accounts keys create")
+     printf '{"private_key_id":"KEYID","private_key":"$keyBody"}' > "\$5"; exit 0 ;;
+esac
+exit 0
+''');
+      final r = _run(
+        'tools/setup_play_ci.sh',
+        env: {'HS_PLAY_ACCOUNT': 'owner@example.com'},
+      );
+      expectNoLeak(r, 'setup_play_ci.sh');
+      expect(
+        r.out,
+        contains('key id: KEYID'),
+        reason: 'leak: the key ID is public and should still be reported',
+      );
+    });
+  });
+
   group('setup_play_ci.sh', () {
     void stubGcloud(String account) {
       _writeExecutable('${_tmp.path}/bin/gcloud', '''#!/bin/sh

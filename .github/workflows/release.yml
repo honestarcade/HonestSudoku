@@ -119,8 +119,20 @@ jobs:
         env:
           HS_KEYSTORE_PASS: ${{ secrets.HS_KEYSTORE_PASS }}
           HS_KEY_ALIAS: ${{ secrets.HS_KEY_ALIAS }}
+          HS_KEY_PASS: ${{ secrets.HS_KEY_PASS }}
         run: |
           set -euo pipefail
+          # A PKCS12 keystore has one password: keytool ignores `-keypass` and
+          # exits 0 whatever it is given, so no command can prove the key
+          # password. Asserting the two secrets agree is the check that CAN
+          # fail, and it belongs here — this is the only workflow on the tag
+          # path, and #143 fixed the two that are not (#158).
+          if [ "$HS_KEY_PASS" != "$HS_KEYSTORE_PASS" ]; then
+            echo "HS_KEY_PASS differs from HS_KEYSTORE_PASS." >&2
+            echo "  A PKCS12 keystore has one password; Gradle would fail with" >&2
+            echo "  UnrecoverableKeyException four minutes into the build." >&2
+            exit 1
+          fi
           # `-alias` matters: without it this returned 0 for a keystore whose
           # alias is not the configured one, so the wrong-alias case it claims
           # to catch reached the four-minute build anyway (#138).

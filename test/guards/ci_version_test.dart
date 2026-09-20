@@ -120,6 +120,14 @@ void main() {
       'attempt 10': ['v1.0.0', '1', '10'],
       // The arithmetic overflowed to a negative version code before this
       // bound existed; Android's ceiling is 2100000000 (#138).
+      // The newline guard covered `ref` only; `run` and `attempt` kept the
+      // per-line anchoring the header said was fixed, one screen below it.
+      // `7\n8` exited 1 with a raw bash arithmetic error (#159).
+      'run number with a trailing newline': ['v1.0.0', '7\n', '1'],
+      'run number with a leading newline': ['v1.0.0', '\n7', '1'],
+      'run number split by a newline': ['v1.0.0', '7\n8', '1'],
+      'attempt with a trailing newline': ['v1.0.0', '7', '1\n'],
+      'attempt split by a newline': ['v1.0.0', '7', '1\n2'],
       'run number of 9 digits': ['v1.0.0', '100000000', '1'],
       'run number that overflows': ['v1.0.0', '922337203685477581', '1'],
       'attempt x': ['v1.0.0', '1', 'x'],
