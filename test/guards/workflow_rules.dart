@@ -155,48 +155,154 @@ List<WorkflowOffender> concurrencyOffenders(String path, String text) {
 /// a value embedded in JSON) and it cannot mask what a shell expands before
 /// the runner sees it. The rule is therefore "do not print it", not "rely on
 /// the mask".
+///
+/// Three shapes are caught: a printing command and a `secrets.` expression on
+/// one line; a line continued with `\` onto a line holding one; and a heredoc
+/// opened by a printing command whose body holds one. The heredoc case is here
+/// because `cat <<EOF` with the secret on the next line passed the first
+/// version of this rule, and `cat` was already one of its three commands
+/// (#131).
+///
+/// **Not covered**, deliberately: a secret reached through an intermediate
+/// variable or a step `env:` mapping (`env: {P: ${{ secrets.X }}}` then
+/// `echo "$P"`). Following that needs dataflow, not a line scan. The
+/// convention this repository relies on instead is that secrets are passed as
+/// step-level `env:` and never echoed at all; `shellTraceOffenders` is the
+/// backstop, since tracing is how an env-indirected secret usually escapes.
 List<WorkflowOffender> secretEchoOffenders(String path, String text) {
   final offenders = <WorkflowOffender>[];
-  final lines = text.split('\n');
-  for (var i = 0; i < lines.length; i++) {
-    final line = _stripComment(lines[i]);
-    if (lines[i].trimLeft().startsWith('#')) continue;
-    if (!RegExp(r'secrets\.[A-Za-z_]').hasMatch(line)) continue;
-    if (RegExp(r'(^|[;&|]|\s)(echo|printf|cat)\s').hasMatch(line)) {
-      offenders.add(
-        WorkflowOffender(
-          path,
-          i + 1,
-          'a shell command prints a `secrets.` expression; the log mask is a '
-          'net, not a policy, and it does not survive transformation',
-        ),
-      );
+  final rawLines = text.split('\n');
+  const printer = r'(^|[;&|(]|\s)(echo|printf|cat|tee)\s';
+  final secret = RegExp(r'secrets\.[A-Za-z_]');
+
+  void flag(int lineNumber, String why) {
+    offenders.add(
+      WorkflowOffender(
+        path,
+        lineNumber,
+        'a shell command prints a `secrets.` expression ($why); the log mask '
+        'is a net, not a policy, and it does not survive transformation',
+      ),
+    );
+  }
+
+  // A heredoc body opened by a printing command, tracked to its delimiter.
+  String? heredocDelimiter;
+  var heredocOpenedAt = 0;
+  // A printing command whose line ended in a backslash continuation.
+  var continuingPrinter = false;
+  var continuationOpenedAt = 0;
+
+  for (var i = 0; i < rawLines.length; i++) {
+    final raw = rawLines[i];
+
+    if (heredocDelimiter != null) {
+      if (raw.trim() == heredocDelimiter) {
+        heredocDelimiter = null;
+      } else if (secret.hasMatch(raw)) {
+        flag(heredocOpenedAt, 'inside a heredoc it opens');
+        heredocDelimiter = null;
+      }
+      continue;
+    }
+
+    if (continuingPrinter) {
+      if (secret.hasMatch(raw)) {
+        flag(continuationOpenedAt, 'on a continued line');
+        continuingPrinter = false;
+        continue;
+      }
+      continuingPrinter = raw.trimRight().endsWith(r'\');
+      continue;
+    }
+
+    if (raw.trimLeft().startsWith('#')) continue;
+    final line = _stripComment(raw);
+    final printsHere = RegExp(printer).hasMatch(line);
+
+    if (printsHere && secret.hasMatch(line)) {
+      flag(i + 1, 'on one line');
+      continue;
+    }
+    if (!printsHere) continue;
+
+    final opener = RegExp(r'<<-?\s*([\x27"]?)([A-Za-z_][A-Za-z0-9_]*)\1')
+        .firstMatch(line);
+    if (opener != null) {
+      heredocDelimiter = opener.group(2);
+      heredocOpenedAt = i + 1;
+      continue;
+    }
+    if (line.trimRight().endsWith(r'\')) {
+      continuingPrinter = true;
+      continuationOpenedAt = i + 1;
     }
   }
   return offenders;
 }
 
-/// `set -x` traces every expanded command, including expanded secrets.
+/// Shell tracing must be off everywhere, because it prints every expanded
+/// command — and in a job holding secrets, that means printing them.
 ///
-/// Matched as a flag cluster, so `set -euxo pipefail` is caught as well as the
-/// obvious `set -x`.
+/// Three spellings are caught: a flag cluster containing `x` (`set -x`,
+/// `set -euxo pipefail`), the long form (`set -o xtrace`, and `set -o verbose`
+/// which prints the unexpanded line but still leaks a heredoc body), and a
+/// `shell:` value that runs the interpreter with `-x` (`shell: bash -x`). The
+/// last two were added after both passed the first version of this rule
+/// (#131): `set -o xtrace` captured `o` as its flag cluster, and
+/// `shell: bash -x` contains no `set` at all.
 List<WorkflowOffender> shellTraceOffenders(String path, String text) {
   final offenders = <WorkflowOffender>[];
   final lines = text.split('\n');
   for (var i = 0; i < lines.length; i++) {
     if (lines[i].trimLeft().startsWith('#')) continue;
-    final match = RegExp(r'(^|[;&|]|\s)set\s+-([A-Za-z]+)')
-        .firstMatch(_stripComment(lines[i]));
-    if (match == null) continue;
-    if (match.group(2)!.contains('x')) {
+    final line = _stripComment(lines[i]);
+
+    final longForm = RegExp(r'(^|[;&|]|\s)set\s+-o\s+(xtrace|verbose)\b')
+        .firstMatch(line);
+    if (longForm != null) {
       offenders.add(
         WorkflowOffender(
           path,
           i + 1,
-          '`set -${match.group(2)}` traces every expanded command, which in a '
-          'job holding secrets means printing them',
+          '`set -o ${longForm.group(2)}` traces every expanded command, which '
+          'in a job holding secrets means printing them',
         ),
       );
+      continue;
+    }
+
+    final cluster = RegExp(r'(^|[;&|]|\s)set\s+-([A-Za-z]+)').firstMatch(line);
+    if (cluster != null && cluster.group(2)!.contains('x')) {
+      offenders.add(
+        WorkflowOffender(
+          path,
+          i + 1,
+          '`set -${cluster.group(2)}` traces every expanded command, which in '
+          'a job holding secrets means printing them',
+        ),
+      );
+      continue;
+    }
+
+    // `shell: bash -x` turns tracing on for the whole step without a `set`.
+    final shellValue = RegExp(r'^\s*(?:-\s+)?shell:\s*[\x27"]?([^\x27"#]+)')
+        .firstMatch(line);
+    if (shellValue != null) {
+      final words = shellValue.group(1)!.trim().split(RegExp(r'\s+'));
+      for (final word in words.skip(1)) {
+        if (RegExp(r'^-[A-Za-z]*x[A-Za-z]*$').hasMatch(word) || word == '-o') {
+          offenders.add(
+            WorkflowOffender(
+              path,
+              i + 1,
+              '`shell: ${shellValue.group(1)!.trim()}` runs the interpreter '
+              'with tracing on, which prints every expanded command',
+            ),
+          );
+          break;
+        }
+      }
     }
   }
   return offenders;
