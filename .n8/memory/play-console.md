@@ -19,9 +19,9 @@ in the owner's password manager, nowhere else.
 | package | `com.honestarcade.sudoku` |
 | type | Game, free |
 | default language | English (US) |
-| Console app id | _pending — the owner creates the entry (#19)_ |
-| developer account id | _pending — the owner records it with the app id_ |
-| owner account | _pending — the Google account that owns the Console_ |
+| Console app id | `4973138054463705827` |
+| developer account id | `5264586118822775573` |
+| owner account | `ntpond@gmail.com` (created 2026-09-20) |
 
 Record all three together: the developer id and the owning account are what
 tell a later session which Console and which login this project lives under,
@@ -127,10 +127,20 @@ treating a dip as harmless.
 
 ### Service-account key id
 
-_pending._ `tools/setup_play_ci.sh` prints the `private_key_id` when it sets
-`PLAY_SERVICE_ACCOUNT_JSON`. Record it here: it is public, it names the key
-rather than being the key, and it is what tells the owner which key to revoke
-when rotating.
+`af7161c7ce3e5e8e7d5ad7557f2593c1fb7715a5` — created 2026-09-20, the only
+user-managed key on the account. It is public: it names the key rather than
+being the key, and it is what tells the owner which key to revoke when
+rotating.
+
+```
+gcloud iam service-accounts keys list   --iam-account sudoku-ci@honestsudoku-ci.iam.gserviceaccount.com
+gcloud iam service-accounts keys delete <id> --iam-account sudoku-ci@honestsudoku-ci.iam.gserviceaccount.com
+```
+
+`tools/setup_play_ci.sh` prints the id whenever it sets
+`PLAY_SERVICE_ACCOUNT_JSON`, and skips the whole step if that secret already
+exists — so rotating means deleting the secret first, then re-running it, then
+deleting the superseded key above.
 
 ## Releasing
 
