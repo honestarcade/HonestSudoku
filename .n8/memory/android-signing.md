@@ -17,7 +17,10 @@ metadata:
   `~/HonestArcadeApps/secrets/sudoku-signing-credentials.txt` (chmod 600).
   **Owner action: move it into your password manager and delete that file.**
   Until then the file doubles as an env template — every line is a comment or an
-  `export`, so `set -a; . <file>; set +a` works. PKCS12 has one password, so
+  `export`. **Parse it, do not source it** — `tools/set_ci_secrets.sh` does,
+  and that is the tested path; the values are escaped so a dot-source is
+  inert, but sourcing was how #119 handed back a password that did not open
+  the keystore. PKCS12 has one password, so
   `HS_KEY_PASS` equals `HS_KEYSTORE_PASS` by format design.
 - **Certificate fingerprint (SHA-256):**
   `SHA256:03:FB:31:8B:4C:09:9C:59:EA:6E:67:33:46:46:D5:E5:E7:50:13:25:61:9D:6A:D4:94:B6:57:81:AD:95:B2:2D`

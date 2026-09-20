@@ -86,6 +86,16 @@ List<int> _uploadedLengths() {
       .toList();
 }
 
+/// The `read_credential` function, lifted from the script so a test can parse a
+/// credentials file exactly as `set_ci_secrets.sh` does, without running the
+/// upload path.
+String _readCredentialFunction() {
+  final text = readFile('tools/set_ci_secrets.sh');
+  final start = text.indexOf('read_credential() {');
+  final end = text.indexOf('\n}\n', start) + 3;
+  return text.substring(start, end);
+}
+
 void main() {
   setUp(() {
     _tmp = Directory.systemTemp.createTempSync('hs-secrets-guard');
@@ -471,6 +481,156 @@ exit 0
       stubGcloud('owner@example.com');
       final r = _run('tools/setup_play_ci.sh');
       expect(r.code, 4, reason: 'no-tty: ${r.err}');
+    });
+  });
+
+  group('make_upload_key.sh quoting', () {
+    // #108 wrapped the credential values in double quotes, which stops a space
+    // and a semicolon and does not stop command substitution. The file is
+    // written by a heredoc, so `$(...)` expanded when it was written AND again
+    // when it was sourced: the recorded password was the expanded form, and it
+    // did not open the keystore that had just been made with the literal one
+    // (#119).
+    //
+    // The fixture that missed it asserted the line *contains* `export NAME="`
+    // — which is exactly the shape that was wrong. This one writes, sources,
+    // parses and then opens the keystore.
+
+    /// A real keytool, resolved the way the scripts do: the pinned path first,
+    /// then PATH (which is where a CI runner's setup-java puts it).
+    String resolveKeytool() {
+      const pinned = '/opt/homebrew/opt/openjdk@21/bin/keytool';
+      if (File(pinned).existsSync()) return pinned;
+      final found = Process.runSync('command', [
+        '-v',
+        'keytool',
+      ], runInShell: true).stdout.toString().trim();
+      expect(
+        found,
+        isNotEmpty,
+        reason: 'no keytool available; this test needs a real one',
+      );
+      return found;
+    }
+
+    test('a password full of shell metacharacters survives the round trip', () {
+      final keytool = resolveKeytool();
+      final marker = '${_tmp.path}/PWNED';
+      // Command substitution, a backtick, a double quote, a backslash, a
+      // single quote and a space — every character that has bitten this file.
+      final password =
+          'p4ss\$(touch $marker)w`touch ${marker}2`d "q" \\b \'s\' end';
+
+      final made = Process.runSync(
+        '/bin/bash',
+        ['tools/make_upload_key.sh'],
+        workingDirectory: repoRoot.path,
+        includeParentEnvironment: false,
+        environment: {
+          'PATH': Platform.environment['PATH'] ?? '/usr/bin:/bin',
+          'HOME': _home,
+          'HS_KEYSTORE_PASS': password,
+          'HS_KEYTOOL': keytool,
+        },
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8,
+      );
+      expect(made.exitCode, 0, reason: 'make: ${made.stderr}');
+
+      // 1. Nothing ran while the file was being written.
+      expect(
+        File(marker).existsSync() || File('${marker}2').existsSync(),
+        isFalse,
+        reason: 'write: the password executed while the file was written',
+      );
+
+      // 2. Nothing runs if someone sources it anyway, and the value comes back
+      //    whole.
+      final sourced = Process.runSync('/bin/bash', [
+        '-c',
+        'set -a; . "\$1"; set +a; printf %s "\$HS_KEYSTORE_PASS"',
+        'bash',
+        _credentials,
+      ], stdoutEncoding: utf8);
+      expect(
+        File(marker).existsSync() || File('${marker}2').existsSync(),
+        isFalse,
+        reason: 'source: the password executed on a dot-source',
+      );
+      expect(
+        sourced.stdout,
+        password,
+        reason: 'source: the value came back changed',
+      );
+
+      // 3. The supported path — parsing — gives the same value.
+      final parsed = Process.runSync('/bin/bash', [
+        '-c',
+        'CREDENTIALS="\$1"\n'
+            '${_readCredentialFunction()}\n'
+            'read_credential HS_KEYSTORE_PASS',
+        'bash',
+        _credentials,
+      ], stdoutEncoding: utf8);
+      expect(
+        parsed.stdout.toString().trimRight(),
+        password,
+        reason: 'parse: the value came back changed',
+      );
+
+      // 4. And the value actually opens the keystore that was just made — the
+      //    check that would have caught #119 on its own.
+      final opens = Process.runSync(
+        keytool,
+        [
+          '-list',
+          '-keystore',
+          '$_home/HonestArcadeApps/secrets/sudoku-upload.keystore',
+          '-storetype',
+          'PKCS12',
+          '-storepass:env',
+          'HSP',
+          '-alias',
+          'upload',
+        ],
+        environment: {'HSP': password},
+        stdoutEncoding: utf8,
+      );
+      expect(
+        opens.exitCode,
+        0,
+        reason: 'keystore: the recorded password does not open the key',
+      );
+    });
+
+    test('it refuses to overwrite either file', () {
+      // #93: refusing on the keystore alone meant a run with the keystore
+      // moved aside silently replaced the password of a key that still exists.
+      final keytool = resolveKeytool();
+      Directory('$_home/HonestArcadeApps/secrets').createSync(recursive: true);
+      for (final existing in [
+        '$_home/HonestArcadeApps/secrets/sudoku-upload.keystore',
+        _credentials,
+      ]) {
+        File(existing).writeAsStringSync('in the way');
+        final r = Process.runSync(
+          '/bin/bash',
+          ['tools/make_upload_key.sh'],
+          workingDirectory: repoRoot.path,
+          includeParentEnvironment: false,
+          environment: {
+            'PATH': Platform.environment['PATH'] ?? '/usr/bin:/bin',
+            'HOME': _home,
+            'HS_KEYSTORE_PASS': 'irrelevant',
+            'HS_KEYTOOL': keytool,
+          },
+          stdoutEncoding: utf8,
+          stderrEncoding: utf8,
+        );
+        expect(r.exitCode, 2, reason: 'overwrite: ${r.stderr}');
+        expect(r.stderr, contains('refusing to overwrite'));
+        File(existing).deleteSync();
+      }
     });
   });
 

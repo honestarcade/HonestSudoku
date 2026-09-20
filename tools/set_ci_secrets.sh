@@ -52,7 +52,9 @@ read_credential() {
     awk '{
       line = $0
       if (substr(line, 1, 1) == "\"") {
-        # Scan to the matching quote, honouring \" so a password containing a
+        # Scan to the matching quote, unescaping the four characters that are
+        # live inside double quotes — the same four make_upload_key.sh escapes
+        # when it writes the file (#119), so the round trip is exact.
         # quote survives. Everything after it — a comment, stray spaces — is
         # not part of the value. Anchoring the strip to end-of-line instead
         # meant `export HS_KEY_PASS="pw" # note` uploaded the quotes and the
@@ -62,7 +64,7 @@ read_credential() {
           c = substr(line, i, 1)
           if (c == "\\" && i < length(line)) {
             n = substr(line, i + 1, 1)
-            if (n == "\"" || n == "$" || n == "\\") { out = out n; i++; continue }
+            if (n == "\"" || n == "$" || n == "\\" || n == "`") { out = out n; i++; continue }
             out = out c; continue
           }
           if (c == "\"") break

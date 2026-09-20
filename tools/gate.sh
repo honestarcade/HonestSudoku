@@ -184,8 +184,22 @@ while [ "$i" -lt "$total" ]; do
   if [ "$step" -eq 5 ]; then
     # Captured as well as streamed, so the cross-check below can read what
     # Gradle actually said. PIPESTATUS, not $?, because $? here would be tee.
+    # `set -e` plus `pipefail` killed the script on a failing pipeline before
+    # the assignment below could run, so the `GATE FAILED` block was dead code
+    # for the one step most likely to fail for a real reason (#121). `|| true`
+    # on the pipeline keeps the script alive; PIPESTATUS still carries what
+    # Gradle said, and `$?` would be tee's.
+    # `set -e` plus `pipefail` killed the script on a failing pipeline before
+    # the assignment below could run, so the `GATE FAILED` block was dead code
+    # for the step most likely to fail for a real reason (#121).
+    #
+    # `|| true` is NOT the fix: it runs a new command, and PIPESTATUS then
+    # describes `true`, so a failing build would read as status 0 and the gate
+    # would pass it. `set +e` around the pipeline keeps PIPESTATUS intact.
+    set +e
     run_step "$command" 2>&1 | tee "$BUILD_LOG"
     status=${PIPESTATUS[0]}
+    set -e
   else
     run_step "$command" || status=$?
   fi
