@@ -113,8 +113,18 @@ Explicitly **not**:
 - ☐ Manage store presence
 - ☐ Manage orders and subscriptions
 
-**Send invitation.** The service account accepts automatically — there is no
-inbox to check.
+Then **Apply** in the app dialog, and then **Save changes** at the bottom of
+the page. Both are required and the second is easy to miss: the summary screen
+looks the same either way, and an account saved with no app permissions gets
+`403 PERMISSION_DENIED` from every API call, permanently. That is not a
+propagation delay and waiting will not fix it (observed 2026-09-20, #19).
+
+**Send invitation.** A service account needs no inbox — there is nothing to
+accept — but it is only usable once the page has actually been saved.
+
+To tell the two apart when step 6 returns 403: open the account and look at its
+**App permissions** tab. Empty means the save did not happen; Honest Sudoku
+with two permissions means wait and re-dispatch.
 
 > This permission set is why the promote workflow cannot reach production even
 > if every code-level barrier failed. It is the one control that does not live
