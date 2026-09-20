@@ -153,10 +153,24 @@ jobs:
             exit 1
           fi
 
-          # Proves the KEY password too, which the store password does not.
+          # This does NOT prove the key password, and used to claim it did.
+          # keytool prints "Different store and key passwords not supported
+          # for PKCS12 KeyStores. Ignoring user-specified -keypass value" and
+          # exits 0 whatever -keypass says, so the check could not fail (#143).
+          # A PKCS12 keystore has one password; what is worth asserting is
+          # that the two secrets agree, which is checkable and true.
+          if [ "$HS_KEY_PASS" != "$HS_KEYSTORE_PASS" ]; then
+            echo "HS_KEY_PASS differs from HS_KEYSTORE_PASS." >&2
+            echo "  A PKCS12 keystore has one password and keytool ignores a" >&2
+            echo "  separate key password, so the release build would fail" >&2
+            echo "  with no earlier warning. Re-set the two secrets." >&2
+            rm -f "$ks"
+            exit 1
+          fi
+          # Exercises the private key with the store password, which is the
+          # password Gradle will actually use.
           keytool -certreq -alias "$HS_KEY_ALIAS" -keystore "$ks" \
-            -storetype PKCS12 -storepass:env HS_KEYSTORE_PASS \
-            -keypass:env HS_KEY_PASS > /dev/null
+            -storetype PKCS12 -storepass:env HS_KEYSTORE_PASS > /dev/null
 
           pem_fp="$(keytool -printcert -file android/signing/upload_certificate.pem |
             grep -m1 -oE 'SHA256: [0-9A-F:]+' | sed 's/^SHA256: //')"

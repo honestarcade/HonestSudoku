@@ -9,6 +9,7 @@
 #
 # Production is a human act in the Play Console (owner's call, 2026-09-18).
 name: Play track promote
+run-name: Promote ${{ inputs.from_track }} to ${{ inputs.to_track }}
 
 on:
   workflow_dispatch:

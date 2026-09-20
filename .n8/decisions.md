@@ -294,7 +294,7 @@ Ad-hoc entries (changes made outside the n8SDLC commands that deviate from plann
   **Issue:** #70, #73
 
 - **Decision:** The fourteen-day log records joiners and leavers, not only a daily headcount, and the Console's own qualification indicator closes the criterion.
-  **Why:** Play counts per tester — twelve people each need fourteen consecutive days — so a roster that churns can show twelve every single day while nobody accumulates fourteen.
+  **Why:** a roster that churns can show twelve every single day while nobody accumulates fourteen.
   **Issue:** #73
 
 - **Decision:** The owner performs every Play Console action personally; the agent prepares an entry sheet for each page and never drives the Console. GitHub is the agent's: tags, workflows, releases and records.
@@ -602,3 +602,21 @@ CI and the tag-to-Play pipeline, on `milestone/m1-ci`. Three stories implemented
 
 - **Note (method):** the plan-comment-before-code step was skipped for these fourteen bugs. Each was filed by `/n8-verify` with the repro, the cause and the fix already in its body, so the definition of done was written down before any code — which is what that step exists to produce. Evidence comments still go on each issue.
   **Issue:** #126-#139
+
+## Ad-hoc — 2026-09-19 (second M1 fix pass)
+
+- **Change:** the per-tester-versus-cohort reading of Play's fourteen-day rule is **withdrawn as a stated fact** from #73, #70, the M7 milestone description and the two ledger lines above. Each asserted one reading or, in #73's case, both two criteria apart. The stricter operational rule — keep at least twelve testers enrolled continuously for the whole window and treat any dip as restarting the clock — replaces it, because it satisfies either reading.
+  **Why:** nothing in this repository or in #19 sources either mechanism. #139 removed the contradiction from `.n8/memory/play-console.md` and left it in the artefacts that get executed, which is the instance-versus-class miss that fix was itself written to avoid (#148). Choosing a side would have replaced a visible contradiction with an invisible guess; the memory file now carries the open question and everything else defers to it.
+  **Affects:** #70 and #73 (bodies amended in place, dated, with the note naming #148), M7's milestone description items 23 and the phase note. No code depends on it. The question is the owner's to settle by reading the Console before M7 plans a recruitment schedule.
+
+- **Decision (deviation, Rule 1):** `tools/set_ci_secrets.sh` and `.github/workflows/play-api-check.yml` now assert `HS_KEY_PASS == HS_KEYSTORE_PASS` instead of running a `keytool -keypass` check.
+  **Why:** #20's and #19's criteria both describe a `-keypass` check as proving the key password. It cannot: keytool prints "Different store and key passwords not supported for PKCS12 KeyStores. Ignoring user-specified -keypass value" and exits 0 whatever is passed, while a wrong *store* password exits 1 (verified both ways). A PKCS12 keystore has one password, so the check that can fail — and that is true for a keystore this project made — is that the two secrets agree. A check that cannot fail is worse than no check, because it is counted as coverage.
+  **Issue:** #143, deviating from #19's fourth criterion and #20's third
+
+- **Decision (Rule 1):** `tools/play_promote.sh` treats a curl transport failure as an API failure rather than letting `set -e` kill it.
+  **Why:** found by pointing the exit-5 test at a closed loopback port instead of Google (#147). A refused connection exited 7 mid-edit with no message. The same change surfaced `"${API_BODY_FILES[@]}"` being an unbound variable under `set -u` in bash 3.2 — the macOS default — on every path that fails before the first request. Both would have fired in production; neither was reachable while the test talked to Google and got a well-formed 401.
+  **Issue:** #147
+
+- **Decision:** the secret rule was inverted rather than extended.
+  **Why:** three rounds of adding patterns (#131, #141) each closed the spellings the report named. `set -v`, `set -euo pipefail; set -x`, `secrets['NAME']`, `cat<<EOF`, `cat <<'E-OF'` and `bash -x script.sh` all passed the third version, and it had begun refusing a legitimate `cat <<EOF > key.properties`. Enumerating shell syntax is unwinnable. Forbidding the interpolation itself is one rule, cannot be spelled around, and needed no workflow changes because every one here already passes secrets as step-level `env:`.
+  **Issue:** #141, #142

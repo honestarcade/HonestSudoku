@@ -112,6 +112,72 @@ void main() {
       },
     );
 
+    test('release.yml keeps the shape its criteria depend on', () {
+      // Nothing asserted this: deleting `needs: gate` from the ship job left
+      // the suite green, and the gate is the only thing making a release
+      // re-run the PR checks (#151).
+      final release = readFile('.github/workflows/release.yml');
+      expect(
+        release,
+        contains('uses: ./.github/workflows/ci.yml'),
+        reason:
+            'release-shape: the gate job must call the PR workflow, not '
+            'restate its steps',
+      );
+      expect(
+        release,
+        contains('secrets: inherit'),
+        reason: 'release-shape: the called gate needs the secrets',
+      );
+      expect(
+        RegExp(r'^\s+needs: gate\s*$', multiLine: true).allMatches(release),
+        hasLength(2),
+        reason:
+            'release-shape: both `ship` and `report-gate-failure` must '
+            'wait on the gate',
+      );
+
+      // The Play upload must be the last thing that touches Play, so any
+      // earlier failure ships nothing.
+      final ids = RegExp(
+        r'^      - id: (\w+)',
+        multiLine: true,
+      ).allMatches(release).map((m) => m.group(1)!).toList();
+      for (final earlier in const [
+        'secrets_present',
+        'version',
+        'keystore_check',
+        'build',
+        'scan',
+        'cert',
+      ]) {
+        expect(
+          ids.indexOf(earlier),
+          allOf(greaterThanOrEqualTo(0), lessThan(ids.indexOf('play'))),
+          reason:
+              'release-shape: `$earlier` must run before the Play upload. '
+              'Found: $ids',
+        );
+      }
+      expect(
+        ids.indexOf('summary'),
+        greaterThan(ids.indexOf('play')),
+        reason: 'release-shape: the summary must follow the upload',
+      );
+      expect(
+        ids.first,
+        'checkout',
+        reason: 'release-shape: the job must check out before anything else',
+      );
+      expect(
+        ids.indexOf('secrets_present'),
+        1,
+        reason:
+            'release-shape: the secrets assertion must come straight '
+            'after checkout, before any build',
+      );
+    });
+
     test('dependabot watches both ecosystems', () {
       final offenders = dependabotOffenders(
         pathExists('.github/dependabot.yml')

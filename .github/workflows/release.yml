@@ -14,6 +14,7 @@
 # not have it in scope. No step prints one; a guard asserts that and refuses
 # `set -x` anywhere in this directory.
 name: Release
+run-name: Release ${{ github.ref_name }}
 
 on:
   push:
@@ -189,7 +190,9 @@ jobs:
           view_err="$RUNNER_TEMP/release-view.err"
           if ! gh release view "$GITHUB_REF_NAME" > /dev/null 2> "$view_err"; then
             if grep -qiE 'release not found|not found \(HTTP 404\)|could not find' "$view_err"; then
-              echo "no GitHub release for this tag; skipping asset"
+                echo "no GitHub release for this tag; skipping asset"
+              echo "no GitHub release for this tag; the bundle is in the run artifact only" \
+                >> "$GITHUB_STEP_SUMMARY"
               exit 0
             fi
             echo "gh release view failed for a reason other than not-found:" >&2
