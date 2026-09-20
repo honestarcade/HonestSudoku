@@ -280,6 +280,108 @@ void main() {
       }
     });
 
+    test('a secret printed from a heredoc the command opens is refused', () {
+      const bad =
+          '        run: |\n'
+          '          cat <<EOF\n'
+          r'          ${{ secrets.HS_KEY_PASS }}'
+          '\n'
+          '          EOF\n';
+      expect(
+        secretEchoOffenders('bad.yml', bad),
+        hasLength(1),
+        reason: 'secret-echo: accepted a heredoc body holding a secret',
+      );
+    });
+
+    test('a secret on a continued printing line is refused', () {
+      const bad =
+          '        run: |\n'
+          '          echo \\\n'
+          r'            "${{ secrets.HS_KEYSTORE_PASS }}"'
+          '\n';
+      expect(
+        secretEchoOffenders('bad.yml', bad),
+        hasLength(1),
+        reason: 'secret-echo: accepted a backslash-continued echo',
+      );
+    });
+
+    test('a heredoc that does not print, or ends first, is allowed', () {
+      // `base64 -d` consumes the heredoc into a file; nothing is printed.
+      const writesFile =
+          '        run: |\n'
+          '          base64 -d <<EOF > "\$RUNNER_TEMP/k"\n'
+          r'          ${{ secrets.HS_KEYSTORE_B64 }}'
+          '\n'
+          '          EOF\n';
+      expect(
+        secretEchoOffenders('good.yml', writesFile),
+        isEmpty,
+        reason: 'secret-echo-negative: refused a heredoc that writes a file',
+      );
+
+      // The delimiter closes before the secret is mentioned.
+      const closesFirst =
+          '        run: |\n'
+          '          cat <<EOF\n'
+          '          plain text\n'
+          '          EOF\n'
+          r'          HS_KEY_PASS: ${{ secrets.HS_KEY_PASS }}'
+          '\n';
+      expect(
+        secretEchoOffenders('good.yml', closesFirst),
+        isEmpty,
+        reason: 'secret-echo-negative: refused a closed heredoc',
+      );
+    });
+
+    test('the long form of tracing is refused', () {
+      for (final bad in const ['set -o xtrace', 'set -o verbose']) {
+        expect(
+          shellTraceOffenders('bad.yml', '        run: $bad\n'),
+          hasLength(1),
+          reason: 'trace: accepted `$bad`',
+        );
+      }
+      for (final good in const [
+        'set -o pipefail',
+        'set -o errexit',
+        'set -o nounset',
+      ]) {
+        expect(
+          shellTraceOffenders('good.yml', '        run: $good\n'),
+          isEmpty,
+          reason: 'trace-negative: refused `$good`',
+        );
+      }
+    });
+
+    test('a shell: value that traces is refused', () {
+      for (final bad in const [
+        '      - shell: bash -x',
+        '        shell: bash -x',
+        '        shell: bash -ex',
+      ]) {
+        expect(
+          shellTraceOffenders('bad.yml', '$bad\n'),
+          hasLength(1),
+          reason: 'trace: accepted `$bad`',
+        );
+      }
+      for (final good in const [
+        '        shell: bash',
+        '      - shell: pwsh',
+        '        shell: bash -e',
+      ]) {
+        expect(
+          shellTraceOffenders('good.yml', '$good\n'),
+          isEmpty,
+          reason: 'trace-negative: refused `$good`',
+        );
+      }
+    });
+
     test('a dependabot file missing an ecosystem is refused', () {
       const onlyActions =
           'version: 2\nupdates:\n  - package-ecosystem: github-actions\n';

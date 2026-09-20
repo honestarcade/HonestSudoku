@@ -33,7 +33,11 @@ names the file and leaves it alone.
 
 The **CI** workflow (`.github/workflows/ci.yml`, job `gate`) runs this same
 script on every pull request, so green locally and green in CI mean the same
-thing. `main` will not accept a merge until `CI / gate` passes. The invariant
+thing. `main` will not accept a merge until that check passes — the
+`main-pr-required` ruleset requires the status check named `gate`, which is
+what the checks list renders as `CI / gate`. The required context is the
+**check-run name**, not the rendered one; setting it to `CI / gate` blocks
+every merge instead, because nothing ever reports under that name. The invariant
 guards also run as their own named step before the full gate, so a breached
 invariant is the first red line in the checks rather than something to find
 inside a long log.
@@ -51,6 +55,54 @@ step says which key it used. With `HS_RELEASE=1` and no secrets the gate fails
 at the build step on purpose: that is how CI proves a release is really signed.
 The signing procedure and the rotation runbook are in
 `.n8/memory/android-signing.md`.
+
+## Release
+
+A release is a tag. Nothing is published by hand.
+
+```sh
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+`.github/workflows/release.yml` triggers on any `v*` tag. It re-runs the whole
+PR gate first (`uses: ./.github/workflows/ci.yml`, not a second copy of the
+steps), then builds a signed bundle, scans it for Android permissions, checks
+it against the committed upload certificate, attaches it to the GitHub release
+with a `.sha256` sidecar, and uploads it to the Play **internal** track. The
+Play upload is the last step, so a failure anywhere earlier ships nothing.
+
+**Never re-tag a version; ship the next one.** A moved tag would produce a
+second build claiming to be the same release, and Play will not accept a
+version code it has already seen.
+
+**Version codes.** `tools/ci_version.sh <ref> <run_number> <run_attempt>`
+derives them: the name is the tag without its `v`, and the code is
+`1000 + run_number * 10 + run_attempt`. That rises strictly across runs, and a
+re-run of a failed run gets a higher code than the attempt it replaces — which
+matters because Play rejects a reused code.
+
+**Promotion** is a separate manual workflow: `.github/workflows/play-promote.yml`
+moves the newest completed release from one testing track to another. It
+refuses `production` in its first step, before any credential is minted.
+Production is a human act in the Play Console, on purpose.
+
+**The five secrets** the release path reads, all repository secrets:
+
+| Secret | What it holds |
+|---|---|
+| `HS_KEYSTORE_B64` | the upload keystore, base64 on one line |
+| `HS_KEYSTORE_PASS` | the keystore password |
+| `HS_KEY_ALIAS` | the key alias inside the keystore |
+| `HS_KEY_PASS` | the key password |
+| `PLAY_SERVICE_ACCOUNT_JSON` | the Play Developer API service-account key |
+
+They are set once, by name, from scripts rather than by hand:
+`tools/setup_play_ci.sh` creates the service account and sets the last one;
+`tools/set_ci_secrets.sh` sets the other four from the local credentials file.
+Neither ever prints a value. `.github/workflows/play-api-check.yml` is a manual
+dispatch that proves the secrets work — that the service account can reach the
+Play API and that the keystore secrets open the keystore — without building or
+publishing anything.
 
 ## Privacy
 
