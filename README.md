@@ -93,8 +93,14 @@ Production is a human act in the Play Console, on purpose.
 | `HS_KEYSTORE_B64` | the upload keystore, base64 on one line |
 | `HS_KEYSTORE_PASS` | the keystore password |
 | `HS_KEY_ALIAS` | the key alias inside the keystore |
-| `HS_KEY_PASS` | the key password |
+| `HS_KEY_PASS` | the key password — **must equal `HS_KEYSTORE_PASS`** |
 | `PLAY_SERVICE_ACCOUNT_JSON` | the Play Developer API service-account key |
+
+A PKCS12 keystore has one password for the store and the key, so those two
+are the same value by format design. `keytool` ignores a separate `-keypass`
+and exits 0 whatever it is given, so nothing can prove a key password after
+the fact — the release workflow asserts the two secrets agree instead, and
+refuses before building if they do not.
 
 They are set once, by name, from scripts rather than by hand:
 `tools/setup_play_ci.sh` creates the service account and sets the last one;

@@ -64,7 +64,7 @@ Names only:
 - `HS_KEYSTORE_B64`, `HS_KEYSTORE_PASS`, `HS_KEY_ALIAS`, `HS_KEY_PASS` — set by
   `tools/set_ci_secrets.sh`
 
-`.github/workflows/play-api-check.yml` proves all five work, on demand, without
+`.github/workflows/play-api-check.yml` exercises them on demand, without
 changing anything on Play.
 
 ## What a personal developer account means for launch
@@ -72,8 +72,10 @@ changing anything on Play.
 This is a personal Google Play developer account, not an organisation one, and
 the rules are different:
 
-- **Closed testing with at least 12 testers, for 14 continuous days**, before
-  production access is granted. This much is in #19 and is not in doubt.
+- **Closed testing with at least 12 testers, for 14 days**, before
+  production access is granted. That much is what #19 states; #19 does not
+  say **continuous**, so that word is not sourced here — it belongs to the
+  open question in the next bullet (#164).
 - **Unresolved, and to be confirmed in the Console before M7 plans around it:**
   whether the 14 days are counted per tester or across the cohort. This file
   previously asserted both in consecutive sentences — "the 14 days are **per

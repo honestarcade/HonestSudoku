@@ -253,6 +253,64 @@ void main() {
       },
     );
 
+    test('ci.yml keeps the structure #18 depends on', () {
+      // Nothing asserted the story's own workflow: the #151 assertions were
+      // written for release.yml only, so changing the artifact retention,
+      // dropping `--enforce-lockfile`, or deleting the guards step were all
+      // green (#165).
+      final ci = Workflow.parse(
+        '.github/workflows/ci.yml',
+        readFile('.github/workflows/ci.yml'),
+      );
+      expect(ci.problem, isNull);
+      expect(ci.triggers, containsAll(['pull_request', 'workflow_call']));
+
+      final gate = ci.job('gate');
+      expect(gate, isNotNull, reason: 'ci-shape: no gate job');
+      final ids = gate!.steps.map((s) => s.id).toList();
+      expect(ids.first, 'checkout');
+      expect(
+        ids.indexOf('shellcheck'),
+        1,
+        reason:
+            'ci-shape: Shellcheck runs before the toolchain — it takes '
+            'seconds and a shell error should not wait for Gradle',
+      );
+
+      final deps = gate.stepById('deps');
+      expect(
+        deps!.run,
+        contains('--enforce-lockfile'),
+        reason:
+            'ci-shape: without it CI resolves a different tree than the '
+            'lockfile pins',
+      );
+      expect(
+        gate.stepById('guards')!.run,
+        contains('--tags guard'),
+        reason: 'ci-shape: the invariant guards must be their own named step',
+      );
+      expect(
+        gate.stepById('gate')!.run,
+        contains('tools/gate.sh'),
+        reason: 'ci-shape: CI must run the same script as local, not a copy',
+      );
+
+      for (final id in const ['deps', 'guards', 'gate']) {
+        expect(
+          gate.stepById(id)!.isUnconditional,
+          isTrue,
+          reason: 'ci-shape: `$id` must not be skippable',
+        );
+      }
+
+      final artifact = gate.steps.firstWhere(
+        (s) => (s.uses ?? '').contains('upload-artifact'),
+      );
+      expect(artifact.with_['retention-days'], '7');
+      expect(artifact.with_['if-no-files-found'], 'error');
+    });
+
     test('release.yml keeps the structure its criteria depend on', () {
       _assertReleaseShape(
         Workflow.parse(

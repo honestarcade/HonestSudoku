@@ -202,8 +202,8 @@ jobs:
           view_err="$RUNNER_TEMP/release-view.err"
           if ! gh release view "$GITHUB_REF_NAME" > /dev/null 2> "$view_err"; then
             if grep -qiE 'release not found|not found \(HTTP 404\)|could not find' "$view_err"; then
-                echo "no GitHub release for this tag; skipping asset"
-              echo "no GitHub release for this tag; the bundle is in the run artifact only" \
+              echo "no GitHub release for this tag; skipping asset"
+            echo "no GitHub release for this tag; the bundle is in the run artifact only" \
                 >> "$GITHUB_STEP_SUMMARY"
               exit 0
             fi
@@ -281,7 +281,9 @@ jobs:
 
   report-gate-failure:
     needs: gate
-    if: failure()
+    # `needs.gate.result` rather than `failure()`: a CANCELLED gate is not a
+    # failure, so `failure()` produced no "nothing shipped" line for it (#165).
+    if: needs.gate.result != 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
