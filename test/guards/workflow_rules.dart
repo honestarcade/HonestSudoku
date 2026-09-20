@@ -12,6 +12,8 @@
 // accepted false positive, so workflows are written not to contain one.
 library;
 
+import 'workflow_yaml.dart';
+
 /// One refusal, as `path:line: message`.
 class WorkflowOffender {
   const WorkflowOffender(this.path, this.line, this.message);
@@ -148,77 +150,73 @@ List<WorkflowOffender> concurrencyOffenders(String path, String text) {
         ];
 }
 
-/// The `(line number, text)` of every line inside a `run:` body.
+/// Every `${{ … }}` expression inside a `run:` script.
 ///
-/// A `run:` block scalar owns every following line indented deeper than the
-/// key; a single-line `run:` owns itself. This is the unit both rules below
-/// work on, because the question they ask — "does an untrusted value reach the
-/// shell as text?" — is a property of the script, not of any one command in it.
-List<MapEntry<int, String>> runBodyLines(String text) {
-  final out = <MapEntry<int, String>>[];
-  final lines = text.split('\n');
-  var inRun = false;
-  var keyIndent = 0;
-  for (var i = 0; i < lines.length; i++) {
-    final line = lines[i];
-    final block = RegExp(r'^(\s*)-?\s*run:\s*([|>].*)?$').firstMatch(line);
-    if (block != null && (block.group(2) ?? '').isNotEmpty) {
-      inRun = true;
-      keyIndent = block.group(1)!.length;
-      continue;
+/// Both rules below ask the same question — does an untrusted value reach the
+/// shell as text? — so both work on expressions rather than on lines. A `run:`
+/// body is obtained by parsing (see workflow_yaml.dart), which is what makes
+/// a flow mapping, a quoted key, an anchor, an alias and a multi-line quoted
+/// scalar visible; the line scan this replaced missed all five (#154, #156).
+Iterable<({String expression, RunScript script})> _runExpressions(
+  String text,
+) sync* {
+  for (final script in Workflow.parse('', text).runScripts) {
+    for (final m in RegExp(
+      r'\$\{\{(.*?)\}\}',
+      dotAll: true,
+    ).allMatches(script.body)) {
+      yield (expression: m.group(1)!, script: script);
     }
-    if (inRun) {
-      final indent = line.length - line.trimLeft().length;
-      if (line.trim().isEmpty) continue;
-      if (indent <= keyIndent) {
-        inRun = false;
-      } else {
-        out.add(MapEntry(i + 1, line));
-        continue;
-      }
-    }
-    final inline = RegExp(r'^\s*-?\s*run:\s*(\S.*)$').firstMatch(line);
-    if (inline != null) out.add(MapEntry(i + 1, inline.group(1)!));
   }
-  return out;
 }
 
-/// A secret must never appear in a `run:` body at all.
+List<WorkflowOffender> _parseProblem(String path, String text) {
+  final problem = Workflow.parse(path, text).problem;
+  return problem == null
+      ? const []
+      : [
+          WorkflowOffender(
+            path,
+            1,
+            'could not be read as a workflow ($problem) — a guard that cannot '
+            'parse its subject must fail, not pass quietly',
+          ),
+        ];
+}
+
+/// A secret must never appear in a `run:` script at all.
 ///
-/// The rule used to be "do not *print* a secret", which meant enumerating the
-/// ways a shell can print one. That is unwinnable: three rounds of fixes
-/// (#131, #141) closed the spellings each report happened to name and left
-/// `set -v`, `secrets['NAME']`, `cat<<EOF`, `cat <<'E-OF'` and
-/// `bash -x script.sh` open — every one of them ordinary. It also began
-/// refusing `cat <<EOF > key.properties`, which prints nothing.
+/// Not "must not be printed": that meant enumerating the ways a shell can
+/// print, and three rounds of fixes each closed the spellings one report named
+/// (#131, #141). GitHub substitutes the expression as text before the shell
+/// runs, so requiring step-level `env:` removes it from the script entirely and
+/// no spelling of echo, heredoc or trace flag can reach it.
 ///
-/// So the question changed. A secret interpolated into a `run:` body is
-/// substituted by GitHub as **text, before the shell sees it**, which is what
-/// makes every one of those spellings work. Requiring secrets to arrive as
-/// step-level `env:` removes the text from the script entirely, and then no
-/// spelling of echo, heredoc or trace flag can leak it. It is also GitHub's
-/// own guidance, and what every workflow in this repository already does.
+/// Matched case-insensitively and including the index and function forms:
+/// expression contexts and functions are case-insensitive in Actions, and
+/// `join(secrets.*, ',')` dumps every secret the job can see (#157).
 ///
-/// **Scope:** this catches the value reaching the script. What a script then
-/// does with `$HS_KEY_PASS` is not visible to a line scan — `shellTraceOffenders`
-/// is the backstop there, since tracing is how an env-held secret escapes.
+/// **Not covered**: a secret reached through an intermediate variable or a job
+/// level `env:` mapping. Following that needs dataflow. `shellTraceOffenders`
+/// is the backstop, since tracing is how an env-held secret escapes.
 List<WorkflowOffender> secretsInRunOffenders(String path, String text) {
-  final offenders = <WorkflowOffender>[];
-  // `secrets.NAME`, `secrets['NAME']`, `secrets["NAME"]`, `toJSON(secrets)`.
+  final offenders = _parseProblem(path, text).toList();
   final secret = RegExp(
-    r'secrets\s*(\.\s*[A-Za-z_]|\[)|toJSON\(\s*secrets\s*\)',
+    r'\bsecrets\s*(\.\s*[A-Za-z_*]|\[)|\bto_?json\s*\(\s*secrets\s*\)',
+    caseSensitive: false,
   );
-  for (final entry in runBodyLines(text)) {
-    if (entry.value.trimLeft().startsWith('#')) continue;
-    if (secret.hasMatch(entry.value)) {
+  for (final (expression: expression, script: script) in _runExpressions(
+    text,
+  )) {
+    if (secret.hasMatch(expression)) {
       offenders.add(
         WorkflowOffender(
           path,
-          entry.key,
-          'a `secrets.` expression is interpolated into a `run:` body. GitHub '
-          'substitutes it as text before the shell runs, so the log mask is '
-          'the only thing between it and the output. Pass it as step-level '
-          '`env:` and reference the variable instead',
+          script.line,
+          'a secret reaches a `run:` script as text (`\${{$expression}}` in job '
+          '`${script.jobName}`). GitHub substitutes it before the shell runs, '
+          'so the log mask is the only thing between it and the output. Pass it '
+          'as step-level `env:` and reference the variable',
         ),
       );
     }
@@ -228,27 +226,34 @@ List<WorkflowOffender> secretsInRunOffenders(String path, String text) {
 
 /// Neither may a value a person controls — a tag name, a dispatch input.
 ///
-/// Same mechanism, different payload: `${{ github.ref_name }}` inside a `run:`
-/// body is pasted in as text, so a tag named `v1.0.0$(id)` executes. A
-/// dispatch input does the same, and can forge a line into a run summary that
-/// says a release was promoted when it was refused (#142).
+/// Same mechanism, different payload: a tag named `v1.0.0$(id)` is a legal git
+/// ref, and `release.yml` interpolated `github.ref_name` into an `if: always()`
+/// summary step, so it ran even on a tag `ci_version.sh` had refused (#142).
 ///
-/// `steps.*.outputs.*` is allowed: it comes from an earlier step in the same
-/// workflow, and where it originates outside (`ci_version.sh`) that script
-/// validates it strictly.
+/// `steps.*.outputs.*` is allowed: it comes from an earlier step of the same
+/// workflow, and where it originates outside, `ci_version.sh` validates it.
 List<WorkflowOffender> untrustedInRunOffenders(String path, String text) {
-  final offenders = <WorkflowOffender>[];
-  final untrusted = RegExp(r'\$\{\{\s*(github|inputs|env)\s*\.');
-  for (final entry in runBodyLines(text)) {
-    if (entry.value.trimLeft().startsWith('#')) continue;
-    final match = untrusted.firstMatch(entry.value);
+  final offenders = _parseProblem(path, text).toList();
+  // Anywhere inside the expression, not only at its start: `format('{0}',
+  // github.ref_name)` is the idiomatic way to build a string, and was missed
+  // by an anchored pattern (#157).
+  final untrusted = RegExp(
+    r'\b(github|inputs|needs|matrix|env)\s*[.\[]'
+    r'|\bto_?json\s*\(\s*(github|inputs|needs|matrix|env)\s*\)',
+    caseSensitive: false,
+  );
+  for (final (expression: expression, script: script) in _runExpressions(
+    text,
+  )) {
+    final match = untrusted.firstMatch(expression);
     if (match != null) {
       offenders.add(
         WorkflowOffender(
           path,
-          entry.key,
-          '`${match.group(1)}.` is interpolated into a `run:` body; a tag name '
-          'or dispatch input containing `\$(...)` would execute. Pass it as '
+          script.line,
+          '`${match.group(1)}` reaches a `run:` script as text '
+          '(`\${{$expression}}` in job `${script.jobName}`); a tag name or '
+          'dispatch input containing `\$(...)` would execute. Pass it as '
           'step-level `env:` and quote the variable',
         ),
       );
@@ -257,88 +262,89 @@ List<WorkflowOffender> untrustedInRunOffenders(String path, String text) {
   return offenders;
 }
 
-/// Shell tracing must be off everywhere, because it prints every expanded
-/// command — and in a job holding secrets, that means printing them.
+/// Shell tracing must be off everywhere: it prints every expanded command, and
+/// in a job holding secrets that means printing them.
 ///
-/// Every `set` on a line is examined, not just the first: `firstMatch` meant
-/// `set -euo pipefail; set -x` was read as `set -euo` and passed (#141). The
-/// spellings covered are a flag cluster containing `x` or `v`, the long forms
-/// `-o xtrace` / `-o verbose` quoted or not and wherever they sit in the
-/// option list, a `shell:` value carrying a trace flag, invoking an
-/// interpreter with one, and `SHELLOPTS`.
+/// Every `set` on a line is examined, not just the first (`set -euo pipefail;
+/// set -x` read as `set -euo` and passed, #141). A quote or a path before the
+/// command no longer blocks the match, and `+` flag groups are read, both of
+/// which hid ordinary spellings (#154).
 List<WorkflowOffender> shellTraceOffenders(String path, String text) {
-  final offenders = <WorkflowOffender>[];
-  final lines = text.split('\n');
+  final offenders = _parseProblem(path, text).toList();
+  final workflow = Workflow.parse(path, text);
 
-  void flag(int lineNumber, String what) {
+  void flag(int line, String what) {
     offenders.add(
       WorkflowOffender(
         path,
-        lineNumber,
+        line,
         '$what traces every expanded command, which in a job holding secrets '
         'means printing them',
       ),
     );
   }
 
-  for (var i = 0; i < lines.length; i++) {
-    if (lines[i].trimLeft().startsWith('#')) continue;
-    final line = _stripComment(lines[i]);
-    var flagged = false;
+  for (final script in workflow.runScripts) {
+    final lines = script.body.split('\n');
+    for (final raw in lines) {
+      if (raw.trimLeft().startsWith('#')) continue;
+      final line = _stripComment(raw);
+      var flagged = false;
 
-    // Every `set` on the line, and every `-o <option>` within each.
-    for (final set in RegExp(
-      r'(^|[;&|(]|\s)set\s+((-o\s+["\x27]?[a-z]+["\x27]?|-[A-Za-z]+|\s)+)',
-    ).allMatches(line)) {
-      final args = set.group(2)!;
-      for (final long in RegExp(
-        r'-o\s+["\x27]?(xtrace|verbose)["\x27]?',
-      ).allMatches(args)) {
-        flag(i + 1, '`set -o ${long.group(1)}`');
-        flagged = true;
-      }
-      if (flagged) break;
-      for (final cluster in RegExp(r'-([A-Za-z]+)').allMatches(args)) {
-        final flags = cluster.group(1)!;
-        if (flags == 'o') continue;
-        if (flags.contains('x') || flags.contains('v')) {
-          flag(i + 1, '`set -$flags`');
+      for (final set in RegExp(
+        r'''(^|[;&|(]|\s|["'])set\s+((-o\s+["']?[a-z]+["']?|[-+][A-Za-z]+|\s)+)''',
+      ).allMatches(line)) {
+        final args = set.group(2)!;
+        for (final long in RegExp(
+          r'''-o\s+["']?(xtrace|verbose)["']?''',
+        ).allMatches(args)) {
+          flag(script.line, '`set -o ${long.group(1)}`');
           flagged = true;
-          break;
         }
+        if (flagged) break;
+        for (final cluster in RegExp(r'[-+]([A-Za-z]+)').allMatches(args)) {
+          final flags = cluster.group(1)!;
+          if (flags == 'o') continue;
+          if (flags.contains('x') || flags.contains('v')) {
+            flag(script.line, '`set ${cluster.group(0)}`');
+            flagged = true;
+            break;
+          }
+        }
+        if (flagged) break;
       }
-      if (flagged) break;
-    }
-    if (flagged) continue;
+      if (flagged) continue;
 
-    // `shell: bash -x`, list item or not.
-    final shellValue = RegExp(r'^\s*(?:-\s+)?shell:\s*[\x27"]?([^\x27"#]+)')
-        .firstMatch(line);
-    if (shellValue != null) {
-      final words = shellValue.group(1)!.trim().split(RegExp(r'\s+'));
+      // An interpreter invoked with a trace flag, by name or by path, short
+      // form or long.
+      if (RegExp(
+        r'''(^|[;&|(]|\s|["'])(/\S*/)?(ba|z|k|da|)sh\s+((-[A-Za-z]*[xv][A-Za-z]*|--verbose|--xtrace|-o\s+(xtrace|verbose))(\s|$))''',
+      ).hasMatch(line)) {
+        flag(script.line, 'invoking a shell with a trace flag');
+        continue;
+      }
+
+      if (RegExp(r'SHELLOPTS\s*[:=].*\b(xtrace|verbose)\b').hasMatch(line)) {
+        flag(script.line, '`SHELLOPTS` carrying a trace option');
+      }
+    }
+  }
+
+  // `shell: bash -x` turns tracing on for a whole step without a `set`, and is
+  // read structurally so a quoted or flow-style value is seen.
+  for (final job in workflow.jobs) {
+    for (final step in job.steps) {
+      final shell = step.shell;
+      if (shell == null) continue;
+      final words = shell.trim().split(RegExp(r'\s+'));
       for (final word in words.skip(1)) {
         if (RegExp(r'^-[A-Za-z]*[xv][A-Za-z]*$').hasMatch(word) ||
             word == '--verbose' ||
             word == '--xtrace') {
-          flag(i + 1, '`shell: ${shellValue.group(1)!.trim()}`');
-          flagged = true;
+          flag(step.line, '`shell: ${shell.trim()}`');
           break;
         }
       }
-    }
-    if (flagged) continue;
-
-    // Invoking an interpreter with a trace flag, e.g. `bash -x tools/gate.sh`.
-    if (RegExp(r'(^|[;&|(]|\s)(ba|z|k|da|)sh\s+-[A-Za-z]*[xv][A-Za-z]*(\s|$)')
-        .hasMatch(line)) {
-      flag(i + 1, 'invoking a shell with a trace flag');
-      flagged = true;
-    }
-    if (flagged) continue;
-
-    // SHELLOPTS turns tracing on for every child shell.
-    if (RegExp(r'SHELLOPTS\s*[:=].*\b(xtrace|verbose)\b').hasMatch(line)) {
-      flag(i + 1, '`SHELLOPTS` carrying a trace option');
     }
   }
   return offenders;
