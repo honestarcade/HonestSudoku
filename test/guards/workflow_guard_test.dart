@@ -63,6 +63,36 @@ String _runStep(String script) {
 /// the negative test below can run it against a mutated workflow and
 /// require it to fail. An assertion with no proof that it can fail is what
 /// #154 was.
+/// The command a step runs, as one line, or null when it runs none.
+///
+/// `contains` was the wrong question: appending `|| true` keeps the substring,
+/// so `tools/gate.sh || true` satisfied an assertion whose whole point was
+/// that CI obeys the gate (#167). A step whose job is "run this and let it
+/// decide" has exactly one correct body, so the assertion is equality.
+String? _soleCommand(WorkflowStep? step) {
+  final run = step?.run;
+  if (run == null) return null;
+  final lines = run
+      .split('\n')
+      .map((l) => l.trim())
+      .where((l) => l.isNotEmpty && !l.startsWith('#'))
+      .toList();
+  return lines.length == 1 ? lines.single : null;
+}
+
+/// [step] must run exactly [command] — no `|| true`, no second line, no
+/// trailing conjunction that could swallow its exit status.
+void _expectRunsExactly(WorkflowStep? step, String command, String why) {
+  expect(step, isNotNull, reason: '$why: the step is gone');
+  expect(
+    _soleCommand(step),
+    command,
+    reason:
+        '$why must run `$command` and nothing else, so that its exit '
+        'status is the step\'s. Found: ${step!.run?.replaceAll('\n', ' ⏎ ')}',
+  );
+}
+
 void _assertReleaseShape(Workflow wf) {
   expect(wf.problem, isNull);
 
@@ -156,8 +186,16 @@ void _assertReleaseShape(Workflow wf) {
 
   // The steps that enforce invariant 1 and the signing identity must
   // actually run their scripts.
-  expect(ship.stepById('scan')!.run, contains('tools/check_aab.sh'));
-  expect(ship.stepById('cert')!.run, contains('tools/verify_upload_cert.sh'));
+  _expectRunsExactly(
+    ship.stepById('scan'),
+    'tools/check_aab.sh',
+    'release-shape: `scan` must run the permission scan',
+  );
+  _expectRunsExactly(
+    ship.stepById('cert'),
+    'tools/verify_upload_cert.sh',
+    'release-shape: `cert` must run the certificate check',
+  );
   expect(
     ship.stepById('keystore_check')!.run,
     contains(r'-alias "$HS_KEY_ALIAS"'),
@@ -277,23 +315,20 @@ void main() {
             'seconds and a shell error should not wait for Gradle',
       );
 
-      final deps = gate.stepById('deps');
-      expect(
-        deps!.run,
-        contains('--enforce-lockfile'),
-        reason:
-            'ci-shape: without it CI resolves a different tree than the '
-            'lockfile pins',
+      _expectRunsExactly(
+        gate.stepById('deps'),
+        'flutter pub get --enforce-lockfile',
+        'ci-shape: dependencies must resolve against the lockfile',
       );
-      expect(
-        gate.stepById('guards')!.run,
-        contains('--tags guard'),
-        reason: 'ci-shape: the invariant guards must be their own named step',
+      _expectRunsExactly(
+        gate.stepById('guards'),
+        'flutter test --no-pub --tags guard',
+        'ci-shape: the invariant guards must be their own step',
       );
-      expect(
-        gate.stepById('gate')!.run,
-        contains('tools/gate.sh'),
-        reason: 'ci-shape: CI must run the same script as local, not a copy',
+      _expectRunsExactly(
+        gate.stepById('gate'),
+        'tools/gate.sh',
+        'ci-shape: the gate step must run the same script as local',
       );
 
       for (final id in const ['deps', 'guards', 'gate']) {
