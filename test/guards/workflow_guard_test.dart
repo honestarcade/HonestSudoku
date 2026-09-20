@@ -550,6 +550,46 @@ void main() {
       }
     });
 
+    test('a tracing shell is refused at workflow, job and step level', () {
+      // Only the step level was checked, so a two-character change to the
+      // workflow-level `shell: bash` that every file here already has traced
+      // every step in the job holding all five secrets (#168).
+      const header =
+          'name: F\non: workflow_dispatch\n'
+          'permissions:\n  contents: read\nconcurrency: f\n';
+      const job = 'jobs:\n  a:\n    steps:\n      - run: echo hi\n';
+
+      for (final entry in const {
+        'workflow level':
+            '${header}defaults:\n  run:\n    shell: bash -x\n$job',
+        'job level':
+            '${header}jobs:\n  a:\n    defaults:\n      run:\n'
+            '        shell: bash -x\n    steps:\n      - run: echo hi\n',
+        'step level':
+            '$header${'jobs:\n  a:\n    steps:\n'
+                '      - shell: bash -x\n        run: echo hi\n'}',
+      }.entries) {
+        expect(
+          shellTraceOffenders('bad.yml', entry.value),
+          isNotEmpty,
+          reason: 'trace: a tracing shell at ${entry.key} was accepted',
+        );
+      }
+
+      for (final entry in const {
+        'workflow level': '${header}defaults:\n  run:\n    shell: bash\n$job',
+        'job level':
+            '${header}jobs:\n  a:\n    defaults:\n      run:\n'
+            '        shell: bash\n    steps:\n      - run: echo hi\n',
+      }.entries) {
+        expect(
+          shellTraceOffenders('good.yml', entry.value),
+          isEmpty,
+          reason: 'trace-negative: a plain shell at ${entry.key} was refused',
+        );
+      }
+    });
+
     test('a shell: value or SHELLOPTS that traces is refused', () {
       // Read structurally now, so a quoted or flow-style value is seen too.
       for (final bad in const [

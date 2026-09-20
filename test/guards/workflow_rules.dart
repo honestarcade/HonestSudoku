@@ -330,21 +330,30 @@ List<WorkflowOffender> shellTraceOffenders(String path, String text) {
     }
   }
 
-  // `shell: bash -x` turns tracing on for a whole step without a `set`, and is
-  // read structurally so a quoted or flow-style value is seen.
+  // A `shell:` value carrying a trace flag turns tracing on without a `set`.
+  // Checked at all three levels: the workflow's `defaults`, each job's, and
+  // each step's. Only the step level was checked, so changing the
+  // workflow-level `shell: bash` to `bash -x` traced every step in the job
+  // holding all five secrets with the suite green (#168).
+  void checkShell(String? shell, int line, String where) {
+    if (shell == null) return;
+    for (final word in shell.trim().split(RegExp(r'\s+')).skip(1)) {
+      if (RegExp(r'^-[A-Za-z]*[xv][A-Za-z]*$').hasMatch(word) ||
+          word == '--verbose' ||
+          word == '--xtrace') {
+        flag(line, '`$where: ${shell.trim()}`');
+        return;
+      }
+    }
+  }
+
+  checkShell(workflow.defaultShell, 1, 'defaults.run.shell');
   for (final job in workflow.jobs) {
+    checkShell(job.defaultShell, 1, 'defaults.run.shell in job `${job.name}`');
     for (final step in job.steps) {
       final shell = step.shell;
       if (shell == null) continue;
-      final words = shell.trim().split(RegExp(r'\s+'));
-      for (final word in words.skip(1)) {
-        if (RegExp(r'^-[A-Za-z]*[xv][A-Za-z]*$').hasMatch(word) ||
-            word == '--verbose' ||
-            word == '--xtrace') {
-          flag(step.line, '`shell: ${shell.trim()}`');
-          break;
-        }
-      }
+      checkShell(shell, step.line, 'shell');
     }
   }
   return offenders;

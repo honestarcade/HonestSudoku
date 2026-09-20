@@ -72,6 +72,7 @@ class WorkflowJob {
     this.needs = const [],
     this.ifExpression,
     this.secretsInherit = false,
+    this.defaultShell,
   });
 
   final String name;
@@ -82,6 +83,9 @@ class WorkflowJob {
   final List<String> needs;
   final String? ifExpression;
   final bool secretsInherit;
+
+  /// `defaults.run.shell` for this job, if it sets one.
+  final String? defaultShell;
 
   WorkflowStep? stepById(String id) {
     for (final step in steps) {
@@ -99,6 +103,7 @@ class Workflow {
   Workflow._(
     this.path,
     this.jobs,
+    this.defaultShell,
     this.triggers,
     this.pushTags,
     this.pushBranches,
@@ -111,6 +116,14 @@ class Workflow {
 
   /// The keys under `on:`, so a trigger change is visible.
   final List<String> triggers;
+
+  /// `defaults.run.shell` at workflow level, and the same per job.
+  ///
+  /// A step's `shell:` was modelled and this was not, so changing the
+  /// workflow-level `shell: bash` to `bash -x` — a two-character diff on a
+  /// line that already exists — turned tracing on for every step in the job
+  /// holding all five secrets, with the suite green (#168).
+  final String? defaultShell;
 
   /// `on.push.tags` and `on.push.branches`. The key alone is not enough:
   /// swapping `tags: ['v*']` for `branches: [main]` leaves the trigger named
@@ -135,6 +148,7 @@ class Workflow {
       return Workflow._(
         path,
         const [],
+        null,
         const [],
         const [],
         const [],
@@ -146,6 +160,7 @@ class Workflow {
       return Workflow._(
         path,
         const [],
+        null,
         const [],
         const [],
         const [],
@@ -242,6 +257,7 @@ class Workflow {
             needs: needs,
             ifExpression: _rawOr(jobMap, 'if'),
             secretsInherit: '${_lookup(jobMap, 'secrets')}' == 'inherit',
+            defaultShell: _defaultShell(jobMap),
           ),
         );
       }
@@ -249,6 +265,7 @@ class Workflow {
     return Workflow._(
       path,
       jobs,
+      _defaultShell(doc),
       triggers,
       pushTags,
       pushBranches,
@@ -287,4 +304,14 @@ Map<String, String> _stringMap(YamlMap map, String key) {
   final node = map.nodes[key];
   if (node is! YamlMap) return const {};
   return {for (final e in node.nodes.entries) '${e.key}': '${e.value.value}'};
+}
+
+/// `defaults: run: shell:` on a workflow or a job.
+String? _defaultShell(YamlMap map) {
+  final defaults = map.nodes['defaults']?.value;
+  if (defaults is! YamlMap) return null;
+  final run = defaults.nodes['run']?.value;
+  if (run is! YamlMap) return null;
+  final shell = run.nodes['shell']?.value;
+  return shell is String ? shell : null;
 }
