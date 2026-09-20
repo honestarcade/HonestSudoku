@@ -27,22 +27,4 @@ void main() {
     expect(find.text('0'), findsNothing);
     expect(find.text('1'), findsOneWidget);
   });
-
-  // CI SMOKE TEST — deliberately failing, and deliberately NOT a compile
-  // error, so the Invariant guards step passes and the Quality gate step is
-  // the one that goes red. The first attempt at this demonstration used a
-  // type error, which killed the guards step and left Quality gate skipped,
-  // proving something narrower than the criterion claims (#137).
-  //
-  // This file is the only one carrying no `guard` tag, so
-  // `flutter test --tags guard` does not see this at all.
-  testWidgets('CI SMOKE: fails at runtime, removed next commit', (
-    WidgetTester tester,
-  ) async {
-    expect(
-      2 + 2,
-      5,
-      reason: 'deliberate: a gate.sh failure must block a merge',
-    );
-  });
 }
