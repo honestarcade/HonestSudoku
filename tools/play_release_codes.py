@@ -33,6 +33,12 @@ import sys
 
 
 def main() -> int:
+    # CPython refuses to parse an integer beyond 4300 digits, and the
+    # resulting ValueError escaped as exit 1 — the documented code for "no
+    # release with that status", so a crash was reported as an empty track
+    # (#163).
+    if hasattr(sys, "set_int_max_str_digits"):
+        sys.set_int_max_str_digits(100000)
     want_status = sys.argv[1] if len(sys.argv) > 1 else "completed"
     if len(sys.argv) > 2:
         print("play_release_codes: expected at most one argument", file=sys.stderr)
@@ -57,12 +63,23 @@ def main() -> int:
     best = None
     for release in releases:
         if not isinstance(release, dict):
-            continue
+            # A malformed container used to be skipped silently, so the caller
+            # was told the track was empty for a track that holds a release
+            # the parser could not read (#163).
+            print(
+                "play_release_codes: release is not an object: %r" % (release,),
+                file=sys.stderr,
+            )
+            return 2
         if release.get("status") != want_status:
             continue
         codes = release.get("versionCodes") or []
         if not isinstance(codes, list):
-            continue
+            print(
+                "play_release_codes: versionCodes is not a list: %r" % (codes,),
+                file=sys.stderr,
+            )
+            return 2
         # The API sends them as strings; accept ints too rather than trust that.
         numeric = []
         for code in codes:
@@ -77,7 +94,10 @@ def main() -> int:
                 )
                 return 2
             text = code if isinstance(code, str) else str(code)
-            if not re.fullmatch(r"-?[0-9]+", text):
+            # No sign: `-5` passed the "strict digits" check and was promoted
+            # as a version code, which is the plausible-wrong-code case the
+            # check exists to refuse (#163).
+            if not re.fullmatch(r"[0-9]+", text):
                 print(
                     "play_release_codes: version code is not a number: %r" % (code,),
                     file=sys.stderr,

@@ -83,11 +83,17 @@ api() {
   # method, path, optional body. Prints the response body; a non-2xx status is
   # a hard failure naming the path, because a silently-ignored error here
   # leaves a half-finished edit on the account.
+  # The response body goes to one file the CALLER owns, created before the
+  # trap. It used to be a fresh mktemp assigned to a global and appended to an
+  # array inside this function — but five of the six call sites are command
+  # substitutions, where the append never reaches the parent and the parent's
+  # EXIT trap never runs. So a temp file leaked on every run, and
+  # `last_refusal` was blind to any refusal produced in a subshell, sometimes
+  # reading a stale body instead (#162).
   local method="$1" path="$2" body="${3:-}"
   local out status
-  out="$(mktemp)"
-  API_BODY_FILE="$out"
-  API_BODY_FILES+=("$out")
+  out="$API_BODY_FILE"
+  : > "$out"
   # `|| true` because curl's own failure — refused connection, DNS, timeout —
   # is an API failure to report, not a reason for `set -e` to kill the script
   # mid-edit with a bare exit 7 (#147).
@@ -103,33 +109,25 @@ api() {
   if [ "${status:0:1}" != "2" ]; then
     echo "play_promote: $method $path returned $status" >&2
     sed -n '1,20p' "$out" >&2
-    # Left on disk on purpose: the caller decides what the refusal means, and
-    # the draft retry has to read it (#129). cleanup() removes it.
+    # The body stays in $API_BODY_FILE for the caller to match on (#129).
     return 1
   fi
   cat "$out"
-  rm -f "$out"
-  API_BODY_FILE=""
 }
 
 EDIT_ID=""
-API_BODY_FILE=""
-API_BODY_FILES=()
+API_BODY_FILE="$(mktemp)"
 cleanup() {
-  # Every kept response body, not only the one API_BODY_FILE currently names:
-  # a later successful call overwrote the variable and the earlier file
-  # survived the run (#150).
-  # `${a[@]+"${a[@]}"}` because bash 3.2 — the macOS default — treats an
-  # empty array's expansion as an unbound variable under `set -u`, and the
-  # array is empty on every path that fails before the first request.
-  for body_file in ${API_BODY_FILES[@]+"${API_BODY_FILES[@]}"}; do
-    [ -n "$body_file" ] && rm -f "$body_file"
-  done
+  rm -f "$API_BODY_FILE"
   # Any edit that was not committed is deleted, so a failed run leaves no
   # pending change on the account.
   if [ -n "$EDIT_ID" ]; then
+    # `||` so cleanup never changes the exit code — but say so, because AC 3
+    # claims the edits ARE deleted, and a silent failure leaves one pending
+    # while the run still reports success (#161).
     curl -sS --connect-timeout 10 --max-time 30 -o /dev/null -X DELETE "${auth[@]}" \
-      "$API/$PACKAGE/edits/$EDIT_ID" 2>/dev/null || true
+      "$API/$PACKAGE/edits/$EDIT_ID" 2> /dev/null ||
+      echo "play_promote: warning: could not delete edit $EDIT_ID; it is still pending" >&2
   fi
 }
 trap cleanup EXIT
@@ -251,6 +249,12 @@ fi
 READBACK_EDIT="$(api POST "$API/$PACKAGE/edits" '{}' |
   sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)" ||
   die_api "promoted, but could not open an edit to read the result back"
+# Guarded like the other two open sites. Without it an id-less 2xx left
+# READBACK_EDIT empty, so cleanup() deleted nothing, the read-back GET went to
+# `.../edits//tracks/...`, and the run printed `promoted=` and exited 0 with an
+# edit left pending on the account (#161).
+[ -n "$READBACK_EDIT" ] ||
+  die_api "promoted, but the edits endpoint returned no id for the read-back"
 EDIT_ID="$READBACK_EDIT"
 TARGET="$(api GET "$API/$PACKAGE/edits/$EDIT_ID/tracks/$TO")" ||
   die_api "promoted, but could not read the '$TO' track back"
