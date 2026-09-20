@@ -27,8 +27,9 @@ Record all three together: the developer id and the owning account are what
 tell a later session which Console and which login this project lives under,
 and neither is recoverable from the repository.
 
-The package id is immutable after the first upload. It is asserted against the
-build and against the privacy policy by `test/guards/docs_consistency_test.dart`.
+The package id is typed on the **Create app** screen and is permanent from that
+moment — not from the first upload. It is asserted against the build and against
+the privacy policy by `test/guards/docs_consistency_test.dart`.
 
 ## The CI service account
 

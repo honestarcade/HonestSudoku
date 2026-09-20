@@ -28,17 +28,21 @@ Play Console → **All apps** → **Create app**.
 | Field | Value |
 |---|---|
 | App name | `Honest Sudoku` |
+| Package name | `com.honestarcade.sudoku` |
 | Default language | `English (United States) – en-US` |
 | App or game | **Game** |
 | Free or paid | **Free** |
-| Declarations | tick both (Play App Signing terms; US export laws) |
+| Declarations | tick both (Developer Program Policies; US export laws) |
+
+Click **Check availability** under the package name before continuing. It must
+come back available — the string is a one-time, permanent choice, and a typo
+here cannot be corrected later, only abandoned along with the app entry.
 
 Then **Create app**.
 
-> The package name `com.honestarcade.sudoku` is **not** chosen here — it is
-> fixed by the first bundle upload and is immutable afterwards. It already
-> matches `android/app/build.gradle.kts` and is asserted by a guard, so there
-> is nothing to type.
+> Copy `com.honestarcade.sudoku` rather than retyping it. It must match
+> `applicationId` in `android/app/build.gradle.kts` exactly; a guard asserts
+> that value, and the release upload is rejected outright if the two differ.
 
 **Record two things and paste them to me:**
 
