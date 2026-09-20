@@ -241,7 +241,7 @@ MUTATIONS: list[Mutation] = [
     Mutation("#159", "the newline guard is removed", "tools/ci_version.sh",
              sub(r'has_newline "\$run" && die "run number contains a newline"\n', ""),
              "a newline in the run number is accepted again",
-             'refuse-run'),
+             'newline was accepted'),
     Mutation("#119", "the credentials file is written by a heredoc",
              "tools/make_upload_key.sh",
              sub(r"escape_for_double_quotes \"\$HS_KEYSTORE_PASS\"", '$HS_KEYSTORE_PASS'),
