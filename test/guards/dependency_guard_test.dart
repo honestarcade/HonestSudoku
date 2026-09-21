@@ -1129,7 +1129,7 @@ dev_dependencies:
     }
   });
 
-  test("importing dart:io in lib/ is refused outright", () {
+  test('importing dart:io in lib/ is refused outright', () {
     // The class list is a floor: no name list catches
     // Process.run('curl', [url]). Banning the import is one line and
     // catches every one of them, at the cost of refusing legitimate file
@@ -1154,7 +1154,7 @@ dev_dependencies:
           'not be refused',
     );
     expect(
-      sourceOffenders('lib/x.dart', "// we deliberately avoid dart:io\n"),
+      sourceOffenders('lib/x.dart', '// we deliberately avoid dart:io\n'),
       isEmpty,
       reason: 'dart-io-import: a comment is not an import',
     );

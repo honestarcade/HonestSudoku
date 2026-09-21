@@ -24,6 +24,9 @@ set -euo pipefail
 # $HOME instead (#123).
 SECRETS_DIR="${HS_SECRETS_DIR:-$HOME/HonestArcadeApps/secrets}"
 KEYSTORE="$SECRETS_DIR/sudoku-upload.keystore"
+# Relative to the repository root, which this script cd's to. Overridable so
+# the round trip can be tested without writing over the committed one.
+CERT_OUT="${HS_UPLOAD_CERT_OUT:-android/signing/upload_certificate.pem}"
 CREDENTIALS="$SECRETS_DIR/sudoku-signing-credentials.txt"
 ALIAS="upload"
 KEYTOOL="${HS_KEYTOOL:-/opt/homebrew/opt/openjdk@21/bin/keytool}"
@@ -36,7 +39,14 @@ KEYTOOL="${HS_KEYTOOL:-/opt/homebrew/opt/openjdk@21/bin/keytool}"
 # irreversible thing this script can do. It used to refuse on the keystore
 # alone, which meant a run with the keystore moved aside silently replaced the
 # password of a key that still existed (#93).
-for hs_existing in "$KEYSTORE" "$CREDENTIALS"; do
+# The exported certificate is refused too, and this is not hypothetical: it
+# defaults to a path relative to the repository root, which this script cd's
+# to, so a run with a fake $HOME — which is exactly how the guard suite
+# exercises it — wrote a THROWAWAY key's certificate over the committed one.
+# The keystore and credentials were protected and the certificate was not
+# (#123). A wrong certificate here makes verify_upload_cert.sh fail every
+# build, and it is the file Play App Signing enrols.
+for hs_existing in "$KEYSTORE" "$CREDENTIALS" "$CERT_OUT"; do
   if [ -e "$hs_existing" ]; then
     echo "make_upload_key: $hs_existing already exists — refusing to overwrite." >&2
     echo "  This key is the app's identity with Play, and the credentials file" >&2
@@ -86,7 +96,6 @@ chmod 600 "$KEYSTORE"
 # so `tools/verify_upload_cert.sh` would fail every build afterwards, and the
 # reason would not be obvious (#123). The certificate is the public half; it
 # is written into the repository on purpose.
-CERT_OUT="${HS_UPLOAD_CERT_OUT:-android/signing/upload_certificate.pem}"
 mkdir -p "$(dirname "$CERT_OUT")"
 "$KEYTOOL" -exportcert -rfc \
   -keystore "$KEYSTORE" \

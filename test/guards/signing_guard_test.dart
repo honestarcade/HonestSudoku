@@ -908,4 +908,74 @@ void main() {
       );
     },
   );
+
+  test('the committed certificate is not writable by a test run', () {
+    // This actually happened. make_upload_key.sh refused to overwrite the
+    // keystore and the credentials file and NOT the exported certificate,
+    // whose default path is relative to the repository root that the script
+    // cd's to. The guard suite runs that script with a fake $HOME, which
+    // moves the keystore and not the certificate — so `flutter test` wrote a
+    // throwaway key's certificate over the committed one, and
+    // verify_upload_cert.sh would then have failed every build (#123).
+    final script = readFile('tools/make_upload_key.sh');
+    expect(
+      script,
+      contains(r'for hs_existing in "$KEYSTORE" "$CREDENTIALS" "$CERT_OUT"'),
+      reason:
+          'cert-overwrite: the exported certificate is not in the refusal '
+          'list, so a run with a fake HOME can overwrite the committed one',
+    );
+    expect(
+      script,
+      contains('HS_UPLOAD_CERT_OUT'),
+      reason:
+          'cert-overwrite: the certificate path is not overridable, so a '
+          'test cannot exercise the script without writing to the real one',
+    );
+  });
+
+  test('the committed certificate is the one the README names', () {
+    // The fingerprint is recorded in android/signing/README.md so it can be
+    // compared without a keystore. If the two ever disagree, one of them is
+    // describing a key this project does not sign with.
+    // Resolved the way the scripts do: the pinned Homebrew path first,
+    // because /usr/bin/keytool on macOS is a stub that exists, is
+    // executable and cannot run.
+    const pinned = '/opt/homebrew/opt/openjdk@21/bin/keytool';
+    final keytool = File(pinned).existsSync()
+        ? pinned
+        : (Process.runSync('/usr/bin/which', ['keytool']).stdout as String)
+              .trim();
+    if (keytool.isEmpty) {
+      markTestSkipped('no keytool available');
+      return;
+    }
+    final printed = Process.runSync(
+      keytool,
+      [
+        '-printcert',
+        '-file',
+        '${repoRoot.path}/android/signing/upload_certificate.pem',
+      ],
+      stdoutEncoding: utf8,
+      stderrEncoding: utf8,
+    );
+    expect(printed.exitCode, 0, reason: 'cert: ${printed.stderr}');
+    final fingerprint = RegExp(r'SHA256: ([0-9A-F:]+)')
+        .firstMatch(printed.stdout.toString())
+        ?.group(1);
+    expect(fingerprint, isNotNull, reason: 'cert: no SHA-256 in the output');
+    expect(
+      readFile('android/signing/README.md'),
+      contains(fingerprint!),
+      reason:
+          'cert-record: android/signing/README.md names a different '
+          'fingerprint than the committed certificate has ($fingerprint)',
+    );
+    expect(
+      printed.stdout.toString(),
+      contains('O=Honest Arcade, CN=Honest Sudoku'),
+      reason: 'cert: the committed certificate is not this project\'s',
+    );
+  });
 }

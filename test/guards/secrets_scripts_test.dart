@@ -531,6 +531,11 @@ exit 0
           'HOME': _home,
           'HS_KEYSTORE_PASS': password,
           'HS_KEYTOOL': keytool,
+          // Or the throwaway key's certificate is written over the
+          // committed one: CERT_OUT defaults to a path relative to the
+          // repository root, which the script cd's to, and a fake $HOME does
+          // not move it (#123).
+          'HS_UPLOAD_CERT_OUT': '$_home/cert.pem',
         },
         stdoutEncoding: utf8,
         stderrEncoding: utf8,
@@ -623,6 +628,7 @@ exit 0
             'HOME': _home,
             'HS_KEYSTORE_PASS': 'irrelevant',
             'HS_KEYTOOL': keytool,
+            'HS_UPLOAD_CERT_OUT': '$_home/cert.pem',
           },
           stdoutEncoding: utf8,
           stderrEncoding: utf8,
