@@ -49,12 +49,27 @@ bump `.fvmrc` and, if the code now needs it, raise the `flutter:` range under
 gate on a different local version prints one note on stderr and carries on;
 CI always uses the pin.
 
-**Signing.** With no `HS_*` variables set the release build falls back to the
-debug key, so the gate passes on a fresh clone with no secrets, and the build
-step says which key it used. With `HS_RELEASE=1` and no secrets the gate fails
-at the build step on purpose: that is how CI proves a release is really signed.
-The signing procedure and the rotation runbook are in
-`.n8/memory/android-signing.md`.
+**Signing.** The four variables are `HS_KEYSTORE_PATH`, `HS_KEYSTORE_PASS`,
+`HS_KEY_ALIAS` and `HS_KEY_PASS` — named here because the documentation
+referred only to `HS_*`, so a contributor could not learn them from it
+(#123). Set all four to sign with the upload key; set none and the release
+build falls back to the debug key, so the gate passes on a fresh clone with
+no secrets. Setting some but not all is refused rather than silently
+downgraded.
+
+`HS_RELEASE=1` makes a missing signing input a hard failure instead of that
+fallback — that is how CI proves a release is really signed. Only the exact
+value `1` counts; anything else warns and is treated as unset.
+
+`tools/gate.sh --signing-mode` prints what the next build would do, without
+running one. The build writes its own verdict to `$HS_SIGNING_VERDICT` and the
+gate reads it back, so a disagreement between the two is itself a gate
+failure.
+
+Verify a built bundle against the committed certificate with
+`tools/verify_upload_cert.sh`. The signing procedure and the rotation runbook
+are in `.n8/memory/android-signing.md`; the certificate's alias and
+fingerprint are in `android/signing/README.md`.
 
 ## Release
 

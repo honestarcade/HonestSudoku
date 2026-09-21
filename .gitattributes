@@ -1,6 +1,20 @@
 # Normalise line endings so the dependency guards cannot be silenced by a
 # CRLF checkout (#96). Dart regexes anchor before \r, which made every rule
 # read an empty file on Windows.
+#
+# What this does NOT do, verified by constructing a CRLF blob with
+# `git hash-object --no-filters` and checking it out (#118):
+#
+#   - It normalises on CHECK-IN of newly staged content. A blob already
+#     committed with CRLF stays that way; `git add --renormalize .` is the
+#     missing half, and is a one-off someone has to run.
+#   - It does nothing at all for lone `\r`. That is handled in the rules
+#     themselves — `normaliseText` translates rather than deletes, because
+#     deleting collapsed such a file into one line and silenced every rule
+#     (#112).
+#
+# The rules do not depend on this file being effective. It is a convenience
+# for the working tree; the guard is normaliseText.
 * text=auto eol=lf
 *.sh text eol=lf
 *.bat text eol=crlf

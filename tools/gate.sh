@@ -89,7 +89,7 @@ signing_prediction() {
   done
 
   if [ "$set_count" -eq "${#SIGNING_VARS[@]}" ]; then
-    if [ ! -r "${HS_KEYSTORE_PATH}" ]; then
+    if [ ! -f "${HS_KEYSTORE_PATH}" ] || [ ! -r "${HS_KEYSTORE_PATH}" ]; then
       echo "refusal"
     else
       echo "upload"
@@ -100,6 +100,17 @@ signing_prediction() {
     echo "refusal"
   else
     echo "debug"
+  fi
+}
+
+# #13's discretion: a non-`1` value is "ignored with a warning saying so".
+# It was ignored silently, and the comment added last pass admitted as much
+# rather than adding the line (#123).
+warn_hs_release() {
+  local v="${HS_RELEASE:-}"
+  if [ -n "$v" ] && [ "$v" != "1" ]; then
+    echo "gate: HS_RELEASE is '$v' — only the exact value 1 enables release" >&2
+    echo "  mode. This run is treated as if HS_RELEASE were unset." >&2
   fi
 }
 
@@ -119,7 +130,7 @@ signing_mode() {
     # Say what the build will do, not what the variables suggest. Promising
     # the upload key while the keystore is missing is the same class of
     # false headline as the blank check above.
-    if [ ! -r "${HS_KEYSTORE_PATH}" ]; then
+    if [ ! -f "${HS_KEYSTORE_PATH}" ] || [ ! -r "${HS_KEYSTORE_PATH}" ]; then
       echo "HS_* set but HS_KEYSTORE_PATH is not readable — the build will fail"
     elif [ "${HS_RELEASE:-}" = "1" ]; then
       echo "HS_* set, HS_RELEASE=1 — signing with the upload key"
@@ -139,6 +150,7 @@ signing_mode() {
 # something can ask for them without running a six-minute build; leaving them
 # unaskable is how the wrong message shipped.
 if [ "${1:-}" = "--signing-mode" ]; then
+  warn_hs_release
   signing_mode
   exit 0
 fi
@@ -205,6 +217,7 @@ while [ "$i" -lt "$total" ]; do
   command="${COMMANDS[$i]}"
 
   if [ "$step" -eq 5 ]; then
+    warn_hs_release
     SIGNING_MODE="$(signing_mode)"
     echo "[$step/$total] $label ($SIGNING_MODE)"
   else
@@ -240,7 +253,11 @@ while [ "$i" -lt "$total" ]; do
     run_step "$command" || status=$?
   fi
   if [ "$status" -ne 0 ]; then
-    echo "GATE FAILED at $label"
+    # stderr, and with the code. #17's discretion specified
+    # `GATE FAILED at <label> (exit <rc>)` on stderr; it went to stdout
+    # without the code, so a caller separating the streams saw a silent
+    # failure and a reader saw no number to look up (#123).
+    echo "GATE FAILED at $label (exit $status)" >&2
     exit "$status"
   fi
 

@@ -18,7 +18,11 @@
 #   ~/HonestArcadeApps/secrets/sudoku-signing-credentials.txt
 set -euo pipefail
 
-SECRETS_DIR="$HOME/HonestArcadeApps/secrets"
+# Overridable so the round-trip can be tested without touching the owner's
+# real secrets directory. #13's discretion specified this for exactly that
+# reason and it was never added, which is why the guard fixture has to fake
+# $HOME instead (#123).
+SECRETS_DIR="${HS_SECRETS_DIR:-$HOME/HonestArcadeApps/secrets}"
 KEYSTORE="$SECRETS_DIR/sudoku-upload.keystore"
 CREDENTIALS="$SECRETS_DIR/sudoku-signing-credentials.txt"
 ALIAS="upload"
@@ -74,6 +78,30 @@ chmod 700 "$SECRETS_DIR"
   -keypass:env HS_KEYSTORE_PASS
 
 chmod 600 "$KEYSTORE"
+
+# Export the public certificate and print its fingerprint.
+#
+# Without this, a rotation that follows the runbook produced a new keystore
+# and left `android/signing/upload_certificate.pem` describing the OLD key —
+# so `tools/verify_upload_cert.sh` would fail every build afterwards, and the
+# reason would not be obvious (#123). The certificate is the public half; it
+# is written into the repository on purpose.
+CERT_OUT="${HS_UPLOAD_CERT_OUT:-android/signing/upload_certificate.pem}"
+mkdir -p "$(dirname "$CERT_OUT")"
+"$KEYTOOL" -exportcert -rfc \
+  -keystore "$KEYSTORE" \
+  -storetype PKCS12 \
+  -alias "$ALIAS" \
+  -storepass:env HS_KEYSTORE_PASS \
+  -file "$CERT_OUT"
+chmod 644 "$CERT_OUT"
+
+FINGERPRINT="$("$KEYTOOL" -printcert -file "$CERT_OUT" |
+  grep -m1 -oE 'SHA256: [0-9A-F:]+' | sed 's/^SHA256: //')"
+echo "certificate written to $CERT_OUT"
+echo "  alias:   $ALIAS"
+echo "  SHA-256: ${FINGERPRINT:-unknown}"
+echo "  Commit it, and update the table in android/signing/README.md."
 
 umask 177
 

@@ -16,16 +16,25 @@ analyzer:
   errors:
     # TODOs are raised to info so editors surface them in review.
     #
-    # This does NOT block the gate, and the comment here used to claim it did.
-    # `dart analyze` does not report the `todo` diagnostic from the command
-    # line at any severity, so `--fatal-infos` never sees one: appending
-    # `// TODO: x` to a source file and running the gate prints
-    # `No issues found!` (#107). `--fatal-infos` itself works — a real
-    # info-level lint does fail the gate — the gap is specific to TODOs.
+    # This does NOT block the gate at `info`, and the comment here once
+    # claimed it did (#107). Its replacement then claimed `dart analyze`
+    # never reports `todo` "at any severity" and that blocking TODOs "would
+    # need a separate check" — both false, and both written in the edit that
+    # corrected the first claim (#122).
     #
-    # Blocking them would need a separate check, and that is a decision about
-    # whether TODOs should be bannable in a project this young rather than a
-    # config line. Until someone makes it, this comment says what is true.
+    # Measured on 2026-09-20, one severity at a time, with
+    # `// TODO: x` appended to lib/main.dart and `dart analyze --fatal-infos`:
+    #
+    #   todo: info      No issues found!   exit 0
+    #   todo: warning   1 issue found.     exit 3
+    #   todo: error     1 issue found.     exit 3
+    #
+    # So `info` is the one severity that is suppressed, and it is the one
+    # this file uses. Changing this single line to `warning` would block the
+    # gate on every TODO. That is a decision about whether TODOs should be
+    # bannable in a project this young — it is a config line, and the
+    # previous comment said it was not because it generalised from the one
+    # severity it had tested.
     todo: info
   exclude:
     - build/**

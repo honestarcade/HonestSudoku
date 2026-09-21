@@ -288,6 +288,26 @@ if printf '%s\n' "$STRINGS" | grep -qF 'flutterEmbedding'; then
   # recurrence of #87 alone (declarations invisible) or of #80 alone (requests
   # invisible) passed the gate silently. Those are the two bugs it exists to
   # catch (#103).
+  #
+  # What this does NOT catch, stated because #92's and #103's closing comments
+  # positioned it as *the* tie between the synthetic fixtures and reality
+  # (#115):
+  #
+  #   1. A PARTIALLY blind decoder. Mutate the awk to emit only the
+  #      allowlisted name and this check scans 0 and reports clean — it asks
+  #      "did I see the self-permission?", and the self-permission is exactly
+  #      what such a decoder still sees. A bundle carrying
+  #      com.evilads.sdk.TRACK_USER alongside it scans clean too. What
+  #      catches that shape is the fixture suite: the same mutation gives 7
+  #      failures in test/guards/bundle_scan_test.dart. The protection
+  #      exists; it is one layer up from where the narrative put it.
+  #   2. DECLARE_SEEN and REQUEST_SEEN are set from a decoded NAME, not from
+  #      a confirmed element, so a synthetic bundle with no <permission>
+  #      element at all — only a string run that reads as an element start —
+  #      sets the flag. Not reachable through real aapt2, which packs `(`
+  #      after a meta-data value rather than `"`; verified with a real build
+  #      carrying <meta-data android:value="permission"/>, which scanned
+  #      clean. Same class as the bare-run case #103 declined to close.
   if [ -z "$OFFENDERS" ]; then
     MISSING=""
     [ -z "${DECLARE_SEEN:-}" ] && MISSING="the <permission> declaration"

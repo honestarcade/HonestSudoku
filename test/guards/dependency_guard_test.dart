@@ -1108,4 +1108,94 @@ dev_dependencies:
       );
     }
   });
+
+  test('the newly listed dart:io connectors are refused', () {
+    // #98 listed thirteen names. These open connections and were not on
+    // the list (#118).
+    for (final name in const [
+      'RawSynchronousSocket',
+      'RawSecureServerSocket',
+      'WebSocketTransformer',
+      'HttpOverrides',
+      'IOOverrides',
+      'NetworkInterface',
+      'ConnectionTask',
+    ]) {
+      expect(
+        sourceOffenders('lib/x.dart', 'final x = $name.something();\n'),
+        isNotEmpty,
+        reason: 'dart-io: $name is not refused',
+      );
+    }
+  });
+
+  test("importing dart:io in lib/ is refused outright", () {
+    // The class list is a floor: no name list catches
+    // Process.run('curl', [url]). Banning the import is one line and
+    // catches every one of them, at the cost of refusing legitimate file
+    // IO — which this app does not do (#118).
+    expect(
+      sourceOffenders('lib/main.dart', "import 'dart:io';\n"),
+      isNotEmpty,
+      reason: 'dart-io-import: the import is not refused',
+    );
+    expect(
+      sourceOffenders('lib/main.dart', 'import "dart:io";\n'),
+      isNotEmpty,
+      reason: 'dart-io-import: the double-quoted spelling passes',
+    );
+    // The complement, twice over: the ban is scoped to lib/, and a
+    // mention that is not an import is not an import.
+    expect(
+      sourceOffenders('test/guards/x.dart', "import 'dart:io';\n"),
+      isEmpty,
+      reason:
+          'dart-io-import: the guards read files for a living and must '
+          'not be refused',
+    );
+    expect(
+      sourceOffenders('lib/x.dart', "// we deliberately avoid dart:io\n"),
+      isEmpty,
+      reason: 'dart-io-import: a comment is not an import',
+    );
+  });
+
+  test('the real lib/ imports no dart:io', () {
+    // The rule is worth nothing if the tree already breaches it.
+    final offenders = <String>[];
+    for (final f
+        in Directory('${repoRoot.path}/lib')
+            .listSync(recursive: true)
+            .whereType<File>()
+            .where((f) => f.path.endsWith('.dart'))) {
+      final rel = f.path.replaceFirst('${repoRoot.path}/', '');
+      offenders.addAll(
+        sourceOffenders(rel, f.readAsStringSync()).map((o) => o.toString()),
+      );
+    }
+    expect(offenders, isEmpty, reason: describeOffenders('lib', offenders));
+  });
+
+  test('an underscore-joined name is not the dart:io class', () {
+    // The boundary allowed a leading underscore anywhere, so `Test_Socket`
+    // and `A_HttpClient` were flagged — the same overshoot as the
+    // `MockSocket` bug it was written to fix (#98, #118).
+    for (final ok in const [
+      'final x = Test_Socket();',
+      'final x = A_HttpClient();',
+      'class My_WebSocket {}',
+    ]) {
+      expect(
+        sourceOffenders('lib/x.dart', '$ok\n'),
+        isEmpty,
+        reason: 'dart-io-boundary: refused `$ok`',
+      );
+    }
+    // The complement: a genuinely private dart:io class still is one.
+    expect(
+      sourceOffenders('lib/x.dart', 'final x = _Socket();\n'),
+      isNotEmpty,
+      reason: 'dart-io-boundary: `_Socket` must still be caught',
+    );
+  });
 }

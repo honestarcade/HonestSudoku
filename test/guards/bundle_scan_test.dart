@@ -479,10 +479,18 @@ void main() {
     // be on disk. It is a convenience, not the guarantee — and the first
     // attempt at #92 got that backwards.
     //
-    // The guarantee lives in tools/check_aab.sh, which refuses a bundle that
-    // is recognisably a Flutter app yet yields no permission element at all.
-    // That is exactly what an inert decoder looks like (#80), it runs against
-    // the real artefact at step 6 of every gate run, and it cannot be skipped.
+    // tools/check_aab.sh refuses a bundle that is recognisably a Flutter app
+    // yet yields no permission element at all. That is exactly what a fully
+    // inert decoder looks like (#80), it runs against the real artefact at
+    // step 6 of every gate run, and it cannot be skipped.
+    //
+    // It is not the whole guarantee, and saying so was the overclaim #115
+    // was filed for. It does not catch a PARTIALLY blind decoder — one
+    // mutated to emit only the allowlisted name scans 0 and reports clean,
+    // because the allowlisted name is what such a decoder still sees. The
+    // fixtures above are what catch that: the same mutation gives 7 failures
+    // in this file. The two layers cover different shapes, and neither is
+    // "the" guarantee.
     //
     // Why not have this test build its own bundle, which is what #92's plan
     // said? Because it raced. `flutter test` runs files concurrently, and
