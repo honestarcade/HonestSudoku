@@ -1010,7 +1010,11 @@ void main() {
       // StackOverflowError is an Error, not an Exception, so `on
       // YamlException` did not catch it and it escaped parse() as a crash
       // (#177).
-      final deep = 'a:\n${'  ' * 2}${'[' * 60000}';
+      // 6000 is the measured threshold on this SDK — 3000 raises a
+      // YamlException, 6000 overflows. Deeper works too, but 60000 put
+      // enough stack pressure on the runner to fail an unrelated test file
+      // running concurrently, which is a worse guard than none.
+      final deep = 'a:\n    ${'[' * 6000}';
       final wf = Workflow.parse('x.yml', deep);
       expect(wf.problem, isNotNull);
     });
