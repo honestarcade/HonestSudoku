@@ -133,6 +133,58 @@ void main() {
       );
     });
 
+    test('the known-ordinary list is exercised, name by name', () {
+      // #97's whole lesson: the allow-list had seventeen names and not one
+      // ended in `ads`, so the glob's complement was never asserted. The
+      // same omission applied to *tracking* and *attribution*, which had no
+      // complement at all. Every name below was found by running the
+      // patterns over the complete pub.dev list and then read (#113).
+      final refused = <String>[];
+      for (final name in policy.knownOrdinary) {
+        final reason = policy.matches(name);
+        if (reason != null) refused.add('$name refused by "$reason"');
+      }
+      expect(
+        refused,
+        isEmpty,
+        reason: describeOffenders('known-ordinary', refused),
+      );
+    });
+
+    test('the allowlist softens a glob and never a named block', () {
+      // It is consulted after blockedNames, so it cannot be used to
+      // un-block something deliberately named.
+      expect(
+        policy.matches('eye_tracking'),
+        isNull,
+        reason: 'a glob false positive must be allowed through',
+      );
+      expect(
+        policy.matches('firebase_analytics'),
+        isNotNull,
+        reason: 'a real tracker must still be refused',
+      );
+      expect(
+        policy.matches('affise_attribution_lib'),
+        isNotNull,
+        reason:
+            'the affise_attribution_* family is 15 of the 29 *attribution* '
+            'matches and is exactly what that glob exists to stop',
+      );
+      expect(
+        policy.matches('kochava_measurement_google_tracking'),
+        isNotNull,
+        reason: 'an attribution SDK ending in _tracking must be refused',
+      );
+      expect(
+        policy.matches('app_tracking_transparency'),
+        isNull,
+        reason:
+            "iOS's consent PROMPT is the opposite of a tracker, and the "
+            'glob refused it',
+      );
+    });
+
     test('the blocklist does not refuse ordinary packages', () {
       const mustAllow = [
         'path_provider',

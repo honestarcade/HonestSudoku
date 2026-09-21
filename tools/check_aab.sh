@@ -15,9 +15,25 @@
 #         2  package id missing or wrong
 #         3  file unreadable, not an .aab, or no manifest entry in the zip
 #
-# Needs unzip, tr, grep, sort and awk. Written for bash 3.2 (macOS default).
+# Needs unzip, tr, grep, sort, awk and dirname. Written for bash 3.2 (macOS
+# default).
+#
+# VERIFIED, not asserted, on 2026-09-20 — the check is one command and it had
+# never been run:
+#
+#   BIN=$(mktemp -d)
+#   for t in unzip tr grep sort awk dirname bash; do
+#     ln -sf "$(/usr/bin/which "$t")" "$BIN/$t"
+#   done
+#   env -i PATH="$BIN" HOME="$HOME" "$BIN/bash" tools/check_aab.sh   # rc=0
+#
+# Dropping dirname from that loop reproduces `line 26: dirname: command not
+# found`. Re-run it whenever this script gains a command.
 # (awk arrived with the element decoder in #80 and the list was not updated
-# until #105 — the same stale-header defect #87 was partly filed for.)
+# until #105; dirname was missing from the day the `cd` on line 26 was
+# written and survived #105's correction of the line directly above it — the
+# fourth occurrence of a header sentence asserted rather than checked, in one
+# file (#87, #105, #114).)
 set -euo pipefail
 export LC_ALL=C
 

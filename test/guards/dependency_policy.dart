@@ -88,6 +88,23 @@ const List<String> blockedPatterns = [
   '*mobileads*',
   '*analytics*',
   '*crashlytics*',
+  // Broad, deliberately, with an allowlist in front. Checked against the
+  // complete pub.dev name list (90,163 names) on 2026-09-20:
+  //
+  //   *tracking*     29 matches, 11 of them ordinary packages
+  //   *attribution*  29 matches, 28 of them ad-attribution SDKs
+  //
+  // #113 proposed anchoring these the way #97 anchored the ads globs, and
+  // the sweep says not to. `*_tracking` still refuses eye_tracking,
+  // apple_vision_object_tracking and version_tracking, so it does not fix
+  // the false positives; and dropping `*attribution*` would free the whole
+  // affise_attribution_* family, which is exactly what it exists to stop.
+  // The issue's claim that only easy_attribution_text matches was measured
+  // against something other than the live list.
+  //
+  // So the glob stays broad and `knownOrdinary` below carries the names the
+  // sweep verified, which is the honest shape: a false positive costs a
+  // reader one line, a false negative ships a tracker.
   '*tracking*',
   '*attribution*',
   '*webview*',
@@ -106,15 +123,54 @@ const List<String> exemptFromJustification = [
   'flutter_localizations',
 ];
 
+/// Real packages a blocklist pattern refuses although they are not ads,
+/// analytics, tracking or network.
+///
+/// Every name here was found by running the patterns against the complete
+/// pub.dev name list — 90,163 names on 2026-09-20 — and then read. That
+/// sweep is one HTTP call and it is the only way to know what a glob really
+/// matches; #97 and #113 were both filed because a glob was written from
+/// imagination and shipped.
+///
+/// A name belongs here only after someone has looked at what the package
+/// does. `app_tracking_transparency` is the sharpest case: it is iOS's
+/// consent PROMPT, so a project with this project's values might genuinely
+/// want it, and the pattern refuses it as a tracker.
+///
+/// This list does not authorise anything. Adding a dependency still needs
+/// planning approval and a `# why:` line under invariant 3; this only stops
+/// the blocklist from giving a wrong reason (#97, #113).
+const knownOrdinary = <String>[
+  // *tracking*
+  'app_tracking_transparency',
+  'apple_vision_object_tracking',
+  'eit_memory_tracking',
+  'eye_tracking',
+  'location_tracking',
+  'log_tracking',
+  'sound_image_tracking',
+  'version_tracking',
+  'flutter_background_maps_tracking',
+  'dart_board_tracking',
+  'engine_tracking',
+  // *attribution* — the only one of twenty-nine that is not an
+  // ad-attribution SDK.
+  'easy_attribution_text',
+];
+
 /// Returns the blocklist entry or pattern that refuses [name], or null when
 /// nothing does. Returning the reason rather than a bool is what lets a failure
 /// say *why* a package was refused.
 String? matches(String name) {
   final lower = name.toLowerCase().trim();
   if (lower.isEmpty) return null;
+  // Checked first, and only against patterns: an exact blocked NAME is never
+  // overridden, so this can soften a glob and never a deliberate block.
+  final ordinary = knownOrdinary.any((n) => n.toLowerCase() == lower);
   for (final blocked in blockedNames) {
     if (lower == blocked.toLowerCase()) return blocked;
   }
+  if (ordinary) return null;
   for (final pattern in blockedPatterns) {
     if (_globMatches(pattern.toLowerCase(), lower)) return pattern;
   }
