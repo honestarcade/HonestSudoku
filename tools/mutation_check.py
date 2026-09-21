@@ -400,8 +400,30 @@ def main() -> int:
             result = run(SUITE)
             output = result.stdout + result.stderr
             if result.returncode == 0:
-                survived.append(m)
-                print(f"  SURVIVED {label}\n           {m.why}")
+                # Re-run before reporting a survivor. A SURVIVED verdict is
+                # the one that matters — it says a guard has a hole — and one
+                # flaky green would announce a hole that is not there, or
+                # worse, be dismissed as flake when it is real. A second
+                # green costs one suite run on the rare path only (#192).
+                confirm = run(SUITE)
+                if confirm.returncode != 0:
+                    output = confirm.stdout + confirm.stderr
+                    print(f"  (first run of {label} was green, second was not "
+                          f"— reporting the second)")
+                else:
+                    survived.append(m)
+                    print(f"  SURVIVED {label}\n           {m.why}")
+            if result.returncode == 0 and m not in survived:
+                # Fell through from the flaky branch above; judged on the
+                # confirming run's output.
+                if m.expect and m.expect not in output:
+                    wrong.append(m)
+                    print(f"  WRONG-REASON {label}\n               the suite "
+                          f"failed, but not with {m.expect!r}")
+                else:
+                    print(f"  caught  {label}")
+            elif result.returncode == 0:
+                pass
             elif m.expect and m.expect not in output:
                 # Red, but not for this reason. Counting it as caught is how a
                 # guard gets credit for an assertion it does not make.

@@ -20,8 +20,16 @@ class RunScript {
   /// The script text as the shell will receive it, aliases resolved.
   final String body;
 
-  /// 1-based line in the source file where the value begins.
+  /// 1-based line in the source file of the `run:` KEY.
+  ///
+  /// The body's first line is `line + 1`: for a block scalar the value's
+  /// span starts at the `|`, which sits on the key's line. Offenders add the
+  /// body index to [bodyLine], not to this, which is why every trace
+  /// offender pointed one line short (#180, #188).
   final int line;
+
+  /// 1-based line in the source file where the body's first line sits.
+  int get bodyLine => line + 1;
   final String jobName;
   final String? stepId;
 }
@@ -282,6 +290,7 @@ class Workflow {
       );
     }
 
+    final badJobs = <String>[];
     final triggers = <String>[];
     final pushTags = <String>[];
     final pushBranches = <String>[];
@@ -315,7 +324,14 @@ class Workflow {
       for (final entry in jobsNode.nodes.entries) {
         final jobName = '${entry.key}';
         final jobMap = entry.value;
-        if (jobMap is! YamlMap) continue;
+        if (jobMap is! YamlMap) {
+          // Recorded, not skipped. A job whose value is not a mapping was
+          // dropped silently with `problem == null`, so every rule returned
+          // zero offenders for a file holding one — the class #177 names,
+          // still open in this spelling (#188).
+          badJobs.add(jobName);
+          continue;
+        }
 
         final needs = <String>[];
         final needsNode = _lookup(jobMap, 'needs');
@@ -385,7 +401,11 @@ class Workflow {
       }
     }
     String? unusable;
-    if (jobsNode == null) {
+    if (badJobs.isNotEmpty) {
+      unusable =
+          'job(s) ${badJobs.join(', ')} are not mappings, so their steps '
+          'cannot be read';
+    } else if (jobsNode == null) {
       unusable = 'no `jobs:` key — this is not a workflow';
     } else if (jobsNode is! YamlMap) {
       unusable =

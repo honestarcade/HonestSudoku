@@ -1528,6 +1528,103 @@ void main() {
       }
     });
 
+    test('an offender names the line the offence is on', () {
+      // The contract is `path:line: message`, and every trace offender
+      // reported the line of the `run:` KEY — one short for a block scalar,
+      // which is all of them. Nothing asserted a line number, so it could
+      // not be caught either (#180, #188).
+      const doc =
+          'name: X\n' // 1
+          'on: push\n' // 2
+          'permissions:\n' // 3
+          '  contents: read\n' // 4
+          'concurrency: x\n' // 5
+          'jobs:\n' // 6
+          '  a:\n' // 7
+          '    steps:\n' // 8
+          '      - run: |\n' // 9
+          '          echo one\n' // 10
+          '          echo two\n' // 11
+          '          set -x\n' // 12
+          '          echo three\n'; // 13
+      final offenders = shellTraceOffenders('x.yml', doc);
+      expect(offenders, hasLength(1));
+      expect(
+        offenders.single.line,
+        12,
+        reason:
+            'offender-line: `set -x` is on line 12 and the offender says '
+            '${offenders.single.line}',
+      );
+
+      // And a secret in a run: body, same contract.
+      const secretDoc =
+          'name: X\n'
+          'on: push\n'
+          'permissions:\n'
+          '  contents: read\n'
+          'concurrency: x\n'
+          'jobs:\n'
+          '  a:\n'
+          '    steps:\n'
+          '      - run: |\n'
+          '          echo one\n'
+          r'          echo "${{ secrets.HS_KEY_PASS }}"'
+          '\n';
+      final secretOffenders = secretsInRunOffenders('x.yml', secretDoc);
+      expect(secretOffenders, hasLength(1));
+      expect(
+        secretOffenders.single.line,
+        11,
+        reason:
+            'offender-line: the secret is on line 11 and the offender says '
+            '${secretOffenders.single.line}',
+      );
+    });
+
+    test('a job that is not a mapping is refused, not skipped', () {
+      // `if (jobMap is! YamlMap) continue;` dropped it silently with
+      // problem == null, so all three rules returned zero offenders for a
+      // file holding one — #177's class in one more spelling (#188).
+      const doc =
+          'name: X\non: push\npermissions:\n  contents: read\n'
+          'concurrency: x\n'
+          'jobs:\n'
+          '  a: nope\n'
+          '  b:\n    steps:\n      - run: echo hi\n';
+      final wf = Workflow.parse('x.yml', doc);
+      expect(wf.problem, isNotNull, reason: 'a scalar job scanned as clean');
+      expect(wf.problem, contains('not mappings'));
+      for (final rule in <List<WorkflowOffender> Function(String, String)>[
+        unpinnedUses,
+        permissionOffenders,
+        concurrencyOffenders,
+      ]) {
+        expect(rule('x.yml', doc), isNotEmpty);
+      }
+    });
+
+    test('write-all is refused whatever its case', () {
+      // Compared case-sensitively where the rest of this file is
+      // deliberately case-insensitive (#188).
+      for (final spelling in const [
+        'write-all',
+        'WRITE-ALL',
+        'Write-All',
+        "'write-all'",
+      ]) {
+        final doc =
+            'name: X\non: push\nconcurrency: x\n'
+            'permissions: $spelling\n'
+            "jobs:\n  a:\n    steps:\n      - run: 'true'\n";
+        expect(
+          permissionOffenders('x.yml', doc),
+          isNotEmpty,
+          reason: 'write-all-case: `$spelling` was accepted',
+        );
+      }
+    });
+
     test('dependabot watches both ecosystems', () {
       final offenders = dependabotOffenders(
         pathExists('.github/dependabot.yml')

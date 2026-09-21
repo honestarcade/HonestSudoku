@@ -96,7 +96,9 @@ List<WorkflowOffender> permissionOffenders(String path, String text) {
 
   void check(String? scalar, int line, String where) {
     if (scalar == null) return;
-    if (scalar.trim() == 'write-all') {
+    // Case-insensitive, like the rest of this file. `WRITE-ALL` returned
+    // zero offenders (#188).
+    if (scalar.trim().toLowerCase() == 'write-all') {
       offenders.add(
         WorkflowOffender(
           path,
@@ -166,7 +168,7 @@ Iterable<({String expression, RunScript script, int line})> _runExpressions(
       yield (
         expression: m.group(1)!,
         script: script,
-        line: script.line + '\n'.allMatches(before).length,
+        line: script.bodyLine + '\n'.allMatches(before).length,
       );
     }
   }
@@ -293,7 +295,7 @@ List<WorkflowOffender> shellTraceOffenders(String path, String text) {
       // The contract is `path:line: message`, and every offender reported
       // the line where the `run:` VALUE starts — so a trace on line 40 of a
       // 60-line script pointed at line 12, and the reader hunted (#180).
-      final lineNo = script.line + i;
+      final lineNo = script.bodyLine + i;
       var flagged = false;
 
       for (final set in RegExp(
