@@ -1873,64 +1873,136 @@ void main() {
       }
     });
 
-    test(
-      'the required checks are still bound, and are the check-run names',
-      () {
-        // The one part of the merge gate with no guard on it: the ruleset lives
-        // in GitHub config, so #187 is real today and silently reversible
-        // tomorrow — the same failure mode as the issue itself, a gate that
-        // exists but does not bind (#196).
-        //
-        // Skipped rather than failed without network or auth: this asserts a
-        // fact about the remote, and a developer offline should not see a red
-        // suite for it. CI has both.
-        final probe = Process.runSync(
-          'gh',
+    test('the required checks are still bound, and are the check-run names', () {
+      // The one part of the merge gate with no guard on it: the ruleset
+      // lives in GitHub config, so #187 is real today and silently
+      // reversible tomorrow — the same failure mode as the issue itself, a
+      // gate that exists but does not bind (#196).
+      //
+      // Read WITHOUT authentication. The previous version used `gh` and
+      // said in three places that this needs an admin-scoped token CI does
+      // not have. That was simply untrue: this repository is public, and
+      // the rulesets endpoint answers 200 to an anonymous request with the
+      // enforcement state, the branch condition and both required checks.
+      // Only `bypass_actors` is redacted. So the check runs everywhere,
+      // including CI, and the reason it did not was that `ci.yml` passes no
+      // token at all (#202).
+      const rulesetUrl =
+          'https://api.github.com/repos/honestarcade/HonestSudoku/rulesets/23682733';
+      late final ProcessResult probe;
+      try {
+        probe = Process.runSync(
+          'curl',
           [
-            'api',
-            'repos/honestarcade/HonestSudoku/rulesets/23682733',
-            '--jq',
-            '[.enforcement] + [.rules[] | select(.type=="required_status_checks") '
-                '| .parameters.required_status_checks[] '
-                '| .context + ":" + (.integration_id|tostring)] | join(" ")',
+            '-sS',
+            '--max-time',
+            '20',
+            '-w',
+            '\n%{http_code}',
+            '-H',
+            'Accept: application/vnd.github+json',
+            rulesetUrl,
           ],
           stdoutEncoding: utf8,
           stderrEncoding: utf8,
         );
-        if (probe.exitCode != 0) {
-          // Distinguish "no auth" from "no ruleset". Pointing this test at a
-          // nonexistent ruleset id printed `+52 ~1: All tests passed!` — so
-          // DELETING the ruleset, the single most likely way to undo #187,
-          // was invisible to the guard built to detect it (#202).
-          final err = probe.stderr.toString();
-          if (err.contains('Not Found') || err.contains('404')) {
-            fail(
-              'ruleset: ruleset 23682733 does not exist. The `main` branch '
-              'has no protection, so nothing requires `gate` or `mutations` '
-              'before a merge',
-            );
-          }
-          markTestSkipped('gh unavailable or unauthenticated');
-          return;
-        }
-        final got = probe.stdout.toString().trim();
-        expect(
-          got,
-          contains('active'),
-          reason: 'ruleset: the main branch ruleset is not active',
+      } on ProcessException {
+        // `Process.runSync` THROWS when the binary is absent; it does not
+        // return a non-zero code. The old skip branch could therefore only
+        // ever mean "unauthenticated", and a developer without the tool got
+        // the red suite its comment promised they would not (#202).
+        markTestSkipped('curl is not installed');
+        return;
+      }
+
+      final lines = probe.stdout.toString().trim().split('\n');
+      final status = lines.isEmpty ? '' : lines.last.trim();
+      final payload = lines.take(lines.length - 1).join('\n');
+
+      if (probe.exitCode != 0) {
+        markTestSkipped('no network: ${probe.stderr}');
+        return;
+      }
+      if (status == '404') {
+        // Pointing this test at a nonexistent id printed `All tests
+        // passed!`, so DELETING the ruleset — the single most likely way to
+        // undo #187 — was invisible to the guard built to detect it (#202).
+        fail(
+          'ruleset: the ruleset at $rulesetUrl does not exist. The `main` '
+          'branch has no protection, so nothing requires `gate` or '
+          '`mutations` before a merge',
         );
-        for (final check in const ['gate', 'mutations']) {
-          expect(
-            got,
-            contains('$check:15368'),
-            reason:
-                'ruleset: `$check` is not a required status check pinned to '
-                'GitHub Actions. The context is the CHECK-RUN NAME, not the '
-                "PR UI's rendering (`CI / $check`) — #137 learned that twice",
-          );
-        }
-      },
-    );
+      }
+      expect(
+        status,
+        '200',
+        reason: 'ruleset: unexpected HTTP $status reading the ruleset',
+      );
+
+      final doc = jsonDecode(payload) as Map<String, dynamic>;
+
+      // WHOLE TOKENS, not substrings. `contains('active')` is satisfied by
+      // the substring inside `inactive`, so a ruleset switched to
+      // `enforcement: disabled` passed; and `contains('gate:15368')` is
+      // satisfied by `CI / gate:15368`, which is the PR UI's rendering and
+      // exactly the #137 failure this test's own message warns about. Both
+      // were green at round eight (#202).
+      expect(
+        doc['enforcement'],
+        'active',
+        reason:
+            'ruleset: the main branch ruleset is `${doc['enforcement']}`, '
+            'not active — nothing it says is enforced',
+      );
+
+      final refs =
+          ((doc['conditions'] as Map<String, dynamic>?)?['ref_name']
+                  as Map<String, dynamic>?)?['include']
+              as List? ??
+          const <String>[];
+      expect(
+        refs.cast<String>(),
+        contains('~DEFAULT_BRANCH'),
+        reason:
+            'ruleset: the ruleset does not apply to the default branch, so '
+            'it can be active and still not guard `main`',
+      );
+
+      final required = <String>[
+        for (final rule in (doc['rules'] as List? ?? const []))
+          if ((rule as Map)['type'] == 'required_status_checks')
+            for (final check
+                in ((rule['parameters'] as Map)['required_status_checks']
+                    as List))
+              '${(check as Map)['context']}:${check['integration_id']}',
+      ];
+      for (final check in const ['gate', 'mutations']) {
+        expect(
+          required,
+          contains('$check:15368'),
+          reason:
+              'ruleset: `$check` is not a required status check pinned to '
+              'GitHub Actions. Required now: $required. The context is the '
+              "CHECK-RUN NAME, not the PR UI's rendering (`CI / $check`) — "
+              '#137 learned that twice',
+        );
+      }
+
+      // `bypass_actors` is the one field anonymous reads redact, so it is
+      // asserted only where a token is present rather than silently not at
+      // all. `null` means redacted; `[]` means genuinely empty.
+      final bypass = doc['bypass_actors'];
+      if (bypass != null) {
+        expect(
+          bypass,
+          isEmpty,
+          reason:
+              'ruleset: $bypass can push to `main` without the checks. A '
+              'bypass actor is the gate not applying to whoever matters '
+              'most',
+        );
+      }
+    });
 
     test('every declared key link is actually wired', () {
       // The scripts with the most thorough tests here are worth nothing if

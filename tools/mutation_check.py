@@ -188,6 +188,28 @@ MUTATIONS: list[Mutation] = [
              sub(r'(chmod 600 "\$KEYSTORE"\n)', r'\1echo "pw: $HS_KEYSTORE_PASS"\n'),
              "the only script holding the plaintext password was outside the leak group",
              'reached stdout'),
+    # ---- #202: the ruleset, compared as whole tokens ---------------------
+    # All three were GREEN at round eight: `contains('active')` is satisfied
+    # by `inactive`, and `contains('gate:15368')` by `CI / gate:15368` --
+    # the PR UI rendering the guard's own message warns about.
+    Mutation("#202", "a disabled ruleset is accepted", "test/guards/workflow_guard_test.dart",
+             sub(r"(final doc = jsonDecode\(payload\) as Map<String, dynamic>;\n)",
+                 r"\1      doc['enforcement'] = 'disabled';\n", 1),
+             "the merge gate can be switched off and the guard says nothing",
+             'ruleset'),
+    Mutation("#202", "the PR-UI rendering is accepted as the context",
+             "test/guards/workflow_guard_test.dart",
+             sub(r"'\$\{\(check as Map\)\['context'\]\}:\$\{check\['integration_id'\]\}',",
+                 "'CI / ${(check as Map)['context']}:${check['integration_id']}',", 1),
+             "#137's exact failure: the rendered name is not the check-run name",
+             'ruleset'),
+    Mutation("#202", "the ruleset stops targeting the default branch",
+             "test/guards/workflow_guard_test.dart",
+             sub(r"(final doc = jsonDecode\(payload\) as Map<String, dynamic>;\n)",
+                 r"\1      (doc['conditions']['ref_name'] as Map)['include'] = "
+                 r"['refs/heads/nothing'];\n", 1),
+             "a ruleset can be active and still not guard main",
+             'ruleset'),
     # ---- #203/#207: the call site, and the ordering ----------------------
     # The defect as it would really arrive: the second entry point is ADDED,
     # and then the rules are repointed at it. Both halves, or the mutation is
