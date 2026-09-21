@@ -245,6 +245,23 @@ void _assertPromoteShape(Workflow wf) {
           '${refuse.continueOnError}) — it would be skipped or ignored',
     );
 
+    // The `summary` step's env, the way `refuse`'s is. The extracted-body
+    // test injects its own env, so it is structurally blind to the wiring
+    // that feeds it: hardcoding `PROMOTE_OUTCOME: success` made a failed run
+    // report "the promote step ended as `success`" — a false claim in the
+    // honesty line itself — with the suite green (#184, #209).
+    final summary = job.stepById('summary');
+    if (summary != null) {
+      expect(
+        summary.env['PROMOTE_OUTCOME'],
+        '\${{ steps.promote.outcome }}',
+        reason:
+            'refusal: the summary step\'s PROMOTE_OUTCOME is '
+            '`${summary.env['PROMOTE_OUTCOME']}`, not the promote step\'s '
+            'outcome. It would report an outcome that did not happen',
+      );
+    }
+
     // Every step that ACTS must be unconditional. Only the first step was
     // checked, so `if: always()` on `promote` was green and the "a failed
     // refusal stops the run" guarantee was gone (#171). The reporting and
@@ -276,6 +293,33 @@ void _assertPromoteShape(Workflow wf) {
 }
 
 void main() {
+  test('a track is refused with no token at all', () {
+    // #21 AC4's whole rationale is that argument checks run BEFORE the
+    // token check, so the refusals can be proven without a token. Moving
+    // the PLAY_TOKEN check above them left the suite green: every refusal
+    // test supplied a fake token, and the no-token test supplied valid
+    // arguments, so nothing distinguished the orders (#207).
+    //
+    // This is the one case that does: no token, bad track.
+    final r = _run([_package, 'internal', 'production']);
+    expect(
+      r.code,
+      2,
+      reason:
+          'order: production must be refused before PLAY_TOKEN is even '
+          'looked at. Got ${r.code}: ${r.err}',
+    );
+    expect(
+      r.err,
+      contains('human act in the Play Console'),
+      reason:
+          'order: the refusal must be the production one, not a complaint '
+          'about a missing token — that is what "arguments first" means',
+    );
+    expect(r.err, isNot(contains('PLAY_TOKEN')));
+    expect(r.out.trim(), isEmpty);
+  });
+
   test('the script exists and is executable', () {
     expect(pathExists(_script), isTrue);
     final mode = File('${repoRoot.path}/$_script').statSync().mode;

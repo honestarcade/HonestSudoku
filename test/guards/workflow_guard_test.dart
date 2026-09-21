@@ -576,6 +576,13 @@ void _assertReleaseShape(Workflow wf) {
     'tools/check_aab.sh',
     'release-shape: `scan` must run the permission scan',
   );
+  expect(
+    ship.stepById('sidecar')!.run,
+    contains(r'sha256sum "$aab" > "$aab.sha256"'),
+    reason:
+        'release-shape: the sidecar must compute the checksum. Emptying it '
+        r'(`: > "$aab.sha256"`) was green, and #198 listed pinning it (#209)',
+  );
   _expectRunsExactly(
     ship.stepById('cert'),
     'tools/verify_upload_cert.sh',
@@ -1770,6 +1777,18 @@ void main() {
           stderrEncoding: utf8,
         );
         if (probe.exitCode != 0) {
+          // Distinguish "no auth" from "no ruleset". Pointing this test at a
+          // nonexistent ruleset id printed `+52 ~1: All tests passed!` — so
+          // DELETING the ruleset, the single most likely way to undo #187,
+          // was invisible to the guard built to detect it (#202).
+          final err = probe.stderr.toString();
+          if (err.contains('Not Found') || err.contains('404')) {
+            fail(
+              'ruleset: ruleset 23682733 does not exist. The `main` branch '
+              'has no protection, so nothing requires `gate` or `mutations` '
+              'before a merge',
+            );
+          }
           markTestSkipped('gh unavailable or unauthenticated');
           return;
         }
@@ -1791,6 +1810,259 @@ void main() {
         }
       },
     );
+
+    test('every declared key link is actually wired', () {
+      // The scripts with the most thorough tests here are worth nothing if
+      // no workflow invokes them — and nothing checked that. `release.yml`
+      // could stop calling `ci_version.sh`, and `play-promote.yml` stop
+      // calling `play_promote.sh`, with the suite green (#206). Both are
+      // declared `key_links` in their stories' Must-haves.
+      //
+      // Equality, not `contains`: `contains` survives `|| true` and a
+      // renamed flag.
+      const links = <String, (String, String)>{
+        'release.yml → ci_version.sh': (
+          '.github/workflows/release.yml',
+          'tools/ci_version.sh',
+        ),
+        'release.yml → check_aab.sh': (
+          '.github/workflows/release.yml',
+          'tools/check_aab.sh',
+        ),
+        'release.yml → verify_upload_cert.sh': (
+          '.github/workflows/release.yml',
+          'tools/verify_upload_cert.sh',
+        ),
+        'play-promote.yml → play_promote.sh': (
+          '.github/workflows/play-promote.yml',
+          'tools/play_promote.sh',
+        ),
+        'ci.yml → gate.sh': ('.github/workflows/ci.yml', 'tools/gate.sh'),
+        'ci.yml → mutation_check.py': (
+          '.github/workflows/ci.yml',
+          'tools/mutation_check.py',
+        ),
+      };
+      links.forEach((name, link) {
+        final (workflow, script) = link;
+        expect(
+          pathExists(script),
+          isTrue,
+          reason: 'key-link: $script does not exist',
+        );
+        final wf = Workflow.parse(workflow, readFile(workflow));
+        expect(wf.problem, isNull, reason: '$workflow: ${wf.problem}');
+        final calls = [
+          for (final job in wf.jobs)
+            for (final step in job.steps)
+              if ((step.run ?? '').contains(script)) '${job.name}.${step.id}',
+        ];
+        expect(
+          calls,
+          isNotEmpty,
+          reason:
+              'key-link: $name is declared in the story\'s Must-haves and '
+              'no step in $workflow runs $script. Every refusal that script '
+              'makes is dead code if nothing calls it',
+        );
+      });
+    });
+
+    test('every workflow pins its step set', () {
+      // `ship`'s 18 ids were pinned for #182; `play-promote.yml` was not, so
+      // a NEW step there could publish #130's literal string on every
+      // failure path with the suite green (#209). Derived from the files
+      // rather than named per-file, because naming them per-file is exactly
+      // how two of four came to be unpinned.
+      const expected = <String, Map<String, List<String>>>{
+        '.github/workflows/play-promote.yml': {
+          'promote': [
+            'refuse',
+            'checkout',
+            'token',
+            'promote',
+            'summary',
+            'forget',
+          ],
+        },
+        '.github/workflows/play-api-check.yml': {
+          'check': ['checkout', 'java', 'play', 'keystore', 'forget'],
+        },
+      };
+      expected.forEach((path, jobs) {
+        final wf = Workflow.parse(path, readFile(path));
+        expect(wf.problem, isNull, reason: '$path: ${wf.problem}');
+        expect(
+          wf.jobs.map((j) => j.name).toList(),
+          jobs.keys.toList(),
+          reason: 'step-set: $path has jobs other than ${jobs.keys}',
+        );
+        jobs.forEach((job, ids) {
+          expect(
+            wf.job(job)!.steps.map((s) => s.id).toList(),
+            ids,
+            reason:
+                'step-set: exactly these steps in this order in '
+                '$path job `$job` — an inserted step runs with whatever '
+                'that job holds, and in `promote` that is a live Play token',
+          );
+        });
+      });
+    });
+
+    test('a step fails when the command it runs fails', () {
+      // #205's principle, applied. `_swallowsFailure` was a per-line regex
+      // asked to answer a shell-semantics question, and it lost to a `#`
+      // inside a quoted string, a trailing `&`, `|| echo`, `$( || true )`,
+      // `set +o errexit`, and any command outside an eight-item allow-list
+      // (#197, #204). Every one of those is ORDINARY SHELL, and bash decides
+      // shell questions correctly by construction.
+      //
+      // So the question is asked of bash: stub the command the step depends
+      // on so it exits 1, run the step's real `run:` body, and require the
+      // step to exit non-zero. No command list, no swallow-form list, no
+      // per-step enumeration — the loop is over what the file contains.
+      final wf = Workflow.parse(
+        '.github/workflows/release.yml',
+        readFile('.github/workflows/release.yml'),
+      );
+      expect(wf.problem, isNull);
+
+      // The command each step's success depends on. A step whose failure
+      // does not matter is named here with an empty list, so adding a step
+      // is a deliberate decision rather than a silent omission.
+      const dependsOn = <String, List<String>>{
+        'secrets_present': [],
+        'version': ['tools/ci_version.sh'],
+        'deps': ['flutter'],
+        'keystore': ['base64'],
+        'keystore_check': ['keytool'],
+        'build': ['flutter'],
+        'scan': ['tools/check_aab.sh'],
+        'cert': ['tools/verify_upload_cert.sh'],
+        'sidecar': ['sha256sum'],
+        'asset': ['gh'],
+        'summary': [],
+        'name_failure': [],
+        'shred': [],
+      };
+
+      final ship = wf.job('ship')!;
+      expect(
+        ship.steps.where((s) => s.run != null).map((s) => s.id).toSet(),
+        dependsOn.keys.toSet(),
+        reason:
+            'propagation: a step with a `run:` body is not listed in '
+            'dependsOn. Say which command it depends on, or say none',
+      );
+
+      final dir = Directory.systemTemp.createTempSync('hs-propagate');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final bin = Directory('${dir.path}/bin')..createSync(recursive: true);
+
+      for (final step in ship.steps) {
+        final body = step.run;
+        if (body == null) continue;
+        final commands = dependsOn[step.id] ?? const [];
+        for (final command in commands) {
+          // A stub that fails, for the command this step turns on.
+          final name = command.split('/').last;
+          File('${bin.path}/$name')
+            ..writeAsStringSync(
+              '#!/bin/sh\necho "$name: simulated failure" >&2\nexit 1\n',
+            )
+            ..createSync(recursive: false);
+          Process.runSync('chmod', ['+x', '${bin.path}/$name']);
+          // A project script is invoked by path, so shadow it there too.
+          final asPath = File('${dir.path}/$command');
+          if (command.contains('/')) {
+            asPath.parent.createSync(recursive: true);
+            asPath
+              ..writeAsStringSync(
+                '#!/bin/sh\necho "$command: simulated failure" >&2\nexit 1\n',
+              )
+              ..createSync(recursive: false);
+            Process.runSync('chmod', ['+x', asPath.path]);
+          }
+
+          final script = File('${dir.path}/step.sh')..writeAsStringSync(body);
+          final runnerTemp = Directory('${dir.path}/runner')
+            ..createSync(recursive: true);
+          File('${runnerTemp.path}/upload.keystore').writeAsStringSync('x');
+          final r = Process.runSync(
+            '/bin/bash',
+            [script.path],
+            workingDirectory: dir.path,
+            includeParentEnvironment: false,
+            environment: {
+              'PATH': '${bin.path}:/usr/bin:/bin',
+              'RUNNER_TEMP': runnerTemp.path,
+              'GITHUB_OUTPUT': '${dir.path}/out',
+              'GITHUB_STEP_SUMMARY': '${dir.path}/summary',
+              'GITHUB_REF_NAME': 'v1.2.3',
+              'GITHUB_RUN_NUMBER': '7',
+              'GITHUB_RUN_ATTEMPT': '1',
+              'HS_KEYSTORE_B64': 'eA==',
+              'HS_KEYSTORE_PASS': 'PROPAGATE-PASS-1',
+              'HS_KEY_ALIAS': 'upload',
+              'HS_KEY_PASS': 'PROPAGATE-PASS-1',
+            },
+            stdoutEncoding: utf8,
+            stderrEncoding: utf8,
+          );
+          expect(
+            r.exitCode,
+            isNot(0),
+            reason:
+                'propagation: step `${step.id}` reported SUCCESS while '
+                '`$command` exited 1. Its failure does not reach the step, '
+                'so the step guarantees nothing. stdout: ${r.stdout}',
+          );
+        }
+      }
+    });
+
+    test('the rules parse through Workflow.parse and nothing else', () {
+      // #203: `parse` and `parseWithLoader` were collapsed into one body so
+      // there would be "no second body to rewrite". A NEW one can still be
+      // added and the rules repointed at it — I did exactly that and the
+      // suite stayed green with `dart analyze` clean.
+      //
+      // The chain: #177 the handler was missing; #191 no test reached it;
+      // #194 the test reached it through a bypassable seam; #203 the call
+      // sites route around it. The link that has never been asserted is
+      // WHICH FUNCTION THE RULES CALL, so that is what this asserts.
+      final rules = readFile('test/guards/workflow_rules.dart');
+      expect(
+        rules,
+        isNot(contains('loadYaml')),
+        reason:
+            'parse-path: workflow_rules.dart loads YAML itself, bypassing '
+            'the error handling in Workflow.parse',
+      );
+      final entryPoints = RegExp(r'Workflow\.(\w+)\(')
+          .allMatches(rules)
+          .map((m) => m.group(1))
+          .toSet();
+      expect(
+        entryPoints,
+        {'parse'},
+        reason:
+            'parse-path: the rules reach Workflow through $entryPoints. '
+            'Only `parse` carries the StackOverflowError handling, so any '
+            'other entry point is #177 back on the production path',
+      );
+      // And nothing may pass a loader: the default is the real one.
+      // Anchored: a bare `load:` also matches the word `payload:` in a
+      // comment, which is how this test first failed on its own prose.
+      expect(
+        RegExp(r'[\s(,]load:\s').hasMatch(rules),
+        isFalse,
+        reason:
+            'parse-path: a rule passes its own loader, so the handler it '
+            'relies on is whatever that loader does',
+      );
+    });
 
     test('dependabot watches both ecosystems', () {
       final offenders = dependabotOffenders(

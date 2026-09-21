@@ -324,3 +324,16 @@ echo "GATE PASSED $BUNDLE"
 #
 # (#196)
 echo "note: tools/mutation_check.py is not part of this gate — run it before changing a guard"
+# The ruleset check needs an admin-scoped gh token, which CI does not have and
+# should not be given to read one setting. It runs here when you are
+# authenticated and skips otherwise, so a green CI says nothing about it (#202).
+echo "note: the ruleset binding is checked only where \`gh\` has admin scope — CI skips it"
+# The gate reads the WORKING TREE. A defect that is committed and corrected
+# only in the tree therefore passes here and fails in CI, which reads the
+# commit — that is not hypothetical: an interrupted mutation run put an
+# owner-role grant into a commit, and the tree's later correction hid it.
+# CI is the backstop; this line is so the difference is not a surprise.
+if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+  echo "note: the working tree is dirty, so this verdict is about the tree, not HEAD:"
+  git status --porcelain | sed 's/^/  /'
+fi
