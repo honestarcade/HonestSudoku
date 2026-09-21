@@ -641,7 +641,10 @@ exit 0
     // battery (#160).
     late String gcloudLog;
 
-    void stubGcloud({bool keysCreateFails = false}) {
+    void stubGcloud({
+      bool keysCreateFails = false,
+      bool serviceAccountExists = true,
+    }) {
       gcloudLog = '${_tmp.path}/gcloud.log';
       File(gcloudLog).writeAsStringSync('');
       _writeExecutable('${_tmp.path}/bin/gcloud', '''#!/bin/sh
@@ -652,7 +655,7 @@ case "\$1 \$2" in
   "services list") echo "androidpublisher.googleapis.com"; exit 0 ;;
 esac
 case "\$1 \$2 \$3" in
-  "iam service-accounts describe") exit 0 ;;
+  "iam service-accounts describe") ${serviceAccountExists ? 'exit 0' : 'exit 1'} ;;
   "iam service-accounts keys")
      if [ "\$4" = "list" ]; then exit 0; fi
      if [ "\$4" = "create" ]; then
@@ -714,12 +717,24 @@ exit 1
       // Play access is granted in the Console, not in Cloud IAM. A role here
       // would be authority nobody needs, and `--role roles/owner` passed the
       // whole suite (#160).
-      stubGcloud();
+      // The stub must report the account as ABSENT. With `describe`
+      // exiting 0 the script skips the whole create block — the one
+      // `--role roles/owner` is inserted into — so the assertions below
+      // passed over a command that never ran, and both sanity checks were
+      // satisfied by `describe` and `keys create` (#176).
+      stubGcloud(serviceAccountExists: false);
       _run(
         'tools/setup_play_ci.sh',
         env: {'HS_PLAY_ACCOUNT': 'owner@example.com'},
       );
       final calls = File(gcloudLog).readAsStringSync();
+      expect(
+        calls,
+        contains('iam service-accounts create'),
+        reason:
+            'sanity: the service account was never created, so no --role '
+            'could appear whatever the script says',
+      );
       expect(
         calls,
         isNot(contains('add-iam-policy-binding')),
