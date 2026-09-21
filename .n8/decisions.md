@@ -640,3 +640,10 @@ CI and the tag-to-Play pipeline, on `milestone/m1-ci`. Three stories implemented
 
 - **Correction:** `#148`'s ad-hoc entry claimed the per-tester reading was withdrawn from "the two ledger lines above". One was edited and one was not, and the edited one kept the presupposition rather than the attribution. Both now carry the qualification, and `.n8/memory/play-console.md` no longer attributes the word "continuous" to #19, which does not use it, nor claims the API check "proves all five work" when `HS_KEY_PASS` is proved by nothing.
   **Issue:** #164
+
+## Ad-hoc — 2026-09-20 (project goal: this repo becomes a reusable basis)
+
+- **Change:** The owner set a three-phase sequence that outlives M1: *"Let's finish M1, then deploy the scaffold to ensure it works, then create something reusable from it."* Earlier in the same session: *"I want to get to a clean state of infra and CI to use this as a basis for future apps, so I really want to finish M1 through all bug fixes until we're really happy with it."*
+  **Why:** It reframes what the guards and tooling are *for*. They are not overhead on a Sudoku app — they are the deliverable, and Honest Sudoku is their first consumer. That is why four rounds of verification finding ~50 defects, all in guards and tooling, is progress rather than churn, and why the mutation battery became a first-class gate step instead of a once-a-round manual review.
+  **What follows from it:** (1) M1 closes only when every filed bug is fixed, not when the AC are ticked. (2) The scaffold ships to the internal track *before* there is a game, because proving the release path is the point of the deploy, not distributing Sudoku. (3) A later extraction — template repo or equivalent — is real scope that no milestone currently holds.
+  **Milestones/issues likely affected:** no planned issue changes meaning, but the roadmap has no milestone for the extraction in phase 3. That is a planning gap to close once M1 is verified, not now.
