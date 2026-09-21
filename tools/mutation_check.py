@@ -235,6 +235,23 @@ MUTATIONS: list[Mutation] = [
              sub(r"tools/play_promote\.sh", "tools/play_promote.sh.disabled", 1),
              "the workflow called a missing file while the guard reported the link wired",
              'vacuity'),
+    # ---- #203: the parse path, decided by running the rules --------------
+    # The mutation the TEXT assertion cannot see. Repointing five of six call
+    # sites satisfies its set equality, because one surviving `Workflow.parse(`
+    # is all it looks for. Round eight proved that green. The execution test
+    # catches it, which is the whole of #205 in one entry.
+    Mutation("#203", "five of six rules reach an unguarded second parse path",
+             "test/guards/workflow_rules.dart",
+             sub(r"Workflow\.parse\(", "WorkflowFast.of(", 5),
+             "the error handling is unreachable from five of the six rules",
+             'parse-path',
+             also=(("test/guards/workflow_yaml.dart",
+                    append("extension WorkflowFast on Workflow {\n"
+                           "  static Workflow of(String path, String text) {\n"
+                           "    final doc = loadYaml(text);\n"
+                           "    return Workflow.parse(path, text, load: (_) => doc);\n"
+                           "  }\n"
+                           "}\n")),)),
     # ---- #202: the ruleset, compared as whole tokens ---------------------
     # All three were GREEN at round eight: `contains('active')` is satisfied
     # by `inactive`, and `contains('gate:15368')` by `CI / gate:15368` --

@@ -2586,6 +2586,75 @@ void main() {
       }
     });
 
+    test('every rule reports a document it cannot read, and never throws', () {
+      // #203, answered by running the rules instead of reading them.
+      //
+      // The chain is five long: #177 the error handling was missing; #191 no
+      // test reached it; #194 the test reached it through a bypassable seam;
+      // #203 the call sites could route around it; and at round eight the
+      // text assertion written for #203 was itself defeated three ways —
+      // repoint five of six call sites and leave one `Workflow.parse(` and
+      // the set equality is satisfied; put the required spelling in a
+      // COMMENT and no real call site is needed at all; or reach a second
+      // parse path through an extension, a helper in a third file, or a
+      // tear-off, none of which spell `Workflow.`.
+      //
+      // Every one of those defeats a rule ABOUT the source, and none of them
+      // survives running the rules: the property is a runtime one. Whatever
+      // a rule calls internally, a document it cannot read must come back as
+      // an offender rather than as an exception that takes the suite with it.
+      //
+      // Honest limit, because this is the fifth attempt at this property and
+      // an overstated claim is what made the previous four look finished:
+      // this covers the errors a loader RETURNS on bad input. It does not
+      // reproduce a stack overflow — the depth needed to overflow the
+      // recursive loader also destabilises whatever test file runs beside it
+      // (#177, #191), so `Workflow.parse` keeps its own injected-loader test
+      // for that one. What changed is that the OTHER paths are no longer
+      // unguarded.
+      const rules = <String, List<WorkflowOffender> Function(String, String)>{
+        'unpinnedUses': unpinnedUses,
+        'permissionOffenders': permissionOffenders,
+        'concurrencyOffenders': concurrencyOffenders,
+        'secretsInRunOffenders': secretsInRunOffenders,
+        'untrustedInRunOffenders': untrustedInRunOffenders,
+        'shellTraceOffenders': shellTraceOffenders,
+      };
+
+      const unreadable = <String, String>{
+        'unclosed flow sequence': 'jobs: [a, b',
+        'a tab where YAML forbids one': 'jobs:\n\tbuild: {}',
+        'duplicate mapping key': 'on: push\non: pull_request\n',
+        'not a mapping at all': '- just\n- a\n- list\n',
+        'a bare scalar': 'nonsense',
+        'an alias to nothing': 'jobs: *missing\n',
+      };
+
+      for (final rule in rules.entries) {
+        unreadable.forEach((what, text) {
+          late final List<WorkflowOffender> offenders;
+          expect(
+            () => offenders = rule.value('.github/workflows/bad.yml', text),
+            returnsNormally,
+            reason:
+                'parse-path: rule `${rule.key}` THREW on $what instead of '
+                'reporting it. A workflow nobody can parse is a workflow '
+                'nobody is checking, and the exception takes the whole suite '
+                'with it — #177, reachable again through whatever parse path '
+                'this rule uses',
+          );
+          expect(
+            offenders,
+            isNotEmpty,
+            reason:
+                'parse-path: rule `${rule.key}` returned NO offender for $what. '
+                'Silence and "this file is fine" are the same answer to the '
+                'caller, which is how an unparseable workflow passes a gate',
+          );
+        });
+      }
+    });
+
     test('the rules parse through Workflow.parse and nothing else', () {
       // #203: `parse` and `parseWithLoader` were collapsed into one body so
       // there would be "no second body to rewrite". A NEW one can still be
