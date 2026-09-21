@@ -141,7 +141,7 @@ MUTATIONS: list[Mutation] = [
     Mutation("#170", "pull_request_target added", ".github/workflows/ci.yml",
              sub(r"^  pull_request:$", "  pull_request:\n  pull_request_target:", flags=re.M),
              "fork code runs with the base repo's secrets and a write token",
-             'ci-shape: triggers'),
+             'ci-shape: exactly these triggers'),
     Mutation("#170", "the release trigger becomes a branch", ".github/workflows/release.yml",
              sub(r"    tags:\n      - 'v\*'\n", "    branches:\n      - main\n"),
              "every merge to main would ship to Play",
