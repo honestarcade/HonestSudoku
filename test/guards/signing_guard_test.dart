@@ -346,38 +346,146 @@ void _signingModeTests() {
   });
 
   test('the gate cross-checks its prediction against what Gradle did', () {
-    // The part that cannot drift. `signing_mode` is a prediction; the build is
-    // the fact. They have disagreed twice (#91, #106), each time with the gate
-    // announcing the upload key over a debug-signed bundle. A disagreement is
-    // now a gate failure, which is what makes the residual multi-byte gap in
-    // `hs_is_blank` harmless rather than merely unlikely.
-    final gate = readFile('tools/gate.sh');
-    expect(
-      gate,
-      contains('signed with the UPLOAD key'),
-      reason:
-          'cross-check: the gate no longer reads back which key Gradle used',
-    );
-    expect(gate, contains('signed with the DEBUG key'));
-    expect(
-      gate,
-      contains(r'GATE FAILED at $label: the header said'),
-      reason:
-          'cross-check: a disagreement between the header and the build must '
-          'fail the gate, not be printed and ignored',
-    );
+    // BEHAVIOURAL. The previous version of this test grepped gate.sh and
+    // build.gradle.kts for string literals, so it would have passed over a
+    // cross-check replaced by `true` — the load-bearing half of #106's fix
+    // was asserted by source inspection only (#120).
+    //
+    // This runs the real cross-check block against a verdict file the test
+    // writes, which is exactly what Gradle writes at build time, and reads
+    // the gate's conclusion.
+    final dir = Directory.systemTemp.createTempSync('hs-crosscheck');
+    addTearDown(() => dir.deleteSync(recursive: true));
 
-    // And the build file must say which key it used in BOTH branches, or the
-    // cross-check has nothing to read.
+    final gate = readFile('tools/gate.sh');
+    // The block under test, lifted from the real file so it cannot drift
+    // from it: everything between the verdict read and the agreement line.
+    final start = gate.indexOf(r'if [ ! -s "$VERDICT_FILE" ]; then');
+    final end = gate.indexOf('signing: Gradle used the \$actual key');
+    expect(
+      start,
+      greaterThan(0),
+      reason:
+          'cross-check: the verdict-file read is gone from gate.sh — the '
+          'gate is back to grepping the build log, which anything can write',
+    );
+    expect(end, greaterThan(start));
+    final block = gate.substring(start, gate.indexOf('\n', end) + 1);
+
+    ({int code, String out, String err}) runCheck({
+      required String verdict,
+      required String prediction,
+    }) {
+      final verdictFile = File('${dir.path}/verdict')
+        ..writeAsStringSync(verdict);
+      final script = File('${dir.path}/check.sh')
+        ..writeAsStringSync(
+          '#!/bin/bash\n'
+          'set -uo pipefail\n'
+          'VERDICT_FILE="${verdictFile.path}"\n'
+          'label="build release bundle"\n'
+          'SIGNING_MODE="a header"\n'
+          'signing_prediction() { echo "$prediction"; }\n'
+          '$block',
+        );
+      final r = Process.runSync(
+        '/bin/bash',
+        [script.path],
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8,
+      );
+      return (
+        code: r.exitCode,
+        out: r.stdout.toString(),
+        err: r.stderr.toString(),
+      );
+    }
+
+    // Agreement passes, both ways round.
+    for (final v in const ['upload', 'debug']) {
+      final r = runCheck(verdict: v, prediction: v);
+      expect(r.code, 0, reason: 'cross-check: $v/$v failed: ${r.err}');
+      expect(r.out, contains('prediction agreed'));
+    }
+
+    // Disagreement fails, both ways round. The second is the one that
+    // matters: a debug-signed bundle announced as the upload key.
+    for (final pair in const [
+      (verdict: 'debug', prediction: 'upload'),
+      (verdict: 'upload', prediction: 'debug'),
+    ]) {
+      final r = runCheck(verdict: pair.verdict, prediction: pair.prediction);
+      expect(
+        r.code,
+        isNot(0),
+        reason:
+            'cross-check: predicted ${pair.prediction}, built '
+            '${pair.verdict}, and the gate passed',
+      );
+      expect(r.err, contains('GATE FAILED'));
+    }
+
+    // A predicted refusal followed by a successful build is a failure.
+    // This is #120's case 1, and it used to print "header agreed": three
+    // distinct headers collapsed into `predicted=debug`, two of which
+    // predict FAILURE, so a successful debug-signed build matched them.
+    for (final v in const ['upload', 'debug']) {
+      final r = runCheck(verdict: v, prediction: 'refusal');
+      expect(
+        r.code,
+        isNot(0),
+        reason:
+            'cross-check: the header predicted a refusal, the build '
+            'produced a $v-signed bundle, and the gate passed',
+      );
+      expect(r.err, contains('succeeded anyway'));
+    }
+
+    // No verdict at all is a failure, not a pass. Otherwise deleting the
+    // write from build.gradle.kts disables the whole check silently.
+    final empty = runCheck(verdict: '', prediction: 'debug');
+    expect(empty.code, isNot(0));
+    expect(empty.err, contains('no signing verdict'));
+
+    // And a verdict that is neither token.
+    final junk = runCheck(verdict: 'maybe', prediction: 'debug');
+    expect(junk.code, isNot(0));
+    expect(junk.err, contains("says 'maybe'"));
+  });
+
+  test('the build writes the verdict to a file, in both branches', () {
+    // The gate reads a file rather than the log because the log is not
+    // ours: JAVA_TOOL_OPTIONS='-Dhs="signed with the UPLOAD key"' made the
+    // JVM print a line the old unanchored grep matched, reporting a
+    // debug-signed bundle as upload-signed with GATE PASSED and exit 0
+    // (#120).
     final gradle = readFile(_gradle);
     expect(
       gradle,
-      contains('signed with the UPLOAD key'),
+      contains('HS_SIGNING_VERDICT'),
       reason:
-          'cross-check: build.gradle.kts announces the debug fallback but not '
-          'the upload key, so the gate cannot tell the two apart',
+          'cross-check: build.gradle.kts no longer writes a verdict file, '
+          'so the gate has nothing to read',
     );
-    expect(gradle, contains('signed with the DEBUG key'));
+    expect(
+      RegExp(r'hsWriteVerdict\("upload"\)').hasMatch(gradle),
+      isTrue,
+      reason: 'cross-check: the upload branch writes no verdict',
+    );
+    expect(
+      RegExp(r'hsWriteVerdict\("debug"\)').hasMatch(gradle),
+      isTrue,
+      reason: 'cross-check: the debug branch writes no verdict',
+    );
+    // The gate must not be reading the log for this any more.
+    final gate = readFile('tools/gate.sh');
+    expect(
+      gate,
+      isNot(contains(r'grep -q "signed with the UPLOAD key" "$BUILD_LOG"')),
+      reason:
+          'cross-check: the gate is grepping the build log again, which any '
+          'JVM option can write into',
+    );
   });
 
   test('the gate dispatches through a function, not eval', () {

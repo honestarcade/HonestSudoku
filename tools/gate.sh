@@ -73,6 +73,36 @@ hs_is_blank() {
   [ -z "$(printf '%s' "${1:-}" | tr -d '\011\012\013\014\015\034\035\036\037\040')" ]
 }
 
+# The machine-readable half of signing_mode: `upload`, `debug`, or `refusal`.
+#
+# The comparison used to collapse every message not containing "upload key"
+# into `debug`, so three distinct headers — debug fallback, partial, and
+# "HS_KEYSTORE_PATH is not readable" — all predicted `debug`. Two of those
+# three predict FAILURE, and a successful debug-signed build matched them: the
+# gate printed "the build will fail", the build succeeded, and the cross-check
+# reported agreement (#120).
+signing_prediction() {
+  local set_count=0
+  local name
+  for name in "${SIGNING_VARS[@]}"; do
+    if ! hs_is_blank "${!name:-}"; then set_count=$((set_count + 1)); fi
+  done
+
+  if [ "$set_count" -eq "${#SIGNING_VARS[@]}" ]; then
+    if [ ! -r "${HS_KEYSTORE_PATH}" ]; then
+      echo "refusal"
+    else
+      echo "upload"
+    fi
+  elif [ "$set_count" -gt 0 ]; then
+    echo "refusal"
+  elif [ "${HS_RELEASE:-}" = "1" ]; then
+    echo "refusal"
+  else
+    echo "debug"
+  fi
+}
+
 signing_mode() {
   local set_count=0
   local missing=""
@@ -146,7 +176,13 @@ rm -f "$BUNDLE"
 # on its first run, which is the kind of thing only a machine that is not the
 # author's can tell you.
 BUILD_LOG="$(mktemp "${TMPDIR:-/tmp}/hs-gate-build.XXXXXX")"
-trap 'rm -f "$BUILD_LOG"' EXIT
+# Named by the gate, written only by build.gradle.kts, read back below. This
+# is what replaced grepping the build log for a phrase anything could print
+# (#120).
+VERDICT_FILE="$(mktemp "${TMPDIR:-/tmp}/hs-gate-verdict.XXXXXX")"
+: > "$VERDICT_FILE"
+export HS_SIGNING_VERDICT="$VERDICT_FILE"
+trap 'rm -f "$BUILD_LOG" "$VERDICT_FILE"' EXIT
 SIGNING_MODE=""
 
 # Runs one step as an array of words.
@@ -213,27 +249,50 @@ while [ "$i" -lt "$total" ]; do
   # U+3000), each time with the gate announcing the upload key over a
   # debug-signed bundle. A disagreement is now a gate failure.
   if [ "$step" -eq 5 ]; then
-    if grep -q "signed with the UPLOAD key" "$BUILD_LOG"; then
-      actual="upload"
-    elif grep -q "signed with the DEBUG key" "$BUILD_LOG"; then
-      actual="debug"
-    else
-      echo "GATE FAILED at $label: the build said nothing about which key it" >&2
-      echo "  used. build.gradle.kts must print one of the two lines this" >&2
-      echo "  cross-check reads, or the gate cannot tell you what it built." >&2
+    # Read from a file Gradle wrote, not grepped out of the build log.
+    #
+    # The log is not ours: `JAVA_TOOL_OPTIONS='-Dhs="signed with the UPLOAD
+    # key"'` makes the JVM print "Picked up JAVA_TOOL_OPTIONS: ..." before
+    # Gradle starts, the old unanchored grep matched it, and the gate reported
+    # the upload key over a debug-signed bundle — GATE PASSED, exit 0. The
+    # same variable made a correct build fail. `_JAVA_OPTIONS` is identical
+    # (#120).
+    if [ ! -s "$VERDICT_FILE" ]; then
+      echo "GATE FAILED at $label: the build wrote no signing verdict to" >&2
+      echo "  \$HS_SIGNING_VERDICT. build.gradle.kts must write one of" >&2
+      echo "  'upload' or 'debug' there, or the gate cannot tell you what" >&2
+      echo "  it built." >&2
       exit 1
     fi
-    case "$SIGNING_MODE" in
-      *"upload key"*) predicted="upload" ;;
-      *) predicted="debug" ;;
+    actual="$(tr -d ' \n\r\t' < "$VERDICT_FILE")"
+    case "$actual" in
+    upload | debug) ;;
+    *)
+      echo "GATE FAILED at $label: the signing verdict file says '$actual'," >&2
+      echo "  which is neither 'upload' nor 'debug'." >&2
+      exit 1
+      ;;
     esac
+
+    predicted="$(signing_prediction)"
+    # A refusal predicted and a bundle produced is a failure on its own: the
+    # header said the build would fail and it did not, which is exactly the
+    # case that used to pass as "header agreed" (#120).
+    if [ "$predicted" = "refusal" ]; then
+      echo "GATE FAILED at $label: the header said '$SIGNING_MODE'," >&2
+      echo "  and the build succeeded anyway, signing with the $actual key." >&2
+      echo "  A predicted refusal that builds means the gate and Gradle" >&2
+      echo "  disagree about what the HS_* variables mean." >&2
+      exit 1
+    fi
     if [ "$actual" != "$predicted" ]; then
       echo "GATE FAILED at $label: the header said '$SIGNING_MODE'," >&2
-      echo "  and Gradle signed with the $actual key. These two decide" >&2
-      echo "  'is this variable set' separately and have disagreed before." >&2
+      echo "  predicting the $predicted key, and Gradle signed with the" >&2
+      echo "  $actual key. These two decide 'is this variable set'" >&2
+      echo "  separately and have disagreed before." >&2
       exit 1
     fi
-    echo "signing: Gradle used the $actual key (header agreed)"
+    echo "signing: Gradle used the $actual key (prediction agreed)"
   fi
   i=$((i + 1))
 done
