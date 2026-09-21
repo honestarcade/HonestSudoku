@@ -43,32 +43,18 @@ String _stripComment(String line) {
   return line;
 }
 
-String _unquote(String value) {
-  final v = value.trim();
-  if (v.length >= 2) {
-    final first = v[0];
-    final last = v[v.length - 1];
-    if ((first == "'" && last == "'") || (first == '"' && last == '"')) {
-      return v.substring(1, v.length - 1);
-    }
-  }
-  return v;
-}
-
 /// Every `uses:` in [text] must name an explicit, non-floating ref.
 ///
 /// Exempt: a local action (`./.github/...`) and a container (`docker://`),
 /// neither of which takes an `@ref`.
 List<WorkflowOffender> unpinnedUses(String path, String text) {
   final offenders = <WorkflowOffender>[];
-  final lines = text.split('\n');
-  for (var i = 0; i < lines.length; i++) {
-    final raw = lines[i];
-    if (raw.trimLeft().startsWith('#')) continue;
-    final match = RegExp(r'^\s*-?\s*uses:\s*(.+)$')
-        .firstMatch(_stripComment(raw));
-    if (match == null) continue;
-    final value = _unquote(match.group(1)!);
+  final wf = Workflow.parse(path, text);
+  if (wf.problem != null) {
+    return [WorkflowOffender(path, 1, wf.problem!)];
+  }
+  for (final entry in wf.allUses) {
+    final value = entry.uses.trim();
     if (value.isEmpty) continue;
     if (value.startsWith('./') || value.startsWith('docker://')) continue;
 
@@ -77,9 +63,9 @@ List<WorkflowOffender> unpinnedUses(String path, String text) {
       offenders.add(
         WorkflowOffender(
           path,
-          i + 1,
-          '`uses: $value` has no @ref — an unpinned action is a third party '
-          'that can change inside the merge gate',
+          entry.line,
+          '`uses: $value` in ${entry.where} has no @ref — an unpinned action '
+          'is a third party that can change inside the merge gate',
         ),
       );
       continue;
@@ -89,9 +75,9 @@ List<WorkflowOffender> unpinnedUses(String path, String text) {
       offenders.add(
         WorkflowOffender(
           path,
-          i + 1,
-          '`uses: $value` is pinned to the moving ref `$ref`; pin a release '
-          'tag and let Dependabot carry it forward',
+          entry.line,
+          '`uses: $value` in ${entry.where} is pinned to the moving ref '
+          '`$ref`; pin a release tag and let Dependabot carry it forward',
         ),
       );
     }
@@ -103,23 +89,31 @@ List<WorkflowOffender> unpinnedUses(String path, String text) {
 /// grant `write-all` at any level.
 List<WorkflowOffender> permissionOffenders(String path, String text) {
   final offenders = <WorkflowOffender>[];
-  final lines = text.split('\n');
-  var hasTopLevel = false;
-  for (var i = 0; i < lines.length; i++) {
-    final line = _stripComment(lines[i]);
-    if (lines[i].trimLeft().startsWith('#')) continue;
-    if (RegExp(r'^permissions:').hasMatch(line)) hasTopLevel = true;
-    if (RegExp(r'permissions:\s*write-all\s*$').hasMatch(line)) {
+  final wf = Workflow.parse(path, text);
+  if (wf.problem != null) {
+    return [WorkflowOffender(path, 1, wf.problem!)];
+  }
+
+  void check(String? scalar, int line, String where) {
+    if (scalar == null) return;
+    if (scalar.trim() == 'write-all') {
       offenders.add(
         WorkflowOffender(
           path,
-          i + 1,
-          '`permissions: write-all` grants every scope; name the ones needed',
+          line,
+          '`permissions: write-all` $where grants every scope; name the '
+          'ones needed',
         ),
       );
     }
   }
-  if (!hasTopLevel) {
+
+  check(wf.permissionsScalar, 1, 'at the top level');
+  for (final job in wf.jobs) {
+    check(job.permissionsScalar, job.line, 'on job `${job.name}`');
+  }
+
+  if (!wf.hasPermissions) {
     offenders.add(
       WorkflowOffender(
         path,
@@ -134,11 +128,11 @@ List<WorkflowOffender> permissionOffenders(String path, String text) {
 
 /// A workflow must declare a top-level `concurrency:`, in either form.
 List<WorkflowOffender> concurrencyOffenders(String path, String text) {
-  final hasIt = text
-      .split('\n')
-      .where((l) => !l.trimLeft().startsWith('#'))
-      .any((l) => RegExp(r'^concurrency:').hasMatch(_stripComment(l)));
-  return hasIt
+  final wf = Workflow.parse(path, text);
+  if (wf.problem != null) {
+    return [WorkflowOffender(path, 1, wf.problem!)];
+  }
+  return wf.hasConcurrency
       ? const []
       : [
           WorkflowOffender(

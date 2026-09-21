@@ -998,15 +998,16 @@ void main() {
       );
     });
     test('a uses: with no ref is refused', () {
-      const bad = 'jobs:\n  a:\n    steps:\n      - uses: actions/checkout\n';
-      final offenders = unpinnedUses('bad.yml', bad);
+      final offenders = unpinnedUses(
+        'bad.yml',
+        _workflow('      - uses: actions/checkout\n'),
+      );
       expect(offenders, hasLength(1));
-      expect(offenders.single.line, 4);
       expect(offenders.single.message, contains('no @ref'));
     });
     test('a trailing @ with nothing after it is refused', () {
       expect(
-        unpinnedUses('bad.yml', '      - uses: actions/checkout@\n'),
+        unpinnedUses('bad.yml', _workflow('      - uses: actions/checkout@\n')),
         hasLength(1),
       );
     });
@@ -1014,7 +1015,7 @@ void main() {
       test('a ref of `$ref` is refused', () {
         final offenders = unpinnedUses(
           'bad.yml',
-          '      - uses: actions/checkout@$ref\n',
+          _workflow('      - uses: actions/checkout@$ref\n'),
         );
         expect(offenders, hasLength(1));
         expect(offenders.single.message, contains('moving ref'));
@@ -1024,14 +1025,74 @@ void main() {
     test('a ref that merely contains a floating word is allowed', () {
       // `v2-main-branch` is a real tag shape; only the whole ref counts.
       expect(
-        unpinnedUses('good.yml', '  - uses: a/b@v2-main-branch\n'),
+        unpinnedUses(
+          'good.yml',
+          _workflow('      - uses: a/b@v2-main-branch\n'),
+        ),
         isEmpty,
       );
       expect(
-        unpinnedUses('good.yml', '  - uses: a/b@latest-stable\n'),
+        unpinnedUses(
+          'good.yml',
+          _workflow('      - uses: a/b@latest-stable\n'),
+        ),
         isEmpty,
       );
     });
+
+    test('an unpinned action written as a flow mapping is refused', () {
+      // The line scan matched `^\s*-?\s*uses:`, so `- {uses: x}` returned
+      // zero offenders — the exact bypass class #154 was filed for, still
+      // open in this rule because it was never converted (#175).
+      final offenders = unpinnedUses(
+        'bad.yml',
+        _workflow('      - {uses: attacker/action}\n'),
+      );
+      expect(
+        offenders,
+        hasLength(1),
+        reason: 'flow-style `uses:` must be seen',
+      );
+      expect(offenders.single.message, contains('no @ref'));
+    });
+
+    test('an unpinned action whose value is on the next line is refused', () {
+      final offenders = unpinnedUses(
+        'bad.yml',
+        _workflow('      - uses:\n          attacker/action\n'),
+      );
+      expect(offenders, hasLength(1));
+    });
+
+    test("a job's own uses: is subject to the pin rule", () {
+      // WorkflowJob.uses was parsed and never consulted by this rule.
+      final offenders = unpinnedUses(
+        'bad.yml',
+        'name: X\n'
+            'on: workflow_dispatch\n'
+            'permissions:\n  contents: read\n'
+            'concurrency: x\n'
+            'jobs:\n'
+            '  a:\n'
+            '    uses: attacker/wf/.github/workflows/x.yml\n'
+            '    secrets: inherit\n',
+      );
+      expect(offenders, hasLength(1));
+      expect(offenders.single.message, contains('job `a`'));
+    });
+
+    test('a folded or anchored uses: is not a false positive', () {
+      // Both were flagged as missing a ref by the line scan, erring safe but
+      // wrongly — the parser resolves them to their value (#175).
+      expect(
+        unpinnedUses(
+          'good.yml',
+          _workflow('      - uses: >-\n          actions/checkout@v7\n'),
+        ),
+        isEmpty,
+      );
+    });
+
     test('a pinned ref, a local action and a container are all allowed', () {
       const good =
           '      - uses: actions/checkout@v7\n'
@@ -1042,43 +1103,77 @@ void main() {
           '      - uses: actions/checkout@v7  # trailing comment\n'
           '      # - uses: actions/checkout\n';
       expect(
-        unpinnedUses('good.yml', good),
+        unpinnedUses('good.yml', _workflow(good)),
         isEmpty,
         reason: 'pins-negative: refused a legitimate uses: line',
       );
     });
     test('a workflow without top-level permissions is refused', () {
       const bad =
-          'name: X\njobs:\n  a:\n    permissions:\n      contents: read\n';
+          'name: X\non: push\nconcurrency: x\n'
+          'jobs:\n  a:\n    permissions:\n      contents: read\n'
+          '    steps:\n      - run: true\n';
       final offenders = permissionOffenders('bad.yml', bad);
       expect(offenders, hasLength(1));
       expect(offenders.single.message, contains('no top-level'));
     });
     test('write-all is refused at any level', () {
       const bad =
-          'permissions: read-all\njobs:\n  a:\n    permissions: write-all\n';
+          'name: X\non: push\nconcurrency: x\n'
+          'permissions: read-all\n'
+          'jobs:\n  a:\n    permissions: write-all\n'
+          '    steps:\n      - run: true\n';
+      final offenders = permissionOffenders('bad.yml', bad);
+      expect(offenders, hasLength(1));
+      expect(offenders.single.message, contains('write-all'));
+    });
+    test('write-all is refused when quoted', () {
+      // `permissions: 'write-all'` returned zero offenders: the line scan
+      // matched the bare word only, and GitHub honours both (#175).
+      const bad =
+          'name: X\non: push\nconcurrency: x\n'
+          "permissions: 'write-all'\n"
+          'jobs:\n  a:\n    steps:\n      - run: true\n';
       final offenders = permissionOffenders('bad.yml', bad);
       expect(offenders, hasLength(1));
       expect(offenders.single.message, contains('write-all'));
     });
     test('read-all at the top level is allowed', () {
       expect(
-        permissionOffenders('good.yml', 'permissions: read-all\n'),
+        permissionOffenders(
+          'good.yml',
+          'name: X\non: push\nconcurrency: x\npermissions: read-all\n'
+              'jobs:\n  a:\n    steps:\n      - run: true\n',
+        ),
         isEmpty,
       );
     });
     test('a workflow without concurrency is refused', () {
-      expect(concurrencyOffenders('bad.yml', 'name: X\n'), hasLength(1));
+      expect(
+        concurrencyOffenders(
+          'bad.yml',
+          'name: X\non: push\npermissions:\n  contents: read\n'
+              'jobs:\n  a:\n    steps:\n      - run: true\n',
+        ),
+        hasLength(1),
+      );
     });
     test('concurrency in either form is allowed', () {
       expect(
-        concurrencyOffenders('good.yml', 'concurrency: play-release\n'),
+        concurrencyOffenders(
+          'good.yml',
+          'name: X\non: push\npermissions:\n  contents: read\n'
+              'concurrency: play-release\n'
+              'jobs:\n  a:\n    steps:\n      - run: true\n',
+        ),
         isEmpty,
       );
       expect(
         concurrencyOffenders(
           'good.yml',
-          'concurrency:\n  group: ci\n  cancel-in-progress: true\n',
+          'name: X\non: push\npermissions:\n  contents: read\n'
+              'concurrency:\n  group: ci\n  cancel-in-progress: true\n'
+              'jobs:\n  a:\n    steps:\n      - run: true\n',
         ),
         isEmpty,
       );

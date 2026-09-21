@@ -77,6 +77,7 @@ class WorkflowJob {
     this.continueOnError = false,
     this.runsOn,
     this.environment,
+    this.permissionsScalar,
   });
 
   final String name;
@@ -108,6 +109,9 @@ class WorkflowJob {
   /// release and with what.
   final String? environment;
 
+  /// `permissions:` on the job, as a scalar. See [Workflow.permissionsScalar].
+  final String? permissionsScalar;
+
   WorkflowStep? stepById(String id) {
     for (final step in steps) {
       if (step.id == id) return step;
@@ -129,8 +133,11 @@ class Workflow {
     this.pushTags,
     this.pushBranches,
     this.runScripts,
-    this.problem,
-  );
+    this.problem, {
+    this.hasPermissions = false,
+    this.permissionsScalar,
+    this.hasConcurrency = false,
+  });
 
   final String path;
   final List<WorkflowJob> jobs;
@@ -153,6 +160,40 @@ class Workflow {
   final List<String> pushBranches;
   final List<RunScript> runScripts;
   final String? problem;
+
+  /// A top-level `permissions:` key of any shape.
+  final bool hasPermissions;
+
+  /// `permissions:` when written as a scalar (`read-all`, `write-all`),
+  /// rather than a map of scopes. Parsed rather than line-matched, so the
+  /// quoted spelling `permissions: 'write-all'` is the same value as the
+  /// unquoted one — the line scan caught only the unquoted form (#175).
+  final String? permissionsScalar;
+
+  final bool hasConcurrency;
+
+  /// Every `uses:` in the file, job-level and step-level, with its line.
+  /// A job's `uses:` was parsed and never consulted by the pin rule, and a
+  /// step written as a flow mapping (`- {uses: x}`) was invisible to the
+  /// line scan entirely (#171, #175).
+  Iterable<({String uses, int line, String where})> get allUses sync* {
+    for (final job in jobs) {
+      final jobUses = job.uses;
+      if (jobUses != null) {
+        yield (uses: jobUses, line: job.line, where: 'job `${job.name}`');
+      }
+      for (final step in job.steps) {
+        final stepUses = step.uses;
+        if (stepUses != null) {
+          yield (
+            uses: stepUses,
+            line: step.line,
+            where: 'job `${job.name}` step ${step.id ?? step.index}',
+          );
+        }
+      }
+    }
+  }
 
   WorkflowJob? job(String name) {
     for (final j in jobs) {
@@ -283,6 +324,7 @@ class Workflow {
             continueOnError: _lookup(jobMap, 'continue-on-error') == true,
             runsOn: _stringOr(jobMap, 'runs-on'),
             environment: _environment(jobMap),
+            permissionsScalar: _permissionsScalar(jobMap),
           ),
         );
       }
@@ -296,6 +338,9 @@ class Workflow {
       pushBranches,
       scripts,
       null,
+      hasPermissions: _lookup(doc, 'permissions') != null,
+      permissionsScalar: _permissionsScalar(doc),
+      hasConcurrency: _lookup(doc, 'concurrency') != null,
     );
   }
 }
@@ -311,6 +356,12 @@ dynamic _lookup(YamlMap map, String key) {
     if (asBool != null) return asBool.value;
   }
   return null;
+}
+
+/// `permissions:` when it is a scalar rather than a map of scopes.
+String? _permissionsScalar(YamlMap map) {
+  final value = _lookup(map, 'permissions');
+  return value is String ? value : null;
 }
 
 /// `environment:` as a name, whether written as a bare string or as a map
