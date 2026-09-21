@@ -362,6 +362,112 @@ List<String> _swallowsFailure(String body) {
   return offenders;
 }
 
+/// Runs a workflow step's `run:` body the way the runner would.
+///
+/// Every command in [ambient] is stubbed; the one named by [failing] exits 1
+/// and the rest exit 0. With no [failing] the body should SUCCEED, and that
+/// direction is the point: an assertion that a step fails when its command
+/// fails is worthless if the step fails whatever happens (#204).
+///
+/// Two fidelity details the first version got wrong, both of which made a
+/// step unable to pass:
+///
+///  * **`${{ … }}` is expanded before bash ever sees the body.** Left in
+///    place it is a bad substitution, and `set -u` aborts the script at the
+///    first one — before the command under test is reached. `build` was
+///    asserted for nothing because of this.
+///  * **The workspace has the files the body opens.** A redirect into a
+///    directory that does not exist fails for a reason that has nothing to
+///    do with the command being tested (`sidecar`).
+({int code, String out, String err}) _runStepBody(
+  String body, {
+  required Iterable<String> ambient,
+  String? failing,
+}) {
+  final dir = Directory.systemTemp.createTempSync('hs-stepbody');
+  try {
+    final bin = Directory('${dir.path}/bin')..createSync(recursive: true);
+
+    void stub(String command) {
+      final fails = command == failing;
+      // A succeeding stub writes a byte, because several bodies redirect a
+      // command's output to a file and then check the file is non-empty
+      // (`keystore` does exactly that). A silent `exit 0` leaves an empty
+      // file, so the step fails for want of output rather than for anything
+      // the test is asking about — vacuity by a different route.
+      final script = fails
+          ? '#!/bin/sh\necho "$command: simulated failure" >&2\nexit 1\n'
+          : '#!/bin/sh\necho "stub output for $command"\nexit 0\n';
+      File('${bin.path}/${command.split('/').last}').writeAsStringSync(script);
+      Process.runSync('chmod', [
+        '+x',
+        '${bin.path}/${command.split('/').last}',
+      ]);
+      // A project script is invoked by path, so shadow it there too.
+      if (command.contains('/')) {
+        final asPath = File('${dir.path}/$command');
+        asPath.parent.createSync(recursive: true);
+        asPath.writeAsStringSync(script);
+        Process.runSync('chmod', ['+x', asPath.path]);
+      }
+    }
+
+    for (final command in ambient) {
+      stub(command);
+    }
+    // Not in any `dependsOn` list, but bodies call them and the host may not
+    // have them (`sha256sum` is absent on macOS), which would make a result
+    // depend on who ran the suite.
+    for (final command in const ['sha256sum', 'unzip', 'curl']) {
+      if (!ambient.contains(command)) stub(command);
+    }
+
+    final runnerTemp = Directory('${dir.path}/runner')..createSync();
+    File('${runnerTemp.path}/upload.keystore').writeAsStringSync('x');
+    File('${dir.path}/build/app/outputs/bundle/release/app-release.aab')
+      ..createSync(recursive: true)
+      ..writeAsStringSync('bundle');
+
+    // What the runner substitutes before the shell starts. The value is a
+    // plain word so the body stays valid shell; what each expression would
+    // really hold is asserted by the tests that pin the `env:` blocks.
+    final expanded = body.replaceAll(
+      RegExp(r'\$\{\{[^}]*\}\}'),
+      'workflow-expression',
+    );
+
+    final script = File('${dir.path}/step.sh')..writeAsStringSync(expanded);
+    final r = Process.runSync(
+      '/bin/bash',
+      [script.path],
+      workingDirectory: dir.path,
+      includeParentEnvironment: false,
+      environment: {
+        'PATH': '${bin.path}:/usr/bin:/bin',
+        'RUNNER_TEMP': runnerTemp.path,
+        'GITHUB_OUTPUT': '${dir.path}/out',
+        'GITHUB_STEP_SUMMARY': '${dir.path}/summary',
+        'GITHUB_REF_NAME': 'v1.2.3',
+        'GITHUB_RUN_NUMBER': '7',
+        'GITHUB_RUN_ATTEMPT': '1',
+        'HS_KEYSTORE_B64': 'eA==',
+        'HS_KEYSTORE_PASS': 'PROPAGATE-PASS-1',
+        'HS_KEY_ALIAS': 'upload',
+        'HS_KEY_PASS': 'PROPAGATE-PASS-1',
+      },
+      stdoutEncoding: utf8,
+      stderrEncoding: utf8,
+    );
+    return (
+      code: r.exitCode,
+      out: r.stdout.toString(),
+      err: r.stderr.toString(),
+    );
+  } finally {
+    dir.deleteSync(recursive: true);
+  }
+}
+
 /// A step that hands the service-account key to a Play upload action.
 /// Matched on the action's repository path rather than a substring of the
 /// whole `uses:`, so a lookalike under another owner is not this (#169).
@@ -1956,67 +2062,54 @@ void main() {
             'dependsOn. Say which command it depends on, or say none',
       );
 
-      final dir = Directory.systemTemp.createTempSync('hs-propagate');
-      addTearDown(() => dir.deleteSync(recursive: true));
-      final bin = Directory('${dir.path}/bin')..createSync(recursive: true);
+      // Every command any step in this job invokes. The one under test is
+      // overridden to fail and the rest succeed, so a non-zero exit means
+      // the command under test caused it — not that the harness could not
+      // run the body at all.
+      final ambient = <String>{
+        for (final commands in dependsOn.values) ...commands,
+      };
 
       for (final step in ship.steps) {
         final body = step.run;
         if (body == null) continue;
         final commands = dependsOn[step.id] ?? const [];
         for (final command in commands) {
-          // A stub that fails, for the command this step turns on.
-          final name = command.split('/').last;
-          File('${bin.path}/$name')
-            ..writeAsStringSync(
-              '#!/bin/sh\necho "$name: simulated failure" >&2\nexit 1\n',
-            )
-            ..createSync(recursive: false);
-          Process.runSync('chmod', ['+x', '${bin.path}/$name']);
-          // A project script is invoked by path, so shadow it there too.
-          final asPath = File('${dir.path}/$command');
-          if (command.contains('/')) {
-            asPath.parent.createSync(recursive: true);
-            asPath
-              ..writeAsStringSync(
-                '#!/bin/sh\necho "$command: simulated failure" >&2\nexit 1\n',
-              )
-              ..createSync(recursive: false);
-            Process.runSync('chmod', ['+x', asPath.path]);
-          }
-
-          final script = File('${dir.path}/step.sh')..writeAsStringSync(body);
-          final runnerTemp = Directory('${dir.path}/runner')
-            ..createSync(recursive: true);
-          File('${runnerTemp.path}/upload.keystore').writeAsStringSync('x');
-          final r = Process.runSync(
-            '/bin/bash',
-            [script.path],
-            workingDirectory: dir.path,
-            includeParentEnvironment: false,
-            environment: {
-              'PATH': '${bin.path}:/usr/bin:/bin',
-              'RUNNER_TEMP': runnerTemp.path,
-              'GITHUB_OUTPUT': '${dir.path}/out',
-              'GITHUB_STEP_SUMMARY': '${dir.path}/summary',
-              'GITHUB_REF_NAME': 'v1.2.3',
-              'GITHUB_RUN_NUMBER': '7',
-              'GITHUB_RUN_ATTEMPT': '1',
-              'HS_KEYSTORE_B64': 'eA==',
-              'HS_KEYSTORE_PASS': 'PROPAGATE-PASS-1',
-              'HS_KEY_ALIAS': 'upload',
-              'HS_KEY_PASS': 'PROPAGATE-PASS-1',
-            },
-            stdoutEncoding: utf8,
-            stderrEncoding: utf8,
-          );
+          // BOTH directions, and the second is the one #204 was missing.
+          //
+          // Asking only "does it fail when the command fails" is satisfied
+          // by a body that fails NO MATTER WHAT, and four of the nine steps
+          // here did exactly that: `build` because `${{ … }}` is a bash bad
+          // substitution that aborts before `flutter` is reached, `sidecar`
+          // and `keystore` because the harness lacked files they open, and
+          // `asset` because `sha256sum` is absent on macOS. `isNot(0)` held
+          // unconditionally, so the assertion proved nothing about them.
+          //
+          // A test that cannot pass is as useless as one that cannot fail.
+          // So the same body is run twice: once with the command failing,
+          // where the step must fail, and once with everything succeeding,
+          // where the step must SUCCEED. The second run is what makes the
+          // first one mean something.
+          final failed = _runStepBody(body, ambient: ambient, failing: command);
           expect(
-            r.exitCode,
+            failed.code,
             isNot(0),
             reason:
                 'propagation: step `${step.id}` reported SUCCESS while '
                 '`$command` exited 1. Its failure does not reach the step, '
-                'so the step guarantees nothing. stdout: ${r.stdout}',
+                'so the step guarantees nothing. stdout: ${failed.out}',
+          );
+
+          final clean = _runStepBody(body, ambient: ambient);
+          expect(
+            clean.code,
+            0,
+            reason:
+                'vacuity: step `${step.id}` fails even when `$command` '
+                'SUCCEEDS, so the propagation check above it is satisfied '
+                'unconditionally and proves nothing. Fix the harness until '
+                'this step can pass, or the assertion is theatre. '
+                'stderr: ${clean.err}',
           );
         }
       }

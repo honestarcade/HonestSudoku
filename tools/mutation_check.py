@@ -226,6 +226,23 @@ MUTATIONS: list[Mutation] = [
              sub(r"(run: tools/check_aab\.sh)$", r"\1 &", 1, re.M),
              "a backgrounded command's exit status is never waited on",
              'propagation'),
+    # The mutation that was GREEN until the vacuity check landed: the build
+    # step stops building. `${{ … }}` is a bash bad substitution, so the body
+    # aborted before `flutter` was ever reached and `isNot(0)` held whatever
+    # the step did (round eight).
+    Mutation("#204", "the build step stops building", ".github/workflows/release.yml",
+             sub(r"^(\s*)flutter build appbundle(?:[^\n]*\\\n)*[^\n]*\n",
+                 r'\1echo "built"\n', 1, re.M),
+             "the step that produces the shipped bundle no longer produces it",
+             'propagation'),
+    # And the guard on that guard: without the expansion the harness performs,
+    # `build` cannot pass, and the vacuity assertion must say so.
+    Mutation("#204", "the harness stops expanding ${{ }} before bash sees it",
+             "test/guards/workflow_guard_test.dart",
+             sub(r"RegExp\(r'\\\$\\\{\\\{\[\^\}\]\*\\\}\\\}'\)",
+                 "RegExp(r'THIS-MATCHES-NOTHING')", 1),
+             "a step that cannot pass makes its propagation check unfalsifiable",
+             'vacuity'),
     # ---- #208/#206/#209: the chokepoint, the key links, the step sets -----
     Mutation("#208", "the service-account key reaches the job summary",
              ".github/workflows/play-api-check.yml",
