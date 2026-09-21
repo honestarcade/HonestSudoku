@@ -188,6 +188,25 @@ MUTATIONS: list[Mutation] = [
              sub(r'(chmod 600 "\$KEYSTORE"\n)', r'\1echo "pw: $HS_KEYSTORE_PASS"\n'),
              "the only script holding the plaintext password was outside the leak group",
              'reached stdout'),
+    # ---- #206: the key link, proven by running the step ------------------
+    # All three were GREEN at round eight, against `tools/play_promote.sh` --
+    # the one key link no other guard covered -- because the test asked
+    # whether the step's TEXT contained the script name.
+    Mutation("#206", "play_promote.sh's failure is swallowed",
+             ".github/workflows/play-promote.yml",
+             sub(r'(\| tee "\$RUNNER_TEMP/promote\.out")', r"\1 || true", 1),
+             "every refusal the script makes can be neutered while the step reports success",
+             'propagation'),
+    Mutation("#206", "the play_promote.sh call is commented out",
+             ".github/workflows/play-promote.yml",
+             sub(r"^(\s*)(tools/play_promote\.sh)", r"\1# \2", 1, re.M),
+             "a substring in a shell comment satisfied the old key-link test",
+             'vacuity'),
+    Mutation("#206", "play_promote.sh is renamed to a file that does not exist",
+             ".github/workflows/play-promote.yml",
+             sub(r"tools/play_promote\.sh", "tools/play_promote.sh.disabled", 1),
+             "the workflow called a missing file while the guard reported the link wired",
+             'vacuity'),
     # ---- #202: the ruleset, compared as whole tokens ---------------------
     # All three were GREEN at round eight: `contains('active')` is satisfied
     # by `inactive`, and `contains('gate:15368')` by `CI / gate:15368` --
