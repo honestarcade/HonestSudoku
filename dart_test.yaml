@@ -6,6 +6,7 @@ tags:
     description: Invariant and project-identity guards that read repository files.
   slow:
     description: >-
-      Guards whose input is expensive to produce — the parse-path test builds
-      a 64000-character document to overflow the YAML loader. The mutation
-      battery excludes this tag except for mutations that target it.
+      Guards whose input is expensive to produce. Nothing carries this tag
+      today — the test that did was reverted with #217 — but the battery
+      still honours it, so the next expensive guard can opt out of being run
+      once per mutation without anyone rediscovering why that matters.

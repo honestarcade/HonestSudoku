@@ -276,13 +276,6 @@ MUTATIONS: list[Mutation] = [
              sub(r"Workflow\.parse\(", "WorkflowFast.of(", 5),
              "the rules reach a parse path with no error handling at all",
              'parse-path',
-             # Also needs the overflow document. Repointing five of six leaves
-             # one `Workflow.parse(`, which satisfies the text assertion's set
-             # equality, so the EXECUTION test is what catches this one — and
-             # excluding `slow` excluded it. The battery reported WRONG-REASON
-             # the first time the two interacted, which is the marker earning
-             # its keep.
-             slow=True,
              also=(("test/guards/workflow_yaml.dart",
                     append("extension WorkflowFast on Workflow {\n"
                            "  static Workflow of(String path, String text) {\n"
@@ -290,31 +283,11 @@ MUTATIONS: list[Mutation] = [
                            "    return Workflow.parse(path, text, load: (_) => doc);\n"
                            "  }\n"
                            "}\n")),)),
-    # The bypass that passed the ENTIRE gate and all 86 mutations at 933cfad:
-    # a second parse path catching YamlException but not Error. Every document
-    # the execution test used raised a YamlException, so it saw nothing; the
-    # text assertion saw nothing because one `Workflow.parse(` survived and
-    # `WorkflowQuick.of` never spells `Workflow.` (#217).
-    Mutation("#217", "a second parse path catches YamlException but not Error",
-             "test/guards/workflow_rules.dart",
-             sub(r"Workflow\.parse\(", "WorkflowQuick.of(", 5),
-             "StackOverflowError escapes as a crash from five of the six rules",
-             'parse-path',
-             # The one mutation that needs the overflow document, so the one
-             # that pays for it.
-             slow=True,
-             also=(("test/guards/workflow_yaml.dart",
-                    append("extension WorkflowQuick on Workflow {\n"
-                           "  static Workflow of(String path, String text) {\n"
-                           "    dynamic doc;\n"
-                           "    try {\n"
-                           "      doc = loadYaml(text);\n"
-                           "    } on YamlException catch (e) {\n"
-                           "      return Workflow.parse(path, text, load: (_) => throw e);\n"
-                           "    }\n"
-                           "    return Workflow.parse(path, text, load: (_) => doc);\n"
-                           "  }\n"
-                           "}\n")),)),
+    # NO #217 mutation: the guard that caught it is gone with the overflow
+    # document, and an entry whose guard does not exist would pass for the
+    # wrong reason. The bypass, the measurements and the proposed fix are on
+    # the issue, which stays open.
+
     # Both GREEN at 933cfad: `target` and the `pull_request` rule were never
     # read, and either change leaves `main` unguarded with the guard silent.
     Mutation("#219", "the ruleset stops targeting branches",
