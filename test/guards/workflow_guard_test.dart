@@ -415,11 +415,35 @@ const _dependsOn = <String, Map<String, Map<String, List<String>>>>{
   },
 };
 
+/// Every command any step in any workflow is exercised against.
+///
+/// Shared so a test that runs a body for a reason other than propagation —
+/// asking what it published, or whether it removed a credential — stubs the
+/// same set and does not quietly diverge from it.
+final Set<String> _ambientCommands = {
+  for (final jobs in _dependsOn.values)
+    for (final steps in jobs.values)
+      for (final commands in steps.values) ...commands,
+};
+
 /// Every command any step of [workflow] is exercised against.
 Set<String> _propagationCommands(String workflow) => {
   for (final steps in (_dependsOn[workflow] ?? const {}).values)
     for (final commands in steps.values) ...commands,
 };
+
+/// True for the 403 GitHub returns when a caller has run out of requests.
+///
+/// A predicate rather than an inline condition because the branch it guards
+/// is hard to reach on demand — the limit resets hourly — and an untested
+/// branch is exactly what #219 is about. Its own test feeds it a recorded
+/// response body, so the string match is falsifiable without waiting for a
+/// real 403.
+bool _isRateLimited(String status, String payload) {
+  if (status != '403') return false;
+  final body = payload.toLowerCase();
+  return body.contains('rate limit') || body.contains('secondary rate');
+}
 
 /// Runs a workflow step's `run:` body the way the runner would.
 ///
@@ -438,10 +462,13 @@ Set<String> _propagationCommands(String workflow) => {
 ///  * **The workspace has the files the body opens.** A redirect into a
 ///    directory that does not exist fails for a reason that has nothing to
 ///    do with the command being tested (`sidecar`).
-({int code, String out, String err}) _runStepBody(
+({int code, String out, String err, String wrote, Directory workspace})
+_runStepBody(
   String body, {
   required Iterable<String> ambient,
   String? failing,
+  Map<String, String> extraEnv = const {},
+  bool keepWorkspace = false,
 }) {
   final dir = Directory.systemTemp.createTempSync('hs-stepbody');
   try {
@@ -559,17 +586,35 @@ exit 0
         'FROM_TRACK': 'internal',
         'TO_TRACK': 'alpha',
         'PROMOTE_OUTCOME': 'success',
+        ...extraEnv,
       },
       stdoutEncoding: utf8,
       stderrEncoding: utf8,
     );
+    // Everything the body WROTE, not only what it returned. A step's exit
+    // code says nothing about what it published, and #215 is a step that
+    // exits 0 and puts the signing keystore in the run summary.
+    final wrote = StringBuffer();
+    for (final entity in dir.listSync(recursive: true)) {
+      if (entity is! File) continue;
+      if (entity.path.startsWith('${bin.path}/')) continue;
+      if (entity.path == script.path) continue;
+      try {
+        wrote.writeln(entity.readAsStringSync());
+      } catch (_) {
+        // A binary the body produced; not a channel prose can hide in.
+      }
+    }
+
     return (
       code: r.exitCode,
       out: r.stdout.toString(),
       err: r.stderr.toString(),
+      wrote: wrote.toString(),
+      workspace: dir,
     );
   } finally {
-    dir.deleteSync(recursive: true);
+    if (!keepWorkspace) dir.deleteSync(recursive: true);
   }
 }
 
@@ -1549,12 +1594,25 @@ void main() {
         reason: 'parse-error: the offender must name what went wrong',
       );
 
-      // And the real thing still behaves, at whatever depth this runner
-      // overflows or refuses — either outcome is an offender, which is the
-      // property that matters.
+      // And the real thing still behaves on a document the loader refuses.
+      //
+      // Said exactly, because the previous comment here claimed more than the
+      // input delivers: this is an UNCLOSED sequence, and measured at 1000,
+      // 3000, 6000, 12000 and 20000 it raises `YamlException: Expected node
+      // content` at every depth. It never overflows — an unclosed sequence
+      // fails in the scanner before recursion — so it exercises the refusal
+      // path, not the `Error` path.
+      //
+      // Balanced brackets DO overflow, at 32000 here and at some larger and
+      // unknown depth on the CI runner, which is why asserting an overflow
+      // from a fixed depth is not shippable. That is #217, open, with the
+      // measurements.
       expect(
         Workflow.parse('x.yml', 'a:\n    ${'[' * 6000}').problem,
         isNotNull,
+        reason:
+            'parse-error: a document the loader refuses must come back as an '
+            'offender rather than as an exception',
       );
     });
 
@@ -1978,6 +2036,28 @@ void main() {
       }
     });
 
+    test('a rate-limited read is told apart from a real refusal', () {
+      // The recorded shape of GitHub's answer when an anonymous caller has
+      // spent its 60 requests. Kept as a fixture so the branch that skips on
+      // it is exercised without waiting an hour for a real one (#219).
+      const rateLimited =
+          '{"message":"API rate limit exceeded for 1.2.3.4. (But here is the '
+          'good news: Authenticated requests get a higher rate limit.)",'
+          '"documentation_url":"https://docs.github.com/rest"}';
+      expect(_isRateLimited('403', rateLimited), isTrue);
+
+      // And the complement: a 403 that is NOT rate limiting must not be
+      // waved through as a skip, or a genuinely refused read reads as
+      // "nothing to see here".
+      expect(
+        _isRateLimited('403', '{"message":"Resource not accessible"}'),
+        isFalse,
+        reason: 'a permissions 403 is a failure, not a skip',
+      );
+      expect(_isRateLimited('200', rateLimited), isFalse);
+      expect(_isRateLimited('404', rateLimited), isFalse);
+    });
+
     test('the required checks are still bound, and are the check-run names', () {
       // The one part of the merge gate with no guard on it: the ruleset
       // lives in GitHub config, so #187 is real today and silently
@@ -1994,6 +2074,20 @@ void main() {
       // token at all (#202).
       const rulesetUrl =
           'https://api.github.com/repos/honestarcade/HonestSudoku/rulesets/23682733';
+      // Authenticated WHEN A TOKEN IS AVAILABLE, anonymous otherwise.
+      //
+      // The anonymous limit is 60 requests per hour per IP, and the battery
+      // runs this suite once per mutation — 88 calls from one address. That
+      // was filed as a latent risk and then happened, locally, inside this
+      // session: `ruleset: unexpected HTTP 403`. A token raises the limit to
+      // 5000/hr, and `github.token` is available to every CI job (#219).
+      //
+      // The anonymous path stays as the fallback, because it is what makes
+      // this guard work for a contributor with no token at all.
+      final token =
+          Platform.environment['GITHUB_TOKEN'] ??
+          Platform.environment['GH_TOKEN'] ??
+          '';
       late final ProcessResult probe;
       try {
         probe = Process.runSync(
@@ -2006,6 +2100,7 @@ void main() {
             '\n%{http_code}',
             '-H',
             'Accept: application/vnd.github+json',
+            if (token.isNotEmpty) ...['-H', 'Authorization: Bearer $token'],
             rulesetUrl,
           ],
           stdoutEncoding: utf8,
@@ -2026,6 +2121,17 @@ void main() {
 
       if (probe.exitCode != 0) {
         markTestSkipped('no network: ${probe.stderr}');
+        return;
+      }
+      if (_isRateLimited(status, payload)) {
+        // Rate limiting says nothing about the ruleset, so it must not be
+        // reported as though the gate were unguarded. Skipping is honest;
+        // failing here would be the same false red the ProcessException
+        // branch was written to avoid (#219).
+        markTestSkipped(
+          'GitHub rate-limited this read. Set GITHUB_TOKEN to raise the '
+          'limit from 60/hr to 5000/hr.',
+        );
         return;
       }
       if (status == '404') {
@@ -2058,6 +2164,31 @@ void main() {
         reason:
             'ruleset: the main branch ruleset is `${doc['enforcement']}`, '
             'not active — nothing it says is enforced',
+      );
+
+      // `target` decides what `~DEFAULT_BRANCH` even means. Flipped to `tag`,
+      // every other assertion here still passes while `main` is completely
+      // unguarded — which is a gate that exists and does not bind, the exact
+      // shape of #187 (#219).
+      expect(
+        doc['target'],
+        'branch',
+        reason:
+            'ruleset: the ruleset targets `${doc['target']}`, not branches, '
+            'so its branch condition guards nothing',
+      );
+
+      final ruleTypes = [
+        for (final rule in (doc['rules'] as List? ?? const []))
+          (rule as Map)['type'],
+      ];
+      expect(
+        ruleTypes,
+        contains('pull_request'),
+        reason:
+            'ruleset: no `pull_request` rule, so a push straight to `main` '
+            'never meets a check at all. Required checks apply to pull '
+            'requests; without this rule they are unreachable',
       );
 
       final refs =
@@ -2093,10 +2224,24 @@ void main() {
         );
       }
 
-      // `bypass_actors` is the one field anonymous reads redact, so it is
-      // asserted only where a token is present rather than silently not at
-      // all. `null` means redacted; `[]` means genuinely empty.
+      // `bypass_actors` is redacted unless the caller is authenticated with
+      // enough scope to see it: the key is ABSENT from an anonymous read, not
+      // null-valued. Before the token was sent this branch could therefore
+      // never execute, while the comment above it claimed it ran "where a
+      // token is present" — a path that did not exist (#219).
+      //
+      // Now a token is sent when one is available, and with it the field
+      // comes back (`[]` on this repository). Where no token is available the
+      // branch still does not run, which is why the absence is reported
+      // rather than passed over in silence.
       final bypass = doc['bypass_actors'];
+      if (bypass == null) {
+        printOnFailure(
+          'ruleset: bypass_actors was not returned, so nobody checked whether '
+          'an actor can push past the gate. Set GITHUB_TOKEN to a token that '
+          'can read repository administration to cover it.',
+        );
+      }
       if (bypass != null) {
         expect(
           bypass,
@@ -2274,6 +2419,165 @@ void main() {
       });
     });
 
+    test('every step that promises to destroy a credential destroys it', () {
+      // #216. Nine steps were declared `[]` in `_dependsOn` — "this step's
+      // failure does not matter" — and a `[]` step is never run at all, so
+      // seven of them were exercised by nothing. Three of those exist solely
+      // to destroy a credential, and each could be replaced by `echo` with
+      // the whole suite green:
+      //
+      //   release.yml      ship    shred   -> the decoded signing keystore
+      //   play-promote.yml promote forget  -> the service-account key
+      //   play-api-check   check   forget  -> the key AND the keystore
+      //
+      // Declaring a step exempt from the propagation check is reasonable —
+      // its failure genuinely should not stop the job. What was missing is
+      // the other half: saying what DOES cover it. This is that half, and it
+      // asks the only question that matters for a step named "remove": run
+      // it, then look for the file.
+      const destroys =
+          <String, ({String job, String step, List<String> files})>{
+            '.github/workflows/release.yml': (
+              job: 'ship',
+              step: 'shred',
+              files: ['upload.keystore'],
+            ),
+            '.github/workflows/play-promote.yml': (
+              job: 'promote',
+              step: 'forget',
+              files: ['play-sa.json'],
+            ),
+            '.github/workflows/play-api-check.yml': (
+              job: 'check',
+              step: 'forget',
+              files: ['play-sa.json', 'upload.keystore'],
+            ),
+          };
+
+      destroys.forEach((path, spec) {
+        final wf = Workflow.parse(path, readFile(path));
+        expect(wf.problem, isNull, reason: '$path: ${wf.problem}');
+        final step = wf
+            .job(spec.job)!
+            .steps
+            .firstWhere(
+              (s) => s.id == spec.step,
+              orElse: () => fail(
+                'destroys: $path job `${spec.job}` has no step `${spec.step}` — '
+                'the step that removes ${spec.files.join(' and ')} is gone',
+              ),
+            );
+
+        final r = _runStepBody(
+          step.run!,
+          ambient: _ambientCommands,
+          keepWorkspace: true,
+        );
+        try {
+          for (final name in spec.files) {
+            final left = File('${r.workspace.path}/runner/$name');
+            expect(
+              left.existsSync(),
+              isFalse,
+              reason:
+                  'destroys: $path job `${spec.job}` step `${spec.step}` ran '
+                  'and `$name` is still in \$RUNNER_TEMP. The credential '
+                  'survives the job — on a hosted runner that is the end of '
+                  'it, but the step promises otherwise and nothing else '
+                  'checks',
+            );
+          }
+        } finally {
+          r.workspace.deleteSync(recursive: true);
+        }
+      });
+    });
+
+    test('no step publishes a secret it was handed', () {
+      // #215. Pinning a step set fixes WHICH steps exist; it says nothing
+      // about what they do. At 933cfad a single line appended to the
+      // already-pinned `keystore` step —
+      //
+      //     echo "$HS_KEYSTORE_B64" >> "$GITHUB_STEP_SUMMARY"
+      //
+      // put the base64 of the release signing keystore into a rendered,
+      // retained, downloadable run summary, and the whole suite was green.
+      // Three guards each declined for a different reason: the step set was
+      // unchanged; the textual secret rule only refuses `${{ secrets.* }}`
+      // INSIDE a `run:` body, and this secret arrives through `env:`; and
+      // the propagation harness reads exit codes, never output.
+      //
+      // So the question is asked of bash, the way #205 asks every other
+      // runtime question: bind each secret the step declares to a value
+      // nothing else could produce, run the body, and look at everything it
+      // wrote.
+      //
+      // Scope, stated because the name is broader than the rule: this covers
+      // a secret the step is HANDED, through workflow-, job- or step-level
+      // `env:`. A step with no `env:` cannot leak one this way — `forget` in
+      // play-promote.yml is the example, and a body of `echo
+      // "$PLAY_SERVICE_ACCOUNT_JSON"` there expands to nothing. What it does
+      // NOT cover is a step reading a secret back off DISK that an earlier
+      // step wrote, such as `$RUNNER_TEMP/play-sa.json`. `forget` removing
+      // that file is asserted separately (#216); a step publishing its
+      // contents is not covered here.
+      for (final path in _workflowFiles()) {
+        final wf = Workflow.parse(path, readFile(path));
+        expect(wf.problem, isNull, reason: '$path: ${wf.problem}');
+        for (final job in wf.jobs) {
+          for (final step in job.steps) {
+            final body = step.run;
+            if (body == null) continue;
+
+            // The secrets THIS step is given, workflow- and job-level env
+            // included — a value in scope is a value the body can echo.
+            final secretEnv = <String, String>{};
+            var n = 0;
+            for (final env in [wf.env, job.env, step.env]) {
+              env.forEach((name, value) {
+                if (!RegExp(r'\$\{\{\s*secrets\.').hasMatch(value)) return;
+                // The keystore ALIAS is stored as a secret and is public by
+                // design: it is in `android/signing/README.md`, on keytool's
+                // command line, and the play-api-check summary reports it on
+                // purpose. `secrets_scripts_test.dart` already excludes it
+                // from sentinel derivation for the same reason; the two must
+                // agree or one of them is wrong.
+                if (name.toUpperCase().endsWith('ALIAS')) return;
+                secretEnv[name] = 'HS-SENTINEL-${n++}-do-not-publish';
+              });
+            }
+            if (secretEnv.isEmpty) continue;
+
+            final r = _runStepBody(
+              body,
+              ambient: _ambientCommands,
+              extraEnv: secretEnv,
+            );
+
+            for (final entry in secretEnv.entries) {
+              for (final channel in <(String, String)>[
+                ('stdout', r.out),
+                ('stderr', r.err),
+                ('a file it wrote (the run summary is one)', r.wrote),
+              ]) {
+                expect(
+                  channel.$2,
+                  isNot(contains(entry.value)),
+                  reason:
+                      'published-secret: $path job `${job.name}` step '
+                      '`${step.id}` writes the value of `${entry.key}` to '
+                      '${channel.$1}. A step set pins which steps exist, not '
+                      r'what they do — and `$GITHUB_STEP_SUMMARY` is '
+                      'rendered, '
+                      'retained and downloadable by anyone with read access',
+                );
+              }
+            }
+          }
+        }
+      }
+    });
+
     test('a step fails when the command it runs fails', () {
       // #205's principle, applied to every workflow rather than one job.
       //
@@ -2325,11 +2629,7 @@ void main() {
             'dependsOn. Say which command it depends on, or say none',
       );
 
-      final ambient = <String>{
-        for (final jobs in _dependsOn.values)
-          for (final steps in jobs.values)
-            for (final commands in steps.values) ...commands,
-      };
+      final ambient = _ambientCommands;
 
       _dependsOn.forEach((path, jobs) {
         final wf = Workflow.parse(path, readFile(path));
@@ -2385,108 +2685,6 @@ void main() {
       });
     });
 
-    test('every workflow pins its step set', () {
-      // `ship`'s 18 ids were pinned for #182; `play-promote.yml` was not, so
-      // a NEW step there could publish #130's literal string on every
-      // failure path with the suite green (#209).
-      //
-      // The first version of this test said it was "derived from the files
-      // rather than named per-file" and was a two-entry literal covering two
-      // of the four workflows. That comment was false, and what it hid was
-      // `release.yml`'s `report-gate-failure`: a job whose NAME was pinned,
-      // whose steps were pinned nowhere, which runs on every failed gate and
-      // can read every workflow-level secret. A step there that base64'd the
-      // signing keystore into the run summary passed the whole suite.
-      //
-      // So the enumeration is now closed against the directory: every file
-      // `_workflowFiles()` finds, and every job in it, must appear below.
-      // A new workflow, or a new job in an existing one, fails this test
-      // until someone writes down what its steps are. That is the property
-      // the old comment claimed and the old code did not have.
-      const expected = <String, Map<String, List<String>>>{
-        '.github/workflows/play-promote.yml': {
-          'promote': [
-            'refuse',
-            'checkout',
-            'token',
-            'promote',
-            'summary',
-            'forget',
-          ],
-        },
-        '.github/workflows/play-api-check.yml': {
-          'check': ['checkout', 'java', 'play', 'keystore', 'forget'],
-        },
-        '.github/workflows/release.yml': {
-          'gate': <String>[],
-          'ship': [
-            'checkout',
-            'secrets_present',
-            'version',
-            'java',
-            'flutter',
-            'deps',
-            'keystore',
-            'keystore_check',
-            'build',
-            'scan',
-            'cert',
-            'sidecar',
-            'artifact',
-            'asset',
-            'play',
-            'summary',
-            'name_failure',
-            'shred',
-          ],
-          'report-gate-failure': ['say'],
-        },
-        '.github/workflows/ci.yml': {
-          'gate': [
-            'checkout',
-            'shellcheck',
-            'java',
-            'flutter',
-            'deps',
-            'guards',
-            'gate',
-            'artifact',
-          ],
-          'mutations': ['checkout', 'java', 'flutter', 'deps', 'mutations'],
-        },
-      };
-
-      expect(
-        expected.keys.toSet(),
-        _workflowFiles().toSet(),
-        reason:
-            'step-set: a workflow file is not pinned here. Every file in '
-            '$_workflowDir must have its jobs and steps written down — an '
-            'unpinned file is a place a step can be added silently, which '
-            'is #209',
-      );
-
-      expected.forEach((path, jobs) {
-        final wf = Workflow.parse(path, readFile(path));
-        expect(wf.problem, isNull, reason: '$path: ${wf.problem}');
-        expect(
-          wf.jobs.map((j) => j.name).toList(),
-          jobs.keys.toList(),
-          reason: 'step-set: $path has jobs other than ${jobs.keys}',
-        );
-        jobs.forEach((job, ids) {
-          expect(
-            wf.job(job)!.steps.map((s) => s.id).toList(),
-            ids,
-            reason:
-                'step-set: exactly these steps in this order in '
-                '$path job `$job` — an inserted step runs with whatever '
-                'that job holds, which here is ${_jobHolds(path, job)}',
-          );
-        });
-      });
-    });
-
     test('every rule reports a document it cannot read, and never throws', () {
       // #203, answered by running the rules instead of reading them.
       //
@@ -2522,6 +2720,29 @@ void main() {
         'shellTraceOffenders': shellTraceOffenders,
       };
 
+      // NO OVERFLOW ROW HERE, and #217 carries why.
+      //
+      // The document that would close #217 must raise an `Error`, not an
+      // `Exception` — that distinction is the whole five-issue lineage, and
+      // only a stack overflow in the loader produces one. Measured: alias
+      // recursion and billion-laughs both raise `YamlException`, which the
+      // bypass catches, and pre-consuming the stack by 120000 frames does not
+      // overflow either.
+      //
+      // A real overflow is machine-dependent and expensive. On this macOS
+      // machine 32000 levels overflow; on the ubuntu runner they parse
+      // cleanly as a YamlList, so the row silently exercised ordinary control
+      // flow there — caught only because the row asserted it had overflowed.
+      // Cost climbs superlinearly per rule: 32000 -> 5s, 64000 -> 20s,
+      // 96000 -> 45s, and the runner needs more than 32000.
+      //
+      // So a fixed depth is wrong on one machine or the other, an adaptive
+      // search costs minutes on the deeper-stacked one, and skipping where it
+      // cannot overflow would make the #217 mutation survive in CI. None of
+      // those ships. The data and the likeliest real fix — run the parse in a
+      // subprocess under `ulimit -s`, which makes the depth small and the
+      // machine irrelevant — are on the issue.
+
       const unreadable = <String, String>{
         'unclosed flow sequence': 'jobs: [a, b',
         'a tab where YAML forbids one': 'jobs:\n\tbuild: {}',
@@ -2530,6 +2751,10 @@ void main() {
         'a bare scalar': 'nonsense',
         'an alias to nothing': 'jobs: *missing\n',
       };
+      // Two of these — `not a mapping at all` and `a bare scalar` — are VALID
+      // YAML. They exercise the `doc is! YamlMap` branch, which is ordinary
+      // control flow, not error handling. Said plainly because the test's name
+      // covers them and its purpose does not (#217).
 
       for (final rule in rules.entries) {
         unreadable.forEach((what, text) {

@@ -36,7 +36,15 @@ import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-SUITE = ["flutter", "test", "--no-pub", "--tags", "guard"]
+# The guard suite, MINUS the `slow` tag by default.
+#
+# One tagged test builds a 64000-character document to overflow the YAML
+# loader, which costs ~45s. Run once per mutation that is 70 minutes of CI for
+# a property one mutation tests. Mutations that need it set `slow=True` and
+# get the full suite; everything else runs in a third of the time (#217).
+SUITE = ["flutter", "test", "--no-pub", "--tags", "guard",
+         "--exclude-tags", "slow"]
+SUITE_SLOW = ["flutter", "test", "--no-pub", "--tags", "guard"]
 IN_FLIGHT = ROOT / ".mutation_check_in_flight"
 
 
@@ -49,6 +57,8 @@ class Mutation:
     why: str
     expect: str = ""
     also: tuple = ()
+    slow: bool = False
+    creates: tuple = ()
     """A substring of the reason the RIGHT assertion prints when it fires.
 
     Without this the battery measures "the suite went red", which is not the
@@ -56,6 +66,13 @@ class Mutation:
     two mutations as caught when what had actually failed was an unrelated
     test that happens to read the same file. That is the mistake the battery
     exists to find, made by the battery.
+
+    `creates` names paths the mutated code WRITES while the suite runs, so
+    they can be removed afterwards. Restoring the mutated file is not enough:
+    the workspace mutation makes a script drop a password into the repository
+    root, that file outlived the run, and it was then swept into a commit by
+    `git add -A` -- twice. Being tracked, it went into the leak scan's skip
+    set and blinded the very guard the mutation exists to exercise (#213).
 
     `also` carries further `(path, apply)` edits. Some defects are not
     expressible in one file: #203 is "a second parse path is added AND the
@@ -196,18 +213,18 @@ MUTATIONS: list[Mutation] = [
                  r'\1 --debug-sa "$PLAY_SERVICE_ACCOUNT_JSON"', 1),
              "the whole key lands in the process table, readable by any later step",
              'gcloud.log'),
-    # NO workspace mutation here, deliberately, and #213 says why.
-    #
-    # The channel exists and the scan LISTS the leaked file -- printed the
-    # directory listing to confirm it, rather than inferring from a green
-    # run. What could not be reproduced in an isolated worktree is a MATCH:
-    # in both scripts tried, the password that reaches `$PWD` is not in the
-    # sentinel set at the moment of the scan. So the channel's effectiveness
-    # is unproven, and an entry that passes would say the opposite.
-    #
-    # Leaving the battery green with no entry, and the gap filed, beats
-    # either a SURVIVED entry nobody can action or a mutation aimed at
-    # whatever happens to go red (#208, #213).
+    # The workspace channel. The previous pass removed this entry, reasoning
+    # that the channel reached the file but nothing matched. That reasoning was
+    # wrong: the leak was written to `hs-leak-probe.txt`, a debugging artefact
+    # the pass had itself committed, and a TRACKED file was skipped before it
+    # was ever read (#213). The channel was never the problem.
+    Mutation("#208", "a password is written into the workspace",
+             "tools/set_ci_secrets.sh",
+             sub(r'(KEY_PASS="\$\(read_credential HS_KEY_PASS\)"\n)',
+                 r'\1printf "%s" "$KEYSTORE_PASS" > "$PWD/hs-workspace-leak.txt"\n', 1),
+             "on CI the workspace is $GITHUB_WORKSPACE, which upload-artifact sweeps",
+             'GITHUB_WORKSPACE',
+             creates=("hs-workspace-leak.txt",)),
     Mutation("#208", "the key is copied beside the one path forget removes",
              ".github/workflows/play-api-check.yml",
              sub(r'(\n(\s*)gcloud auth activate-service-account)',
@@ -257,7 +274,7 @@ MUTATIONS: list[Mutation] = [
     Mutation("#203", "five of six rules reach an unguarded second parse path",
              "test/guards/workflow_rules.dart",
              sub(r"Workflow\.parse\(", "WorkflowFast.of(", 5),
-             "the error handling is unreachable from five of the six rules",
+             "the rules reach a parse path with no error handling at all",
              'parse-path',
              also=(("test/guards/workflow_yaml.dart",
                     append("extension WorkflowFast on Workflow {\n"
@@ -266,6 +283,48 @@ MUTATIONS: list[Mutation] = [
                            "    return Workflow.parse(path, text, load: (_) => doc);\n"
                            "  }\n"
                            "}\n")),)),
+    # NO #217 mutation: the guard that caught it is gone with the overflow
+    # document, and an entry whose guard does not exist would pass for the
+    # wrong reason. The bypass, the measurements and the proposed fix are on
+    # the issue, which stays open.
+
+    # Both GREEN at 933cfad: `target` and the `pull_request` rule were never
+    # read, and either change leaves `main` unguarded with the guard silent.
+    Mutation("#219", "the ruleset stops targeting branches",
+             "test/guards/workflow_guard_test.dart",
+             sub(r"(final doc = jsonDecode\(payload\) as Map<String, dynamic>;\n)",
+                 r"\1      doc['target'] = 'tag';\n", 1),
+             "the branch condition then guards nothing",
+             'ruleset'),
+    Mutation("#219", "the pull_request rule is removed from the ruleset",
+             "test/guards/workflow_guard_test.dart",
+             sub(r"(final doc = jsonDecode\(payload\) as Map<String, dynamic>;\n)",
+                 r"\1      (doc['rules'] as List).removeWhere"
+                 r"((r) => (r as Map)['type'] == 'pull_request');\n", 1),
+             "required checks apply to pull requests; without the rule they are unreachable",
+             'ruleset'),
+    # ---- #215/#216: what a step DOES, not what it exits with -------------
+    # All three were GREEN at 933cfad. The first is a secret published from an
+    # already-pinned step; the other two are steps that exist to destroy a
+    # credential and were exercised by nothing.
+    Mutation("#215", "a pinned step publishes the keystore to the run summary",
+             ".github/workflows/release.yml",
+             sub(r'(          test -s "\$RUNNER_TEMP/upload\.keystore")',
+                 r'\1\n          echo "$HS_KEYSTORE_B64" >> "$GITHUB_STEP_SUMMARY"', 1),
+             "the base64 of the signing keystore lands in a retained, downloadable summary",
+             'published-secret'),
+    Mutation("#216", "the shred step stops deleting the keystore",
+             ".github/workflows/release.yml",
+             sub(r'run: rm -f "\$RUNNER_TEMP/upload\.keystore"',
+                 'run: echo "keystore removed"', 1),
+             "the decoded signing keystore survives the job",
+             'destroys'),
+    Mutation("#216", "the play-api-check forget step stops deleting",
+             ".github/workflows/play-api-check.yml",
+             sub(r'rm -f "\$RUNNER_TEMP/play-sa\.json" "\$RUNNER_TEMP/upload\.keystore"',
+                 'echo "credentials forgotten"', 1),
+             "the service-account key and the keystore both survive the job",
+             'destroys'),
     # ---- #202: the ruleset, compared as whole tokens ---------------------
     # All three were GREEN at round eight: `contains('active')` is satisfied
     # by `inactive`, and `contains('gate:15368')` by `CI / gate:15368` --
@@ -295,7 +354,10 @@ MUTATIONS: list[Mutation] = [
     Mutation("#203", "a second parse path is added and the rules repointed at it",
              "test/guards/workflow_rules.dart",
              sub(r"Workflow\.parse\(", "Workflow.parseFast(", 0),
-             "the StackOverflowError handler becomes unreachable from every rule",
+             # Honest about what this one does: `parseFast` delegates with the
+             # DEFAULT loader, so the handler stays reachable. It is a rename,
+             # and the text assertion is what catches it (#217).
+             "the rules reach Workflow through a name the call-site rule does not allow",
              'parse-path',
              also=(("test/guards/workflow_yaml.dart",
                     sub(r"(  static Workflow parse\(\n)",
@@ -763,7 +825,8 @@ def main() -> int:
                 broken.append((m, "left the Dart unanalyzable — it would fail for the wrong reason"))
                 print(f"  BROKEN  {label}\n          does not compile after mutation")
                 continue
-            result = run(SUITE)
+            suite = SUITE_SLOW if m.slow else SUITE
+            result = run(suite)
             output = result.stdout + result.stderr
             if result.returncode == 0:
                 # Re-run before reporting a survivor. A SURVIVED verdict is
@@ -771,7 +834,7 @@ def main() -> int:
                 # flaky green would announce a hole that is not there, or
                 # worse, be dismissed as flake when it is real. A second
                 # green costs one suite run on the rare path only (#192).
-                confirm = run(SUITE)
+                confirm = run(suite)
                 if confirm.returncode != 0:
                     output = confirm.stdout + confirm.stderr
                     print(f"  (first run of {label} was green, second was not "
@@ -801,6 +864,8 @@ def main() -> int:
         finally:
             for target, text in zip(targets, originals):
                 target.write_text(text)
+            for made in m.creates:
+                (ROOT / made).unlink(missing_ok=True)
             IN_FLIGHT.unlink(missing_ok=True)
 
     print()

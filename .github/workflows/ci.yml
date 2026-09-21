@@ -70,6 +70,12 @@ jobs:
 
       - id: guards
         name: Invariant guards
+        # The ruleset guard reads the public rulesets endpoint. Anonymous
+        # reads are 60/hr per IP and runners share addresses, so the read is
+        # authenticated where a token exists — `github.token` is read-only and
+        # already available to every job (#219).
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: flutter test --no-pub --tags guard
 
       - id: gate
@@ -130,4 +136,9 @@ jobs:
 
       - id: mutations
         name: Mutation battery
+        # One suite run per mutation, so this job alone makes ~88 calls to
+        # that endpoint. Anonymous it would exhaust the hourly limit partway
+        # through and report the remainder as WRONG-REASON (#219).
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: tools/mutation_check.py

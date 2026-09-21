@@ -63,6 +63,26 @@ if [ -z "${HS_KEYSTORE_PASS:-}" ]; then
   exit 2
 fi
 
+# A minimum length, because the leak scan depends on one.
+#
+# The scan searches TRANSFORMED forms of a secret — base64, rot13, reversed,
+# the first and last eight characters — only for values of eight characters or
+# more. Below that a lowercased four-letter password is four ordinary letters
+# and matches English prose, so the transforms were producing false failures
+# (#208). Raising the floor fixed that and opened a hole in the same motion: a
+# genuinely short password would then be searched verbatim only, and a
+# base64'd copy of it in a job summary would not be found (#220).
+#
+# PKCS12 and keytool accept six. This makes the guard's assumption true at the
+# only place a keystore is created, so the threshold is a guarantee rather
+# than a blind spot.
+if [ "${#HS_KEYSTORE_PASS}" -lt 12 ]; then
+  echo "make_upload_key: HS_KEYSTORE_PASS is ${#HS_KEYSTORE_PASS} characters; 12 is the minimum." >&2
+  echo "  This is an upload key that signs every release; a short password is" >&2
+  echo "  also one the leak scan can only search for verbatim (#220)." >&2
+  exit 2
+fi
+
 if [ ! -x "$KEYTOOL" ]; then
   echo "make_upload_key: no keytool at $KEYTOOL" >&2
   echo "  Override with HS_KEYTOOL=/path/to/keytool (the macOS /usr/bin/java" >&2

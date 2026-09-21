@@ -5,11 +5,16 @@
 // to fire. Each rule below has inline fixtures in the guard that exercise both
 // directions.
 //
-// A line scan, not a YAML parse. The properties being checked — is there a ref
-// after the `@`, is there a `permissions:` block at column 0 — are visible in
-// the text, and a parser would add a dependency to check four things. The
-// trade-off is stated where it bites: a `uses:` inside a `run: |` block is an
-// accepted false positive, so workflows are written not to contain one.
+// A YAML parse, not a line scan — and this header said the opposite for as
+// long as it was untrue (#218). #154 reversed the original reasoning and the
+// reversal won: a line scan cannot assert STRUCTURE, and every bypass it
+// missed — a flow mapping, a quoted scalar, a value on the next line — was a
+// real hole rather than a theoretical one. Every rule below reaches the
+// document through `Workflow.parse`, and a guard asserts that it is the only
+// entry point they use.
+//
+// The false positive the old text apologised for — a `uses:` inside a
+// `run: |` block — does not exist here: a parser sees it as a string.
 library;
 
 import 'workflow_yaml.dart';

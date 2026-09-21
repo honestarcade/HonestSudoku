@@ -4,3 +4,9 @@
 tags:
   guard:
     description: Invariant and project-identity guards that read repository files.
+  slow:
+    description: >-
+      Guards whose input is expensive to produce. Nothing carries this tag
+      today — the test that did was reverted with #217 — but the battery
+      still honours it, so the next expensive guard can opt out of being run
+      once per mutation without anyone rediscovering why that matters.

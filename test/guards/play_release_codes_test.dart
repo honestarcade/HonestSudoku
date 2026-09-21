@@ -26,6 +26,8 @@ String get _script => '${repoRoot.path}/tools/play_release_codes.py';
 /// Runs the script with [json] on stdin, which `Process.runSync` cannot do
 /// directly — so the JSON is piped in by a shell.
 ({int code, String out, String err}) _pipe(String json, {String? status}) {
+  // chokepoint-exempt: runs play_release_codes.py over a fixture JSON of
+  // version codes; no secret is passed and nothing it prints is one.
   final r = Process.runSync(
     '/bin/bash',
     [

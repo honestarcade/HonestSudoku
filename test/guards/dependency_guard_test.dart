@@ -23,6 +23,54 @@ import 'dependency_rules.dart';
 import 'repo_files.dart';
 
 void main() {
+  test("CLAUDE.md's dependency exemption matches pubspec.yaml", () {
+    // A guard over a CLAUDE.md claim, which is where #218's worst instance
+    // was: invariant 3 stated that `pubspec.yaml` "currently carries zero
+    // `# why:` lines" while the file carried one. A project-invariant
+    // document contradicted by the file it describes is worse than silence —
+    // it is the reason a reader stops checking.
+    //
+    // The checkable half of that invariant is the exemption list: every
+    // dependency without a `# why:` line must be one CLAUDE.md names.
+    final claude = readFile('CLAUDE.md');
+    final pubspec = readFile('pubspec.yaml').split('\n');
+
+    final unjustified = <String>[];
+    var section = '';
+    for (final line in pubspec) {
+      if (RegExp(r'^[a-z_]+:').hasMatch(line)) {
+        section = line.split(':').first;
+        continue;
+      }
+      if (section != 'dependencies' && section != 'dev_dependencies') continue;
+      final entry = RegExp(r'^  ([a-z_][a-z0-9_]*):').firstMatch(line);
+      if (entry == null) continue;
+      if (line.contains('# why:')) continue;
+      unjustified.add(entry.group(1)!);
+    }
+
+    expect(
+      unjustified,
+      isNotEmpty,
+      reason:
+          'sanity: no unjustified dependency found, so this asserts nothing — '
+          'the pubspec parse is wrong',
+    );
+
+    for (final name in unjustified) {
+      expect(
+        claude,
+        contains('`$name`'),
+        reason:
+            'claim: `$name` has no `# why:` line in pubspec.yaml and CLAUDE.md '
+            "does not name it among invariant 3's exemptions. Either justify "
+            'the dependency or amend the invariant — a rule whose stated '
+            'exemptions do not match the file is not being followed, it is '
+            'being described (#218)',
+      );
+    }
+  });
+
   group('the policy itself', () {
     test('refuses by exact name, case-insensitively', () {
       expect(policy.matches('http'), 'http');
