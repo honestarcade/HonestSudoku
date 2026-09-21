@@ -20,6 +20,14 @@
 #        3  keytool could not be found
 set -euo pipefail
 export LC_ALL=C
+# `cd` to the repository root, refusing rather than guessing when `dirname`
+# is not on PATH. Without it the substitution is empty, `cd "/.."` succeeds
+# silently, and every relative path below resolves from `/` — the same
+# family as check_aab.sh's missing dirname (#114, #123).
+if ! command -v dirname > /dev/null 2>&1; then
+  echo "verify_upload_cert: dirname is not on PATH" >&2
+  exit 2
+fi
 cd "$(dirname "$0")/.."
 
 AAB="${1:-build/app/outputs/bundle/release/app-release.aab}"

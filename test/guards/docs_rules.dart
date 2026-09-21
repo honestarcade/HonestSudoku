@@ -61,6 +61,17 @@ List<String> configIdOffenders(String configYaml, String applicationId) {
 /// (#102). Normalising the punctuation that carries no meaning removes the
 /// silliest of those false alarms.
 String proseOf(String text) => text
+    // PUBLISHED text only. The rules read raw file text with no notion of
+    // what renders, so the entire visible policy could be replaced with an
+    // inverted one and all nine pinned sentences smuggled into a single
+    // HTML comment, with the suite green (#117).
+    .replaceAll(RegExp(r'<!--[\s\S]*?-->'), ' ')
+    // Struck-through text is retracted text, so it is REMOVED rather than
+    // unwrapped. The normalisation added in #102 stripped `*` and left `~`,
+    // so `~~collects **no data**. None.~~` satisfied the pin while
+    // rendering as a crossed-out sentence — and stripping the tildes would
+    // have made it match even more cleanly (#102, #117).
+    .replaceAll(RegExp(r'~~[\s\S]*?~~'), ' ')
     .toLowerCase()
     // Markdown emphasis and code ticks carry no meaning for these claims, and
     // the policy bolds half of them.
@@ -167,6 +178,16 @@ List<String> policyOffenders(String policy, String applicationId) {
       'uninstalling the app deletes them',
       'that uninstalling removes the stored data',
     ),
+    // The NEGATION, pinned. #104 closed one half of this gap and the closing
+    // comment said "all three of the substantive gaps"; this was the second
+    // half of gap 2. Changing the sentence to "...ARE collected, stored,
+    // shared and sold to third parties" left the suite green, because every
+    // pin matched a different sentence (#104, #117).
+    PinnedClaim(
+      'no personal information identifiers usage analytics crash reports '
+          'advertising ids or diagnostics are collected stored shared or sold',
+      'that nothing at all is collected, stored, shared or sold',
+    ),
   ];
   for (final claim in claims) {
     if (!prose.contains(claim.text)) {
@@ -175,6 +196,36 @@ List<String> policyOffenders(String policy, String applicationId) {
         'there. Looked for "${claim.text}". If you reworded it deliberately, '
         'update test/guards/docs_rules.dart in the same commit — this text is '
         'published and some of it is quoted in the Play listing.',
+      );
+    }
+  }
+
+  // Sentences that must NOT appear, however the rest of the page reads.
+  //
+  // A pin asks whether a true sentence is present, and a page can contain
+  // every pinned sentence and then contradict them: appending "Update: the
+  // app now collects diagnostics and shares them with our ad partners"
+  // leaves every pin satisfied. Most of that is inherent to a substring
+  // check, but the specific inversions are worth naming (#117).
+  const contradictions = [
+    'sold to third parties',
+    'we collect',
+    'we share',
+    'shares them with',
+    'shows banner ads',
+    'contains ads',
+    'we use cookies',
+    'third-party analytics',
+    'sends your data',
+  ];
+  for (final phrase in contradictions) {
+    if (prose.contains(phrase)) {
+      offenders.add(
+        'docs/privacy.md: the published policy says "$phrase". Every pinned '
+        'sentence can still be present while the page contradicts them — '
+        'that is what a substring pin cannot see, so this phrase is refused '
+        'by name. If the app genuinely changed, the invariants in CLAUDE.md '
+        'changed first and that is a conversation, not an edit.',
       );
     }
   }
@@ -205,99 +256,214 @@ List<String> siteConfigOffenders(String configYaml) =>
 /// So this resolves the destination rather than matching the href text:
 /// Liquid wrappers are unwrapped, an absolute URL is reduced to its path, and
 /// the root-absolute form is refused by name, with the reason.
+/// Text that Jekyll will not publish: fenced code and HTML comments.
+///
+/// A link inside either satisfied the rule while the rendered page carried no
+/// link at all — reproduced on the real `docs/index.md` by moving its only
+/// link into a fenced block, with the suite green (#110).
+String _renderedOnly(String markdown) => markdown
+    .replaceAll(RegExp(r'^```[\s\S]*?^```', multiLine: true), '')
+    .replaceAll(RegExp(r'^~~~[\s\S]*?^~~~', multiLine: true), '')
+    .replaceAll(RegExp(r'<!--[\s\S]*?-->'), '')
+    .replaceAll(RegExp(r'`[^`\n]*`'), '');
+
+/// Whether a path, once the project prefix is accounted for, is the policy.
+///
+/// [hasPrefix] says whether the path is expected to carry `/HonestSudoku`
+/// itself, which is true for a root-absolute path and false for one Jekyll
+/// will prefix.
+bool _isPolicyPath(String path, {required bool hasPrefix}) {
+  // A fragment or a query string does not change which page is served, and
+  // both were refused. Curled: /privacy#section and /privacy?utm=x are 200.
+  var p = path.split('#').first.split('?').first.trim();
+  if (hasPrefix) {
+    if (!p.startsWith('/HonestSudoku/')) return false;
+    p = p.substring('/HonestSudoku'.length);
+  }
+  p = p.replaceFirst(RegExp(r'^\./'), '');
+  p = p.replaceFirst(RegExp(r'^/'), '');
+  // `privacy.md` is the SOURCE extension; Jekyll serves privacy.html. A
+  // trailing slash 404s too. Both are refused by name, and a negative
+  // fixture blessed each of them in turn (#101, #110).
+  return p == 'privacy' || p == 'privacy.html';
+}
+
+/// Whether one link destination reaches the published privacy policy.
+///
+/// Enumerated rather than normalised. The previous rule guessed at URL
+/// resolution from the source text and got it wrong in both directions: it
+/// blessed `privacy.md` and `privacy/` (both 404), accepted a link to a
+/// FOREIGN host because it compared only the path, and refused six spellings
+/// that return 200 — including `absolute_url`, which it told the author
+/// resolves to a 404 while the live URL returns 200.
+///
+/// Every form below was curled against the live site on 2026-09-20:
+///
+///     /privacy         200      /privacy.md      404
+///     /privacy.html    200      /privacy/        404
+///     /privacy#section 200      bare /privacy    404
+///     /privacy?utm=x   200
+bool _reachesPolicy(String raw) {
+  var dest = raw.trim();
+  if (dest.isEmpty) return false;
+  // CommonMark pointy brackets.
+  if (dest.startsWith('<') && dest.endsWith('>')) {
+    dest = dest.substring(1, dest.length - 1).trim();
+  }
+
+  // An absolute URL must match HOST and path. Comparing only the path let
+  // `https://evil.example.com/HonestSudoku/privacy` pass (#110).
+  final absolute = RegExp(r'^https?://([^/]+)(/.*)?$').firstMatch(dest);
+  if (absolute != null) {
+    if (absolute.group(1) != 'honestarcade.github.io') return false;
+    return _isPolicyPath(absolute.group(2) ?? '', hasPrefix: true);
+  }
+
+  // Liquid. `relative_url` and `absolute_url` both prepend site.baseurl, and
+  // `absolute_url` prepends site.url as well, so both resolve; the filtered
+  // value is what matters.
+  final filter = RegExp(
+    r'''\{\{\s*['"]([^'"]+)['"]\s*\|\s*(relative_url|absolute_url)\s*\}\}''',
+  ).firstMatch(dest);
+  if (filter != null) {
+    return _isPolicyPath(filter.group(1)!, hasPrefix: false);
+  }
+
+  // `{{ site.baseurl }}/privacy`, with or without `{{ site.url }}` in front.
+  final baseurl = RegExp(r'\{\{\s*site\.baseurl\s*\}\}');
+  if (baseurl.hasMatch(dest)) {
+    final rest = dest
+        .replaceAll(RegExp(r'\{\{\s*site\.url\s*\}\}'), '')
+        .replaceAll(baseurl, '');
+    if (rest.contains('{{')) return false;
+    return _isPolicyPath(rest, hasPrefix: false);
+  }
+
+  // Anything with Liquid left in it is not something this rule can resolve.
+  if (dest.contains('{{')) return false;
+
+  // A bare root-absolute path. This is a PROJECT page under /HonestSudoku/,
+  // so `/privacy` really does 404 — curled.
+  if (dest.startsWith('/')) return _isPolicyPath(dest, hasPrefix: true);
+  return _isPolicyPath(dest, hasPrefix: false);
+}
+
 List<String> siteIndexOffenders(String indexMd) {
+  final rendered = _renderedOnly(indexMd);
   final destinations = <String>[];
   // [text](dest) and [text](dest "title"). The destination may contain spaces
   // when it is a Liquid expression, so this matches to the closing paren and
   // strips a trailing title rather than forbidding whitespace.
-  for (final m in RegExp(r'\]\(([^)]*)\)').allMatches(indexMd)) {
+  for (final m in RegExp(r'\]\(([^)]*)\)').allMatches(rendered)) {
     destinations.add(m.group(1)!.replaceAll(RegExp(r'\s+"[^"]*"$'), ''));
   }
   // [ref]: dest
   for (final m in RegExp(
     r'^\s*\[[^\]]+\]:\s*(\S+)',
     multiLine: true,
-  ).allMatches(indexMd)) {
+  ).allMatches(rendered)) {
     destinations.add(m.group(1)!);
   }
   // <a href="dest">
   for (final m in RegExp(
     '<a[^>]+href=["\']([^"\']+)["\']',
-  ).allMatches(indexMd)) {
+  ).allMatches(rendered)) {
     destinations.add(m.group(1)!);
   }
 
-  var rootAbsolute = false;
-  for (final raw in destinations) {
-    var dest = raw.trim();
-    // A Liquid wrapper means the author asked Jekyll to prepend the project
-    // prefix, so what is left is site-relative and correct — the opposite of
-    // a bare `/privacy`, which is not.
-    final viaBaseurl =
-        dest.contains('site.baseurl') || dest.contains('relative_url');
-    dest = dest.replaceAll(RegExp(r'\{\{\s*site\.baseurl\s*\}\}'), '');
-    final liquid = RegExp(r'''\{\{\s*['"]([^'"]+)['"]\s*\|\s*\w+\s*\}\}''')
-        .firstMatch(dest);
-    if (liquid != null) dest = liquid.group(1)!;
-    // An absolute URL is reduced to its path.
-    final absolute = RegExp(r'^https?://[^/]+(/.*)$').firstMatch(dest);
-    if (absolute != null) dest = absolute.group(1)!;
-    dest = dest.replaceAll(RegExp(r'\.(html|md)$'), '');
-    dest = dest.replaceAll(RegExp(r'/$'), '');
-    if (viaBaseurl) dest = dest.replaceFirst(RegExp(r'^/'), '');
+  if (destinations.any(_reachesPolicy)) return const [];
 
-    if (dest == 'privacy' || dest.endsWith('/HonestSudoku/privacy')) {
-      return const [];
-    }
-    if (dest == '/privacy') rootAbsolute = true;
-  }
-
-  if (rootAbsolute) {
+  // Name the near-misses, because "no link" is unhelpful when there is a
+  // link that is one character wrong.
+  final nearMisses = destinations
+      .map((d) => d.trim())
+      .where(
+        (d) =>
+            d.toLowerCase().contains('privacy') ||
+            d.toLowerCase().contains('policy'),
+      )
+      .toList();
+  if (nearMisses.isEmpty) {
     return const [
-      'docs/index.md: the policy link is root-absolute (`/privacy`). This is '
-          'a GitHub Pages PROJECT page served under /HonestSudoku/, so that '
-          'resolves to honestarcade.github.io/privacy and 404s. Write '
-          '`privacy` or `{{ site.baseurl }}/privacy`.',
+      'docs/index.md: no link that resolves to the privacy policy — the site '
+          'root is how a reviewer reaches it. A link inside a code fence or '
+          'an HTML comment does not count; it is not published.',
     ];
   }
-  return const [
-    'docs/index.md: no link that resolves to the privacy policy — the site '
-        'root is how a reviewer reaches it',
+  return [
+    'docs/index.md: no link that RESOLVES to the privacy policy. Found '
+        '${nearMisses.map((d) => '`$d`').join(', ')}. This is a GitHub Pages '
+        'PROJECT page served under /HonestSudoku/, and these were curled on '
+        '2026-09-20: `privacy` 200, `privacy.html` 200, `privacy.md` 404 '
+        '(the source extension is not served), `privacy/` 404, bare '
+        '`/privacy` 404 (it resolves to honestarcade.github.io/privacy). '
+        'Write `privacy`.',
   ];
 }
 
 /// MIT, naming the studio.
+/// The canonical MIT body, from the header line to the end, with the
+/// copyright line removed. Whitespace-normalised on both sides before
+/// comparison, so re-wrapping is fine and a word is not.
+const _mitBody =
+    'MIT License '
+    'Permission is hereby granted, free of charge, to any person obtaining a '
+    'copy of this software and associated documentation files (the '
+    '"Software"), to deal in the Software without restriction, including '
+    'without limitation the rights to use, copy, modify, merge, publish, '
+    'distribute, sublicense, and/or sell copies of the Software, and to '
+    'permit persons to whom the Software is furnished to do so, subject to '
+    'the following conditions: '
+    'The above copyright notice and this permission notice shall be included '
+    'in all copies or substantial portions of the Software. '
+    'THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS '
+    'OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF '
+    'MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. '
+    'IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY '
+    'CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, '
+    'TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE '
+    'SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.';
+
 List<String> licenceOffenders(String licence) {
   final offenders = <String>[];
-  if (!licence.contains('MIT License')) {
-    offenders.add('LICENSE: not an MIT licence');
-  }
   if (!licence.contains('Honest Arcade')) {
     offenders.add('LICENSE: does not name Honest Arcade');
   }
   // A year range and either spelling of the symbol are ordinary ways to
   // write this notice; refusing them was a false alarm (#102).
-  if (!RegExp(
+  final copyright = RegExp(
     r'Copyright\s+(\((c|C)\)|©)\s*\d{4}(\s*[-–]\s*\d{4})?\s+Honest Arcade',
-  ).hasMatch(licence)) {
+  );
+  if (!copyright.hasMatch(licence)) {
     offenders.add('LICENSE: no `Copyright (c) <year> Honest Arcade` line');
   }
-  // The body, not the header. A GPL body under an `MIT License` line passed,
-  // including one reading "Commercial use is prohibited" (#89). These three
-  // sentences are what make a licence MIT, rather than what it calls itself.
-  final prose = licence.replaceAll(RegExp(r'\s+'), ' ');
-  for (final phrase in const [
-    'Permission is hereby granted, free of charge',
-    'without restriction',
-    // The licence's ONE condition. Without it this is a bare grant with no
-    // attribution requirement and is no longer MIT — and nothing checked it
-    // (#104).
-    'The above copyright notice and this permission notice shall be included',
-    'THE SOFTWARE IS PROVIDED "AS IS"',
-  ]) {
-    if (!prose.contains(phrase)) {
-      offenders.add('LICENSE: the MIT body is missing "$phrase"');
+
+  // EQUALITY, not four substrings. The substring form asked whether certain
+  // phrases appear, and a licence can contain all four while saying the
+  // opposite around them: "THIS IS NOT AN MIT LICENCE. Commercial use ... is
+  // PROHIBITED", followed by a paragraph quoting each required phrase inside
+  // a disclaimer, passed every check (#89, #104, #111).
+  //
+  // MIT is a fixed text, so the check that cannot be talked around is
+  // whether this IS that text. Whitespace is normalised, so re-wrapping the
+  // file is fine; adding a sentence is not.
+  final body = licence
+      .replaceAll(copyright, '')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+  if (body != _mitBody) {
+    // Name the first divergence rather than printing two licences.
+    var i = 0;
+    while (i < body.length && i < _mitBody.length && body[i] == _mitBody[i]) {
+      i++;
     }
+    final at = i > 40 ? i - 40 : 0;
+    offenders.add(
+      'LICENSE: the body is not the MIT text. It first differs at character '
+      '$i:\n'
+      '  expected: ...${_mitBody.substring(at, (i + 40).clamp(0, _mitBody.length))}\n'
+      '  found:    ...${body.substring(at, (i + 40).clamp(0, body.length))}',
+    );
   }
   return offenders;
 }

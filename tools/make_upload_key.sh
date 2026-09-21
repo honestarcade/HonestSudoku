@@ -18,8 +18,15 @@
 #   ~/HonestArcadeApps/secrets/sudoku-signing-credentials.txt
 set -euo pipefail
 
-SECRETS_DIR="$HOME/HonestArcadeApps/secrets"
+# Overridable so the round-trip can be tested without touching the owner's
+# real secrets directory. #13's discretion specified this for exactly that
+# reason and it was never added, which is why the guard fixture has to fake
+# $HOME instead (#123).
+SECRETS_DIR="${HS_SECRETS_DIR:-$HOME/HonestArcadeApps/secrets}"
 KEYSTORE="$SECRETS_DIR/sudoku-upload.keystore"
+# Relative to the repository root, which this script cd's to. Overridable so
+# the round trip can be tested without writing over the committed one.
+CERT_OUT="${HS_UPLOAD_CERT_OUT:-android/signing/upload_certificate.pem}"
 CREDENTIALS="$SECRETS_DIR/sudoku-signing-credentials.txt"
 ALIAS="upload"
 KEYTOOL="${HS_KEYTOOL:-/opt/homebrew/opt/openjdk@21/bin/keytool}"
@@ -32,7 +39,14 @@ KEYTOOL="${HS_KEYTOOL:-/opt/homebrew/opt/openjdk@21/bin/keytool}"
 # irreversible thing this script can do. It used to refuse on the keystore
 # alone, which meant a run with the keystore moved aside silently replaced the
 # password of a key that still existed (#93).
-for hs_existing in "$KEYSTORE" "$CREDENTIALS"; do
+# The exported certificate is refused too, and this is not hypothetical: it
+# defaults to a path relative to the repository root, which this script cd's
+# to, so a run with a fake $HOME — which is exactly how the guard suite
+# exercises it — wrote a THROWAWAY key's certificate over the committed one.
+# The keystore and credentials were protected and the certificate was not
+# (#123). A wrong certificate here makes verify_upload_cert.sh fail every
+# build, and it is the file Play App Signing enrols.
+for hs_existing in "$KEYSTORE" "$CREDENTIALS" "$CERT_OUT"; do
   if [ -e "$hs_existing" ]; then
     echo "make_upload_key: $hs_existing already exists — refusing to overwrite." >&2
     echo "  This key is the app's identity with Play, and the credentials file" >&2
@@ -75,27 +89,65 @@ chmod 700 "$SECRETS_DIR"
 
 chmod 600 "$KEYSTORE"
 
-umask 177
-# Quoted, because the file is read and edited by a human and a value
-# containing a space must survive. It is parsed, never sourced — see the header
-# written into the file itself (#119, #165).
-cat > "$CREDENTIALS" <<EOF
-# Honest Sudoku upload keystore credentials — MOVE TO YOUR PASSWORD MANAGER,
-# then delete this file.
+# Export the public certificate and print its fingerprint.
 #
-# Do NOT source this file. tools/set_ci_secrets.sh PARSES it instead, because
-# the values below are double-quoted: a password containing a command
-# substitution or a backtick would execute on a dot-source, and the value you
-# would get back is the expanded form rather than the one the keystore was made
-# with. That is issue #119, still open. Earlier text here told you to source it
-# (#165).
-export HS_KEYSTORE_PATH="$KEYSTORE"
-export HS_KEYSTORE_PASS="$HS_KEYSTORE_PASS"
-export HS_KEY_ALIAS="$ALIAS"
-export HS_KEY_PASS="$HS_KEYSTORE_PASS"
-# NOTE: PKCS12 keystores use ONE password for store and key — HS_KEY_PASS
-# equals HS_KEYSTORE_PASS by format design, not by an oversight.
-EOF
+# Without this, a rotation that follows the runbook produced a new keystore
+# and left `android/signing/upload_certificate.pem` describing the OLD key —
+# so `tools/verify_upload_cert.sh` would fail every build afterwards, and the
+# reason would not be obvious (#123). The certificate is the public half; it
+# is written into the repository on purpose.
+mkdir -p "$(dirname "$CERT_OUT")"
+"$KEYTOOL" -exportcert -rfc \
+  -keystore "$KEYSTORE" \
+  -storetype PKCS12 \
+  -alias "$ALIAS" \
+  -storepass:env HS_KEYSTORE_PASS \
+  -file "$CERT_OUT"
+chmod 644 "$CERT_OUT"
+
+FINGERPRINT="$("$KEYTOOL" -printcert -file "$CERT_OUT" |
+  grep -m1 -oE 'SHA256: [0-9A-F:]+' | sed 's/^SHA256: //')"
+echo "certificate written to $CERT_OUT"
+echo "  alias:   $ALIAS"
+echo "  SHA-256: ${FINGERPRINT:-unknown}"
+echo "  Commit it, and update the table in android/signing/README.md."
+
+umask 177
+
+# Escape the four characters that are still live inside double quotes.
+#
+# #108 wrapped these values in double quotes, which stops a space and a
+# semicolon and does NOT stop command substitution. The file is written by a
+# heredoc, so `$(...)` and a backtick expanded when it was written AND again
+# when it was sourced: the password recorded was the expanded form, 8
+# characters where the keystore was made with 143, and it did not open the
+# keystore (#119). A password containing `"` truncated the value the same way.
+#
+# printf with %s writes the value literally — no heredoc expansion — and the
+# escaping keeps it inert if anyone sources the file anyway. The escape order
+# matters: backslash first, or it doubles the backslashes the others add.
+escape_for_double_quotes() {
+  printf '%s' "$1" |
+    sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/\$/\\$/g' -e 's/`/\\`/g'
+}
+
+{
+  printf '%s\n' \
+    '# Honest Sudoku upload keystore credentials — MOVE TO YOUR PASSWORD MANAGER,' \
+    '# then delete this file.' \
+    '#' \
+    '# Do NOT source this file. tools/set_ci_secrets.sh PARSES it instead. The' \
+    '# values are double-quoted with the shell-special characters escaped, so a' \
+    '# dot-source is inert — but parsing is the supported path and the only one' \
+    '# that is tested (#119).'
+  printf 'export HS_KEYSTORE_PATH="%s"\n' "$(escape_for_double_quotes "$KEYSTORE")"
+  printf 'export HS_KEYSTORE_PASS="%s"\n' "$(escape_for_double_quotes "$HS_KEYSTORE_PASS")"
+  printf 'export HS_KEY_ALIAS="%s"\n' "$(escape_for_double_quotes "$ALIAS")"
+  printf 'export HS_KEY_PASS="%s"\n' "$(escape_for_double_quotes "$HS_KEYSTORE_PASS")"
+  printf '%s\n' \
+    '# NOTE: PKCS12 keystores use ONE password for store and key — HS_KEY_PASS' \
+    '# equals HS_KEYSTORE_PASS by format design, not by an oversight.'
+} > "$CREDENTIALS"
 chmod 600 "$CREDENTIALS"
 
 echo "Created $KEYSTORE"

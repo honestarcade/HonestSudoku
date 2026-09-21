@@ -8,13 +8,22 @@ format check, `flutter test` (which includes the invariant guards below), the
 release bundle build, and `tools/check_aab.sh` over that bundle. It must print
 `GATE PASSED` before anything is considered done.
 
+CI runs one more thing the gate does not: **`tools/mutation_check.py`**, its own
+job, which reintroduces 31 known defects one at a time and requires the guard
+suite to catch each — naming the assertion that must fire, so a mutation that
+merely turns the suite red some other way is reported as WRONG-REASON rather
+than a pass. It refuses to run on a dirty tree and restores through a
+`try/finally`. Run it locally before changing a guard: a guard weakened by
+accident is the failure this project keeps finding, and a green suite is not
+evidence that the suite can fail. Adding a guard means adding its mutation.
+
 ## Project invariants
 
 Load-bearing constraints no story may breach without an explicit conversation with the owner. Changing one is plan drift by definition: log it as an ad-hoc ledger entry in `.n8/decisions.md` and suggest `/n8-replan`.
 
 1. **No ads, no tracking, no analytics, no network.** The release build declares no Android permissions at all (INTERNET included) and all player data stays on the device. *(test-enforced: manifest guard plus a byte scan of every built bundle, dependency blocklist over pubspec.lock, no web-font references; fonts are bundled, never fetched — guard: #14, #15 (merged))* **Plugins:** any Flutter plugin is adopted only during planning, after the planner has read the plugin's own `AndroidManifest.xml` for permissions and the owner has approved it; build-time permission removal rules are forbidden, and a plugin's `# why:` line records `declares no permissions (manifest checked <date>)`.
 2. **Boards are generated on the device at runtime, never bundled, and every board has exactly one solution.** *(test-enforced: property tests run the real generator over many seeds for every size and difficulty and have the solver count solutions — guard: #26 (planned))*
-3. **Lean dependencies.** A third-party package is added only when it is necessary, carries a one-line justification in `pubspec.yaml` as a trailing `# why: <reason>` comment on its key line, and never brings ads, analytics, or network access. *(blocklist and justification test-enforced under invariant 1 — guard: #15 (merged); "necessary" is honor-system, checked by audits)*
+3. **Lean dependencies.** A third-party package is added only when it is necessary, carries a one-line justification in `pubspec.yaml` as a trailing `# why: <reason>` comment on its key line, and never brings ads, analytics, or network access. *(One exemption from the justification requirement, and it is the reason `pubspec.yaml` currently carries zero `# why:` lines: `flutter`, `flutter_test`, `flutter_localizations` and `flutter_lints` — the SDK itself plus the lint set everyone runs. `flutter_lints` is a genuine pub.dev package, so the exemption is a real one and was in the code and nowhere in the record until #118.)* *(blocklist and justification test-enforced under invariant 1 — guard: #15 (merged); "necessary" is honor-system, checked by audits)*
 4. **Deterministic generation.** The same seed, size, and difficulty always produce the same board. *(test-enforced: golden-seed regression test — guard: #26 (planned))*
 
 ## n8SDLC project

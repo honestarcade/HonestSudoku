@@ -36,7 +36,11 @@ def main() -> int:
     # CPython refuses to parse an integer beyond 4300 digits, and the
     # resulting ValueError escaped as exit 1 — the documented code for "no
     # release with that status", so a crash was reported as an empty track
-    # (#163).
+    # (#163). Raising the ceiling to 100000 did not fix that: above the new
+    # threshold the behaviour was bit-for-bit the original bug, and below it
+    # a 99999-digit "version code" was printed and PUT to the target track.
+    # The limit is a backstop; the ValueError is CAUGHT below, and a version
+    # code is length-checked against what Android actually accepts (#178).
     if hasattr(sys, "set_int_max_str_digits"):
         sys.set_int_max_str_digits(100000)
     want_status = sys.argv[1] if len(sys.argv) > 1 else "completed"
@@ -73,7 +77,15 @@ def main() -> int:
             return 2
         if release.get("status") != want_status:
             continue
-        codes = release.get("versionCodes") or []
+        # `or []` flattened 0, false, null and {} to "no codes" and exited
+        # 1 — malformed input reported as an empty track, the class #163
+        # named — while the string "101" reached the isinstance check and
+        # exited 2. Absent is the only thing that may mean empty (#178).
+        # Key presence, not `.get()`: an explicit `"versionCodes": null` is
+        # malformed input that the API would never send, and `.get()` cannot
+        # tell it from an absent key. Absent is the one spelling that may
+        # still mean an empty track (#178).
+        codes = [] if "versionCodes" not in release else release["versionCodes"]
         if not isinstance(codes, list):
             print(
                 "play_release_codes: versionCodes is not a list: %r" % (codes,),
@@ -103,7 +115,39 @@ def main() -> int:
                     file=sys.stderr,
                 )
                 return 2
-            numeric.append(int(text))
+            # Android's versionCode is a signed 32-bit int, so it cannot
+            # exceed 2100000000 and can never be more than ten digits. A
+            # longer run of digits is malformed input, not a large version,
+            # and refusing it here is what keeps the int() below away from
+            # CPython's digit ceiling in the first place (#178).
+            if len(text) > 10:
+                print(
+                    "play_release_codes: version code has %d digits; Android's"
+                    " versionCode is a 32-bit int" % (len(text),),
+                    file=sys.stderr,
+                )
+                return 2
+            try:
+                value = int(text)
+            except ValueError as exc:
+                # Caught rather than allowed to escape: an uncaught
+                # ValueError exits 1, which is the documented code for "no
+                # release with that status", so a crash read as an empty
+                # track (#163, #178).
+                print(
+                    "play_release_codes: could not read version code %r: %s"
+                    % (code, exc),
+                    file=sys.stderr,
+                )
+                return 2
+            if value > 2100000000:
+                print(
+                    "play_release_codes: version code %d exceeds Android's"
+                    " maximum of 2100000000" % (value,),
+                    file=sys.stderr,
+                )
+                return 2
+            numeric.append(value)
         if not numeric:
             continue
         if best is None or max(numeric) > max(best):

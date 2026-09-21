@@ -39,6 +39,31 @@ const _package = 'com.honestarcade.sudoku';
 /// argument refusal's 2) and means the same thing on every machine.
 const _unreachableApi = 'http://127.0.0.1:1';
 
+/// Answers a POST with an edit id and everything else with 500; a DELETE
+/// exits 22, which is what `curl --fail` does on a 4xx or 5xx.
+const _curlStub = r"""#!/bin/sh
+out=""; method="GET"; want_status=0; prev=""
+for a in "$@"; do
+  case "$prev" in
+    -o) out="$a" ;;
+    -X) method="$a" ;;
+  esac
+  if [ "$a" = "-w" ]; then want_status=1; fi
+  prev="$a"
+done
+case "$method" in
+  POST)
+    if [ -n "$out" ]; then printf '{"id":"E1"}' > "$out"; fi
+    if [ "$want_status" = 1 ]; then printf '200'; fi
+    exit 0 ;;
+  DELETE) exit 22 ;;
+  *)
+    if [ -n "$out" ]; then printf '{"error":"boom"}' > "$out"; fi
+    if [ "$want_status" = 1 ]; then printf '500'; fi
+    exit 0 ;;
+esac
+""";
+
 ({int code, String out, String err}) _run(List<String> args, {String? token}) {
   final r = Process.runSync(
     _script,
@@ -56,32 +81,133 @@ const _unreachableApi = 'http://127.0.0.1:1';
   return (code: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString());
 }
 
-/// The refusal must be reached, unconditionally, before anything that could
-/// mint a credential — in every job of the file, not just the first.
+/// Runs a refusal step's `run:` body under bash with the dispatch inputs set,
+/// and returns its exit code. The body is pure shell — no external command —
+/// so this needs no stubs and no network.
+int _runRefusal(String script, String fromTrack, String toTrack) {
+  final dir = Directory.systemTemp.createTempSync('hs-refusal');
+  try {
+    final file = File('${dir.path}/refuse.sh')..writeAsStringSync(script);
+    final r = Process.runSync(
+      '/bin/bash',
+      [file.path],
+      includeParentEnvironment: false,
+      environment: {
+        'PATH': '/usr/bin:/bin',
+        'FROM_TRACK': fromTrack,
+        'TO_TRACK': toTrack,
+      },
+      stdoutEncoding: utf8,
+      stderrEncoding: utf8,
+    );
+    return r.exitCode;
+  } finally {
+    dir.deleteSync(recursive: true);
+  }
+}
+
 void _assertPromoteShape(Workflow wf) {
   expect(wf.problem, isNull, reason: 'refusal: ${wf.problem}');
   expect(wf.jobs, isNotEmpty, reason: 'refusal: no jobs parsed');
 
+  // The first barrier, asserted for the first time. #165 made both inputs
+  // `type: choice` so `production` is not selectable in the UI, and nothing
+  // checked it — reverting either to free text was green. #21's post-merge
+  // criterion asked for a dispatch with `to_track: production` as evidence,
+  // which `choice` makes unproducible from the UI; this is what replaces
+  // that criterion, on the owner's call to keep `choice` (#179).
+  for (final name in const ['from_track', 'to_track']) {
+    final input = wf.dispatchInputs[name];
+    expect(input, isNotNull, reason: 'refusal: no `$name` input');
+    expect(
+      input!.type,
+      'choice',
+      reason:
+          'refusal: `$name` is `${input.type ?? 'free text'}` — free text '
+          'let a crafted value forge a "-> production" line into the run '
+          'summary and title a refused run as a promotion to production',
+    );
+    expect(input.options, [
+      'internal',
+      'alpha',
+      'beta',
+    ], reason: 'refusal: `$name` offers a track outside the testing tracks');
+    expect(
+      input.options,
+      isNot(contains('production')),
+      reason: 'refusal: production is selectable in the UI',
+    );
+  }
+
   for (final job in wf.jobs) {
-    if (job.steps.isEmpty) continue;
-    final refusals = job.steps
-        .where((s) => (s.run ?? '').contains('exit 1'))
-        .toList();
+    // A job with no steps used to `continue`, so a reusable-workflow job was
+    // invisible to every check below — and `secrets: inherit` hands it the
+    // service-account key. That is precisely what the failure message one
+    // line down warns about, so skipping it was the hole (#171).
     expect(
-      refusals,
+      job.uses,
+      isNull,
+      reason:
+          'refusal: job `${job.name}` calls the reusable workflow '
+          '`${job.uses}`, whose steps are not in this file and cannot be '
+          'checked. A job without a refusal can mint the credential and '
+          'promote unchecked',
+    );
+    expect(
+      job.steps,
       isNotEmpty,
-      reason:
-          'refusal: job `${job.name}` has no step that refuses. A job '
-          'without one can mint the credential and promote unchecked',
+      reason: 'refusal: job `${job.name}` has no steps',
     );
-    final refuse = job.steps.first;
     expect(
-      refuse.run ?? '',
-      contains('exit 1'),
+      job.continueOnError,
+      isFalse,
       reason:
-          'refusal: the first step of job `${job.name}` must be the '
-          'refusal; found `${refuse.id ?? refuse.name}`',
+          'refusal: job `${job.name}` carries `continue-on-error`, so its '
+          'refusal failing would not stop what depends on it',
     );
+
+    final refuse = job.steps.first;
+
+    // Behaviour, not text. `refuse.run.contains('exit 1')` was satisfied by
+    // any `exit 1` that never executes: inside a shell comment, inside an
+    // uncalled function, inside `if false; then … fi`. All three were green
+    // while the workflow promoted whatever the script allowed (#171). So the
+    // step is RUN, with the dispatch inputs set, and judged by its exit code.
+    expect(
+      refuse.run,
+      isNotNull,
+      reason:
+          'refusal: the first step of `${job.name}` is '
+          '`${refuse.uses ?? refuse.id}`, not a refusal that runs',
+    );
+    for (final probe in const [
+      (from: 'internal', to: 'production', shouldPass: false),
+      (from: 'production', to: 'alpha', shouldPass: false),
+      (from: 'internal', to: 'nonsense', shouldPass: false),
+      (from: 'alpha', to: 'alpha', shouldPass: false),
+      (from: 'internal', to: 'alpha', shouldPass: true),
+    ]) {
+      final code = _runRefusal(refuse.run!, probe.from, probe.to);
+      if (probe.shouldPass) {
+        expect(
+          code,
+          0,
+          reason:
+              'refusal: `${probe.from} -> ${probe.to}` is a legitimate '
+              'promotion and was refused — a refusal that blocks everything '
+              'is not a working guard',
+        );
+      } else {
+        expect(
+          code,
+          isNot(0),
+          reason:
+              'refusal: `${probe.from} -> ${probe.to}` was ACCEPTED by the '
+              'refusal step in `${job.name}`',
+        );
+      }
+    }
+
     expect(
       refuse.isUnconditional,
       isTrue,
@@ -90,13 +216,34 @@ void _assertPromoteShape(Workflow wf) {
           '(if: ${refuse.ifExpression}, continue-on-error: '
           '${refuse.continueOnError}) — it would be skipped or ignored',
     );
-    expect(
-      refuse.run,
-      contains('production'),
-      reason:
-          'refusal: the first step of `${job.name}` does not mention the '
-          'track it exists to refuse',
-    );
+
+    // Every step that ACTS must be unconditional. Only the first step was
+    // checked, so `if: always()` on `promote` was green and the "a failed
+    // refusal stops the run" guarantee was gone (#171). The reporting and
+    // cleanup steps are the deliberate exceptions: they exist to run on the
+    // refusal path, and they are named rather than pattern-matched.
+    const mayAlwaysRun = {'summary', 'forget'};
+    for (final step in job.steps) {
+      if (mayAlwaysRun.contains(step.id)) {
+        expect(
+          step.ifExpression,
+          'always()',
+          reason:
+              'refusal: `${step.id}` is allowed to run after a refusal only '
+              'as `if: always()`',
+        );
+        continue;
+      }
+      expect(
+        step.isUnconditional,
+        isTrue,
+        reason:
+            'refusal: step `${step.id ?? step.index}` of `${job.name}` is '
+            'conditional (if: ${step.ifExpression}, continue-on-error: '
+            '${step.continueOnError}), so it can run although the refusal '
+            'failed',
+      );
+    }
   }
 }
 
@@ -227,18 +374,147 @@ void main() {
           '$t\n  sneaky:\n    runs-on: ubuntu-latest\n    steps:\n'
           '      - id: token\n        run: gcloud auth activate-service-account\n'
           '      - id: promote\n        run: tools/play_promote.sh pkg internal production\n',
-      'the refusal stops refusing': (t) => t.replaceFirst(
-        RegExp(r'^(\s*)exit 1$', multiLine: true),
-        r'$1: # exit 1',
+      // #179 / #165: the input constraint reverted.
+      'to_track reverted to free text': (t) => t.replaceFirst(
+        '        default: alpha\n'
+            '        type: choice\n'
+            '        options: [internal, alpha, beta]\n',
+        '        default: alpha\n        type: string\n',
       ),
+      'production added to the options': (t) => t.replaceAll(
+        'options: [internal, alpha, beta]',
+        'options: [internal, alpha, beta, production]',
+      ),
+      // #171: the four remaining defeats of the text-matching version.
+      'every exit 1 becomes a shell comment': (t) => t.replaceAllMapped(
+        RegExp(r'^(\s*)exit 1$', multiLine: true),
+        (m) => '${m[1]}: # exit 1',
+      ),
+      'exit 1 survives only inside an uncalled function': (t) => t
+          .replaceAllMapped(
+            RegExp(r'^(\s*)exit 1$', multiLine: true),
+            (m) => '${m[1]}:',
+          )
+          .replaceFirst(
+            '          set -euo pipefail\n',
+            '          set -euo pipefail\n'
+                '          never_called() { exit 1; }\n',
+          ),
+      'exit 1 survives only inside if false': (t) => t
+          .replaceAllMapped(
+            RegExp(r'^(\s*)exit 1$', multiLine: true),
+            (m) => '${m[1]}:',
+          )
+          .replaceFirst(
+            '          set -euo pipefail\n',
+            '          set -euo pipefail\n'
+                '          if false; then exit 1; fi\n',
+          ),
+      'if: always() on the promote step': (t) => t.replaceFirst(
+        '      - id: promote\n',
+        '      - id: promote\n        if: always()\n',
+      ),
+      'continue-on-error as a quoted string': (t) => t.replaceFirst(
+        '      - id: refuse\n',
+        '      - id: refuse\n        continue-on-error: "true"\n',
+      ),
+      'a reusable-workflow job with no steps': (t) =>
+          '$t\n  sneaky:\n    uses: ./.github/workflows/evil.yml\n'
+          '    secrets: inherit\n',
+      // There is no 'first exit 1 commented out' entry, and that is a
+      // finding rather than an omission. The entry that used to be here
+      // passed `r'$1: # exit 1'` to replaceFirst, which inserts it
+      // LITERALLY: a `$1` landed at column 0, terminated the block scalar,
+      // and the shape assertion threw on `expect(wf.problem, isNull)`. The
+      // battery scored that as a catch, so the one entry that would have
+      // found #171's shell-comment defeat reported a pass while it was live
+      // (#172).
+      //
+      // Written correctly it does not defeat anything: the refusal rejects
+      // production twice — once by name, once by falling through the `case`
+      // to `*)` — so neutering the first `exit 1` leaves production refused.
+      // The honest mutation is the one below, which neuters them all.
     };
     mutations.forEach((why, mutate) {
       final mutated = mutate(text);
       expect(mutated, isNot(text), reason: 'sanity: "$why" changed nothing');
       expect(
+        Workflow.parse('play-promote.yml', mutated).problem,
+        isNull,
+        reason: 'sanity: "$why" produced YAML that does not parse',
+      );
+      expect(
         () => _assertPromoteShape(Workflow.parse('play-promote.yml', mutated)),
         throwsA(isA<TestFailure>()),
         reason: 'refusal-negative: "$why" was not caught',
+      );
+    });
+  });
+
+  group('a failed edit deletion is reported, not swallowed', () {
+    // curl without --fail exits 0 for an HTTP error, so #161's warning —
+    // which keyed off curl's exit status — could not fire. A DELETE answered
+    // 500 left an edit pending on the Play account while the run printed
+    // promoted=101 and exited 0, which is the outcome the warning exists to
+    // prevent. Two of the three delete sites had no warning branch at all
+    // (#178).
+    late Directory dir;
+
+    setUp(() => dir = Directory.systemTemp.createTempSync('hs-promote'));
+    tearDown(() => dir.deleteSync(recursive: true));
+
+    /// A curl that opens an edit, then answers everything else 500 — so the
+    /// script dies, the EXIT trap runs, and the cleanup DELETE is the call
+    /// under test.
+    void stubCurl() {
+      final f = File('${dir.path}/curl')..writeAsStringSync(_curlStub);
+      Process.runSync('chmod', ['+x', f.path]);
+    }
+
+    ({int code, String err}) run() {
+      final r = Process.runSync(
+        _script,
+        [_package, 'internal', 'alpha'],
+        workingDirectory: repoRoot.path,
+        includeParentEnvironment: false,
+        environment: {
+          'PATH': '${dir.path}:/usr/bin:/bin',
+          'PLAY_TOKEN': 'fake',
+          'HS_PLAY_API': _unreachableApi,
+        },
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8,
+      );
+      return (code: r.exitCode, err: r.stderr.toString());
+    }
+
+    test('a DELETE answered 500 warns that the edit is still pending', () {
+      stubCurl();
+      final r = run();
+      expect(r.code, isNot(0), reason: 'the run itself must still fail');
+      expect(
+        r.err,
+        contains('still pending'),
+        reason:
+            'a DELETE that failed must say so: the edit stays on the Play '
+            'account and blocks the next promotion',
+      );
+    });
+
+    test('every delete in the script goes through delete_edit', () {
+      // Two of three sites had no warning branch, so the fix is only as good
+      // as its application. A bare `curl ... -X DELETE` anywhere in the
+      // script means one more silent failure.
+      final text = File('${repoRoot.path}/$_script').readAsStringSync();
+      final bare = RegExp(r'curl[^\n]*-X DELETE')
+          .allMatches(text)
+          .map((m) => m.group(0)!)
+          .where((m) => !m.contains('--fail'))
+          .toList();
+      expect(
+        bare,
+        isEmpty,
+        reason: 'a DELETE without --fail cannot detect an HTTP error: $bare',
       );
     });
   });

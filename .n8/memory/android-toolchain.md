@@ -8,9 +8,16 @@ metadata:
 # Android toolchain (owner's machine)
 
 Recorded while executing #12 on 2026-09-19, corrected on the same day (#81, #88).
-Claims here were checked against the machine on 2026-09-19, and the ones that
-were merely kept were checked too — that is the step the first correction
-skipped (#88).
+Claims here were checked against the machine on 2026-09-19 and again on
+2026-09-20, and the ones that were merely kept were checked too — that is the
+step the first correction skipped (#88).
+
+That sentence has now been false twice. #88's fix invented a mechanism and
+shipped it unchecked; #99's fix corrected it and, in the same edit, in the
+paragraph written to hedge the previous guess, guessed again (#116). Writing
+"not established" and then naming a most-likely cause is still an assertion.
+Where this file does not know something it now says so and stops, and where a
+claim is checkable it carries the command and the date.
 
 **Do not read that as a guarantee.** The second correction then invented a
 mechanism to explain the first error and shipped it unchecked under exactly
@@ -54,11 +61,36 @@ over the ones that say why.
   fetched what it needed and accepted the licences as it went. The fallback the
   plan described — download the tools zip, run `sdkmanager`, then
   `flutter doctor --android-licenses` — was not needed to build.
-- Present now: `platforms/` holds `android-35`, `android-36` and `android-37.0`;
-  `ndk/28.2.13676358`; `cmake/3.22.1`. Only platform 36 and CMake 3.22.1 were
-  observed being installed during that build. **Where 35 and 37.0 came from is
-  not established** — most likely Android Studio, which was already here. Do not
-  read this list as "Gradle fetched all of it".
+- Present now, with each directory's creation time, read from the machine on
+  2026-09-20 (`stat -f '%SB' -t '%Y-%m-%d %H:%M:%S'`):
+
+  | Component | Created |
+  |---|---|
+  | `platforms/android-37.0` | 2026-08-26 21:39:51 |
+  | `ndk/28.2.13676358` | 2026-09-19 16:52:56 |
+  | `platforms/android-36` | 2026-09-19 16:53:07 |
+  | `cmake/3.22.1` | 2026-09-19 16:53:41 |
+  | `platforms/android-35` | 2026-09-19 17:23:58 |
+  | `~/Applications/Android Studio.app` | 2026-09-18 11:56:54 |
+
+  What that settles, and what the previous version of this paragraph got
+  wrong by guessing in the sentence written to stop guessing (#99, #116):
+
+  - **`android-35` was created during this project's own session**, at 17:23
+    on the day M0 was executed, 31 minutes after the 16:52–16:53 run. It was
+    not "already here", which is what "most likely Android Studio, which was
+    already here" asserted.
+  - **`android-37.0` predates this machine's Android Studio bundle by three
+    weeks**, so that install cannot have placed it. Where it came from is
+    genuinely unknown; the emulator package below shares its 26 August date,
+    so an earlier SDK install is the obvious candidate and is still a guess,
+    which is why it is named as one here and not stated in the body.
+  - The NDK was created in the same fifty-second window as platform 36. The
+    previous sentence said "only platform 36 and CMake 3.22.1 were observed
+    being installed", which described *what appeared in the build log*
+    rather than what was installed. Both readings are now given separately.
+
+  Do not read this list as "Gradle fetched all of it".
 - Related, and the reason the causal story above is hedged:
   `~/Library/Android/sdk/emulator` is dated **26 August**, well before this
   project began on 18 September. The SDK and the emulator package predate the

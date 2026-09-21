@@ -198,4 +198,65 @@ void main() {
       expect(r.code, anyOf(0, 2), reason: 'huge: ${r.err}');
     });
   });
+
+  group('a malformed code is never reported as an empty track', () {
+    // Exit 1 is the documented "no release with that status". Anything the
+    // parser cannot read must be 2, or the caller promotes nothing and is
+    // told the track is empty when it is not (#163, #178).
+    test('a code longer than Android allows is refused, not crashed', () {
+      // #163 raised CPython's digit ceiling to 100000 rather than catching
+      // the ValueError, so above it the behaviour was the original bug
+      // exactly, and below it a 99999-digit "code" was printed and PUT.
+      for (final digits in const [11, 4301, 99999, 100001]) {
+        final r = _pipe(
+          '{"releases":[{"status":"completed","versionCodes":'
+          '["${'9' * digits}"]}]}',
+        );
+        expect(
+          r.code,
+          2,
+          reason: 'a $digits-digit code must be refused as malformed',
+        );
+        expect(r.out.trim(), isEmpty);
+      }
+    });
+
+    test('a code above the 32-bit maximum is refused', () {
+      final r = _pipe(
+        '{"releases":[{"status":"completed","versionCodes":["2100000001"]}]}',
+      );
+      expect(r.code, 2, reason: r.err);
+      expect(r.err, contains('2100000000'));
+    });
+
+    test('the largest code Android accepts is still accepted', () {
+      // The complement: a limit that also refuses valid input is not a
+      // working limit.
+      final r = _pipe(
+        '{"releases":[{"status":"completed","versionCodes":["2100000000"]}]}',
+      );
+      expect(r.code, 0, reason: r.err);
+      expect(r.out.trim(), '2100000000');
+    });
+
+    for (final bad in const ['0', 'false', 'null', '{}', '"101"']) {
+      test('versionCodes: $bad is malformed, not empty', () {
+        // `codes = release.get("versionCodes") or []` flattened every one of
+        // these to "no codes" and exited 1, while the string "101" reached
+        // the type check and exited 2 — the same class of input answered two
+        // different ways (#178).
+        final r = _pipe(
+          '{"releases":[{"status":"completed","versionCodes":$bad}]}',
+        );
+        expect(r.code, 2, reason: 'versionCodes: $bad must be refused');
+        expect(r.out.trim(), isEmpty);
+      });
+    }
+
+    test('versionCodes absent really is an empty track', () {
+      // Absent is the one thing that may still mean empty.
+      final r = _pipe('{"releases":[{"status":"completed"}]}');
+      expect(r.code, 1, reason: r.err);
+    });
+  });
 }

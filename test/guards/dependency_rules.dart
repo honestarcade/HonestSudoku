@@ -40,7 +40,13 @@ class Offender {
 String normaliseText(String text) {
   var out = text;
   if (out.startsWith('﻿')) out = out.substring(1);
-  return out.replaceAll('\r', '');
+  // TRANSLATE, do not delete. Deleting works for CRLF because the `\n`
+  // survives, but a file terminated with lone `\r` — classic Mac endings,
+  // still produced by some editors and Git filters — collapsed into a single
+  // line, so every rule saw one unparseable string and the whole guard went
+  // silent. That is the same failure #96 was filed for, reintroduced by its
+  // own fix (#112).
+  return out.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
 }
 
 /// Why the lockfile itself cannot be trusted to be there and be whole.
@@ -387,6 +393,58 @@ String? _entryNameOf(RegExpMatch match) =>
 /// recognising them one at a time, anything that is not a plain block opener
 /// is refused **because** the rule cannot read it. "I cannot read this" must
 /// never render as "there is nothing here" — that is the whole defect class.
+/// What must be true of pubspec.yaml before any rule's silence means
+/// anything.
+///
+/// The rules are line scans, and a file they cannot split into lines
+/// produces no lines, no matches and no offenders — which reads exactly like
+/// a clean pubspec. A lone-`\r` file collapsed into one string and silenced
+/// every dependency rule while `path_provider` sat in the lockfile and 190
+/// tests passed. normaliseText now translates those endings, and this is the
+/// backstop for whatever the next unreadable shape turns out to be: a
+/// pubspec that does not look like a pubspec is an offender, not a pass
+/// (#96, #112).
+///
+/// Its own rule, applied to the real file, rather than a prelude inside
+/// another rule: the unit fixtures are deliberately small fragments, and
+/// folding this in would have failed them all for being short.
+List<Offender> pubspecPreconditions(String pubspecText) {
+  final text = normaliseText(pubspecText);
+  if (text.trim().isEmpty) {
+    return [
+      const Offender(
+        'pubspec.yaml:1',
+        '',
+        'pubspec.yaml is empty; every dependency rule would report nothing',
+      ),
+    ];
+  }
+  final lines = text.split('\n');
+  if (lines.length < 5) {
+    return [
+      Offender(
+        'pubspec.yaml:1',
+        '${lines.length} line(s)',
+        'pubspec.yaml did not split into lines, so every rule below scans '
+            'one unparseable string and finds nothing. Check its line '
+            'endings',
+      ),
+    ];
+  }
+  if (!RegExp(r'^name:\s*\S', multiLine: true).hasMatch(text) ||
+      !RegExp(r'^dependencies:\s*$', multiLine: true).hasMatch(text)) {
+    return [
+      const Offender(
+        'pubspec.yaml:1',
+        '',
+        'pubspec.yaml has no top-level `name:` or no `dependencies:` block, '
+            'so the rules cannot locate what they check',
+      ),
+    ];
+  }
+  return const [];
+}
+
 List<Offender> unreadableDependencySections(String pubspecText) {
   pubspecText = normaliseText(pubspecText);
   final offenders = <Offender>[];
@@ -496,10 +554,48 @@ List<Offender> sourceOffenders(String path, String text) {
     'RawDatagramSocket',
     'SecurityContext',
     'InternetAddress',
+    // #98 listed thirteen. These open connections and were not on it (#118).
+    'RawSynchronousSocket',
+    'RawSecureServerSocket',
+    'WebSocketTransformer',
+    'HttpOverrides',
+    'IOOverrides',
+    'NetworkInterface',
+    'ConnectionTask',
   ];
 
   // lib/links.dart is the one file allowed to hold a URL.
   final allowsHttps = path == 'lib/links.dart';
+  // No file in lib/ needs dart:io today. When one does, name it here in the
+  // same commit as the conversation that authorised it.
+  const allowsDartIo = false;
+
+  // The one a name list cannot catch: `Process.run('curl', [url])`.
+  //
+  // A name list is a floor. The rule bans class names rather than
+  // `import 'dart:io'`, and banning the import in lib/ would be one line and
+  // would catch every name above plus the ones nobody has thought of — at
+  // the cost of refusing legitimate file IO, which this app does not do yet
+  // (#118). Until it does, the import is the honest thing to ban, and this
+  // is the line that does it. It applies to lib/ only: the guards
+  // themselves, and anything under test/, read files for a living.
+  if (path.startsWith('lib/') && !allowsDartIo) {
+    for (var i = 0; i < lines.length; i++) {
+      if (RegExp('''^\\s*import\\s+['"]dart:io['"]''').hasMatch(lines[i])) {
+        offenders.add(
+          Offender(
+            '$path:${i + 1}',
+            "import 'dart:io'",
+            'the app imports dart:io, which is how every networking class '
+                'above arrives — including ones no name list has. If this '
+                'file genuinely needs file IO, that is a conversation about '
+                'invariant 1 and a change to this rule, not a local '
+                'exception',
+          ),
+        );
+      }
+    }
+  }
 
   for (var i = 0; i < lines.length; i++) {
     final line = lines[i];
@@ -520,19 +616,36 @@ List<Offender> sourceOffenders(String path, String text) {
       );
     }
     for (final identifier in identifiers) {
-      // (?<![A-Za-z0-9_]) — the match may be preceded by nothing that
-      // continues an identifier, so `SecureSocket` matches on `Socket` but
-      // `mySocketName` does not: there, `Socket` is preceded by `my`.
-      // (?![A-Za-z0-9_]) — and nothing may follow, so `WebSocketish` passes.
       // (?<![A-Za-z0-9]) — not preceded by an alphanumeric, so `MockSocket`
       // and `mySocketName` pass while `_Socket` is caught.
       // (?![A-Za-z0-9_]) — not followed by one, so `WebSocketish` passes.
+      //
+      // The underscore is allowed before the name but only at the start of
+      // an identifier: `_Socket` is a real private dart:io class, and
+      // `Test_Socket` and `A_HttpClient` are not — they were flagged,
+      // because a leading underscore was permitted anywhere. Same class as
+      // the `MockSocket` overshoot this boundary was written to fix, at
+      // lower likelihood (#98, #118). `(?<![A-Za-z0-9])` still allows the
+      // underscore; `(?<![A-Za-z0-9_][_]?)` would not allow `_Socket`, so
+      // the check is explicit instead.
       final pattern = RegExp(
         '(?<![A-Za-z0-9])${RegExp.escape(identifier)}(?![A-Za-z0-9_])',
       );
       final match = pattern.firstMatch(line);
       if (match != null) {
-        offenders.add(Offender(at, match.group(0)!, 'dart:io networking'));
+        // An underscore-joined name like `Test_Socket` is not the dart:io
+        // class: the character before the underscore continues an
+        // identifier, so the whole thing is one name of someone else's
+        // choosing (#118).
+        final before = match.start - 1;
+        final joined =
+            before >= 0 &&
+            line[before] == '_' &&
+            before > 0 &&
+            RegExp('[A-Za-z0-9]').hasMatch(line[before - 1]);
+        if (!joined) {
+          offenders.add(Offender(at, match.group(0)!, 'dart:io networking'));
+        }
       }
     }
   }

@@ -1,3 +1,5 @@
+import java.io.File
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
@@ -18,6 +20,25 @@ val hsSigningVars = listOf("HS_KEYSTORE_PATH", "HS_KEYSTORE_PASS", "HS_KEY_ALIAS
 val hsPresent = hsSigningVars.filter { !System.getenv(it).isNullOrBlank() }
 val hsReleaseRequested = System.getenv("HS_RELEASE") == "1"
 val hsSigningComplete = hsPresent.size == hsSigningVars.size
+
+// The verdict, written to a file the gate names, rather than said in the log
+// and grepped back.
+//
+// The log is not ours. `JAVA_TOOL_OPTIONS='-Dhs="signed with the UPLOAD key"'`
+// makes the JVM print "Picked up JAVA_TOOL_OPTIONS: ..." before Gradle starts,
+// which matched the gate's unanchored grep: a debug-signed bundle reported as
+// upload-signed, GATE PASSED, exit 0. The same variable made a correct build
+// fail. `_JAVA_OPTIONS` behaves identically, and any future log line
+// containing the phrase has the same effect (#120).
+//
+// This file is created by the gate, passed in by name, and written only here.
+// The println lines stay: they are for a human reading the build output, and
+// nothing keys off them any more.
+fun hsWriteVerdict(verdict: String) {
+    val path = System.getenv("HS_SIGNING_VERDICT") ?: return
+    runCatching { File(path).writeText(verdict) }
+        .onFailure { logger.warn("could not write HS_SIGNING_VERDICT: ${it.message}") }
+}
 
 // Partly set is always an error, in any mode: it almost certainly means a typo
 // in the variable name, and silently signing with the debug key would hide it.
@@ -80,6 +101,7 @@ android {
                 // prediction disagreed. Two definitions of "is this variable
                 // set" drifted apart twice (#91, #106); now a disagreement is
                 // itself a gate failure rather than a silent lie.
+                hsWriteVerdict("upload")
                 println("HS_* signing variables set — release build signed with the UPLOAD key")
                 signingConfig = signingConfigs.getByName("release")
             } else {
@@ -87,6 +109,7 @@ android {
                 // call, but `flutter build` filters warn-level output at its
                 // default verbosity (visible only with -v), and a warning
                 // nobody sees cannot do the job it exists for.
+                hsWriteVerdict("debug")
                 logger.warn("HS_* signing variables not set — release build signed with the DEBUG key; set HS_RELEASE=1 to make this an error")
                 println("HS_* signing variables not set — release build signed with the DEBUG key; set HS_RELEASE=1 to make this an error")
                 signingConfig = signingConfigs.getByName("debug")

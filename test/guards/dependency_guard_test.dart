@@ -133,6 +133,58 @@ void main() {
       );
     });
 
+    test('the known-ordinary list is exercised, name by name', () {
+      // #97's whole lesson: the allow-list had seventeen names and not one
+      // ended in `ads`, so the glob's complement was never asserted. The
+      // same omission applied to *tracking* and *attribution*, which had no
+      // complement at all. Every name below was found by running the
+      // patterns over the complete pub.dev list and then read (#113).
+      final refused = <String>[];
+      for (final name in policy.knownOrdinary) {
+        final reason = policy.matches(name);
+        if (reason != null) refused.add('$name refused by "$reason"');
+      }
+      expect(
+        refused,
+        isEmpty,
+        reason: describeOffenders('known-ordinary', refused),
+      );
+    });
+
+    test('the allowlist softens a glob and never a named block', () {
+      // It is consulted after blockedNames, so it cannot be used to
+      // un-block something deliberately named.
+      expect(
+        policy.matches('eye_tracking'),
+        isNull,
+        reason: 'a glob false positive must be allowed through',
+      );
+      expect(
+        policy.matches('firebase_analytics'),
+        isNotNull,
+        reason: 'a real tracker must still be refused',
+      );
+      expect(
+        policy.matches('affise_attribution_lib'),
+        isNotNull,
+        reason:
+            'the affise_attribution_* family is 15 of the 29 *attribution* '
+            'matches and is exactly what that glob exists to stop',
+      );
+      expect(
+        policy.matches('kochava_measurement_google_tracking'),
+        isNotNull,
+        reason: 'an attribution SDK ending in _tracking must be refused',
+      );
+      expect(
+        policy.matches('app_tracking_transparency'),
+        isNull,
+        reason:
+            "iOS's consent PROMPT is the opposite of a tracker, and the "
+            'glob refused it',
+      );
+    });
+
     test('the blocklist does not refuse ordinary packages', () {
       const mustAllow = [
         'path_provider',
@@ -219,6 +271,91 @@ void main() {
     // `packages:` section, so a lockfile with no such section — empty,
     // truncated, half-written — yields no packages and therefore no offenders,
     // and reads exactly like a clean one. That is the blocklist failing open.
+
+    test('a blocklisted direct dependency is labelled direct', () {
+      // With the pubspec collapsed by lone-CR endings the direct set was
+      // empty, so a DIRECT blocklisted package was reported as
+      // `http (transitive)` — the mislabel #79 and #96 both reported, and
+      // the one that makes the finding read as someone else's problem
+      // (#112).
+      const pubspec =
+          'name: honest_sudoku\n'
+          'environment:\n'
+          '  sdk: ^3.0.0\n'
+          'dependencies:\n'
+          '  flutter:\n'
+          '    sdk: flutter\n'
+          '  http: ^1.0.0\n';
+      const lock =
+          'packages:\n'
+          '  http:\n'
+          '    dependency: "direct main"\n'
+          '    version: "1.0.0"\n'
+          'sdks:\n';
+      for (final entry in {
+        'LF': pubspec,
+        'CRLF': pubspec.replaceAll('\n', '\r\n'),
+        'lone CR': pubspec.replaceAll('\n', '\r'),
+      }.entries) {
+        final offenders = lockOffenders(lock, entry.value);
+        expect(offenders.map((o) => o.what), [
+          'http (direct)',
+        ], reason: '${entry.key}: a direct dependency must read as direct');
+      }
+    });
+
+    test('the real pubspec passes its own preconditions', () {
+      final offenders = pubspecPreconditions(readFile('pubspec.yaml'));
+      expect(
+        offenders,
+        isEmpty,
+        reason: describeOffenders(
+          'pubspec-scannable',
+          offenders.map((o) => o.toString()).toList(),
+        ),
+      );
+    });
+
+    test('a pubspec the rules cannot read is an offender, not silence', () {
+      // #96 was filed because a CRLF pubspec silenced every dependency rule.
+      // Its fix normalised by DELETING carriage returns, so a file with lone
+      // `\r` endings collapsed into one line and the guard went silent
+      // again — with path_provider in the lockfile and 190 tests green
+      // (#112). normaliseText now translates; this is the backstop.
+      for (final entry in {
+        'empty': '',
+        'whitespace only': '   \n  \n',
+        'not a pubspec':
+            'hello: world\nand: more\nlines: here\n'
+            'to: pass\nthe: length check\n',
+      }.entries) {
+        expect(
+          pubspecPreconditions(entry.value),
+          isNotEmpty,
+          reason: 'pubspec-scannable: "${entry.key}" scanned as clean',
+        );
+      }
+    });
+
+    test('lone-CR line endings no longer collapse the file', () {
+      // The complement of the above: with translation, the rules read a
+      // lone-CR pubspec exactly as they read the real one.
+      final real = readFile('pubspec.yaml');
+      expect(
+        pubspecPreconditions(real.replaceAll('\n', '\r')),
+        isEmpty,
+        reason:
+            'with translation a lone-CR pubspec is readable; if this fires '
+            'again the normalisation has regressed to deleting',
+      );
+      expect(
+        normaliseText(real.replaceAll('\n', '\r')),
+        normaliseText(real),
+        reason:
+            'a lone-CR pubspec must normalise to the same text as the real '
+            'one, or every rule below scans a different document',
+      );
+    });
 
     test('the real lockfile passes its own preconditions', () {
       final offenders = lockfilePreconditions(readFile('pubspec.lock'));
@@ -970,5 +1107,95 @@ dev_dependencies:
         reason: 'missing $path',
       );
     }
+  });
+
+  test('the newly listed dart:io connectors are refused', () {
+    // #98 listed thirteen names. These open connections and were not on
+    // the list (#118).
+    for (final name in const [
+      'RawSynchronousSocket',
+      'RawSecureServerSocket',
+      'WebSocketTransformer',
+      'HttpOverrides',
+      'IOOverrides',
+      'NetworkInterface',
+      'ConnectionTask',
+    ]) {
+      expect(
+        sourceOffenders('lib/x.dart', 'final x = $name.something();\n'),
+        isNotEmpty,
+        reason: 'dart-io: $name is not refused',
+      );
+    }
+  });
+
+  test('importing dart:io in lib/ is refused outright', () {
+    // The class list is a floor: no name list catches
+    // Process.run('curl', [url]). Banning the import is one line and
+    // catches every one of them, at the cost of refusing legitimate file
+    // IO — which this app does not do (#118).
+    expect(
+      sourceOffenders('lib/main.dart', "import 'dart:io';\n"),
+      isNotEmpty,
+      reason: 'dart-io-import: the import is not refused',
+    );
+    expect(
+      sourceOffenders('lib/main.dart', 'import "dart:io";\n'),
+      isNotEmpty,
+      reason: 'dart-io-import: the double-quoted spelling passes',
+    );
+    // The complement, twice over: the ban is scoped to lib/, and a
+    // mention that is not an import is not an import.
+    expect(
+      sourceOffenders('test/guards/x.dart', "import 'dart:io';\n"),
+      isEmpty,
+      reason:
+          'dart-io-import: the guards read files for a living and must '
+          'not be refused',
+    );
+    expect(
+      sourceOffenders('lib/x.dart', '// we deliberately avoid dart:io\n'),
+      isEmpty,
+      reason: 'dart-io-import: a comment is not an import',
+    );
+  });
+
+  test('the real lib/ imports no dart:io', () {
+    // The rule is worth nothing if the tree already breaches it.
+    final offenders = <String>[];
+    for (final f
+        in Directory('${repoRoot.path}/lib')
+            .listSync(recursive: true)
+            .whereType<File>()
+            .where((f) => f.path.endsWith('.dart'))) {
+      final rel = f.path.replaceFirst('${repoRoot.path}/', '');
+      offenders.addAll(
+        sourceOffenders(rel, f.readAsStringSync()).map((o) => o.toString()),
+      );
+    }
+    expect(offenders, isEmpty, reason: describeOffenders('lib', offenders));
+  });
+
+  test('an underscore-joined name is not the dart:io class', () {
+    // The boundary allowed a leading underscore anywhere, so `Test_Socket`
+    // and `A_HttpClient` were flagged — the same overshoot as the
+    // `MockSocket` bug it was written to fix (#98, #118).
+    for (final ok in const [
+      'final x = Test_Socket();',
+      'final x = A_HttpClient();',
+      'class My_WebSocket {}',
+    ]) {
+      expect(
+        sourceOffenders('lib/x.dart', '$ok\n'),
+        isEmpty,
+        reason: 'dart-io-boundary: refused `$ok`',
+      );
+    }
+    // The complement: a genuinely private dart:io class still is one.
+    expect(
+      sourceOffenders('lib/x.dart', 'final x = _Socket();\n'),
+      isNotEmpty,
+      reason: 'dart-io-boundary: `_Socket` must still be caught',
+    );
   });
 }

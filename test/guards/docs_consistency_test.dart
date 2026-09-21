@@ -26,6 +26,37 @@ import 'repo_files.dart';
 
 const _gradle = 'android/app/build.gradle.kts';
 
+/// Derive broken text from a real file, and refuse to produce a no-op.
+///
+/// A fixture that says `real.replaceAll(x, y)` where `x` is no longer in the
+/// file produces the file unchanged. The test then asserts that the UNCHANGED
+/// real file is refused, fails, and reports something that looks like the
+/// rule misbehaving — the misleading shape #102 added the integrity check to
+/// prevent.
+///
+/// It was added at 5 of 19 derivation sites, so the other fourteen still had
+/// it. Demonstrated by reflowing the README's code-block alignment, a
+/// cosmetic edit, which turned the `-d chrome` fixture into
+/// `Expected: contains '-d chrome' / Actual: ''` (#102, #117).
+///
+/// Routing every derivation through this makes the omission impossible
+/// rather than remembered.
+String mutate(String source, Object from, String to, {String? why}) {
+  final out = from is Pattern
+      ? source.replaceAll(from, to)
+      : source.replaceAll('$from', to);
+  expect(
+    out,
+    isNot(source),
+    reason:
+        'fixture-integrity: ${why ?? 'replacing "$from"'} changed nothing, so '
+        'this test would assert against the unmodified real file. The text '
+        'it looks for has moved or been reworded — fix the fixture, not the '
+        'rule.',
+  );
+  return out;
+}
+
 void main() {
   late String applicationId;
   late String policy;
@@ -167,7 +198,8 @@ void main() {
     test('a deleted permalink is caught', () {
       // The single line the published URL rests on. Remove it and `/privacy`
       // 404s, taking the README link and M7's Play Console URL with it.
-      final broken = policy.replaceAll(
+      final broken = mutate(
+        policy,
         RegExp(r'^permalink: /privacy\n', multiLine: true),
         '',
       );
@@ -190,7 +222,7 @@ void main() {
       'published by Honest Arcade': 'published by someone else',
     }.entries) {
       test('a policy that stops claiming "${claim.key}" is caught', () {
-        final broken = policy.replaceAll(claim.key, claim.value);
+        final broken = mutate(policy, claim.key, claim.value);
         expect(
           broken,
           isNot(policy),
@@ -206,6 +238,84 @@ void main() {
       });
     }
 
+    test('the collection sentence cannot be inverted', () {
+      // #104 closed one half of this and its closing comment said "all three
+      // of the substantive gaps". This was the second half of gap 2:
+      // changing "are collected, stored, shared, or sold" to "ARE collected
+      // ... and sold to third parties" left the suite green, because every
+      // other pin matched a different sentence (#117).
+      final inverted = mutate(
+        policy,
+        'No personal information, identifiers, usage analytics, crash '
+            'reports,\n  advertising IDs, or diagnostics are collected, '
+            'stored, shared, or sold',
+        'Personal information, identifiers, usage analytics, crash '
+            'reports,\n  advertising IDs, and diagnostics are collected, '
+            'stored, shared, and sold to third parties',
+      );
+      expect(
+        inverted,
+        isNot(policy),
+        reason: 'sanity: the inversion matched nothing',
+      );
+      expect(
+        policyOffenders(inverted, 'com.honestarcade.sudoku'),
+        isNotEmpty,
+        reason: 'policy-inverted: the collection sentence is unpinned',
+      );
+    });
+
+    test('a claim hidden in an HTML comment does not satisfy a pin', () {
+      // The rules read raw text with no notion of what renders, so the whole
+      // visible policy could be replaced with an inverted one and all nine
+      // pinned sentences smuggled into one comment block (#117).
+      final hidden =
+          '---\npermalink: /privacy\n---\n\n'
+          '# Privacy\n\nEffective date: 2026-09-20\n\n'
+          'This app `com.honestarcade.sudoku` collects everything.\n'
+          'Contact support@honestarcade.app\n\n'
+          '<!--\n${policy.replaceAll("<!--", "").replaceAll("-->", "")}\n-->\n';
+      expect(
+        policyOffenders(hidden, 'com.honestarcade.sudoku'),
+        isNotEmpty,
+        reason: 'policy-comment: a pin was satisfied by unpublished text',
+      );
+    });
+
+    test('a struck-through claim does not satisfy a pin', () {
+      // proseOf stripped `*` and not `~`, so `~~collects no data. none.~~`
+      // matched while rendering as struck-through text (#102, #117).
+      final struck = mutate(
+        policy,
+        'collects **no data**. None.',
+        '~~collects **no data**. None.~~',
+      );
+      expect(struck, isNot(policy), reason: 'sanity: nothing was struck');
+      expect(
+        policyOffenders(struck, 'com.honestarcade.sudoku'),
+        isNotEmpty,
+        reason: 'policy-struck: strikethrough satisfied a pin',
+      );
+    });
+
+    test('a contradiction appended after the pins is caught', () {
+      // Every pin can be present while the page says the opposite further
+      // down. A substring pin cannot see that, so the inversions are refused
+      // by name (#117).
+      for (final appended in const [
+        '\n\n**Update:** the app now collects diagnostics and shares them '
+            'with our ad partners.\n',
+        '\n\nWe collect your email address for marketing.\n',
+        '\n\nThe full version shows banner ads.\n',
+      ]) {
+        expect(
+          policyOffenders(policy + appended, 'com.honestarcade.sudoku'),
+          isNotEmpty,
+          reason: 'policy-contradiction: "$appended" was not caught',
+        );
+      }
+    });
+
     test('a site root that keeps the word but drops the link is caught', () {
       // The rule used to match the word "privacy" anywhere, so a sentence
       // announcing the page had been taken down satisfied it. It failed open
@@ -214,17 +324,32 @@ void main() {
           '# Honest Sudoku\n\nThe privacy page has been taken '
           'down.\n';
       expect(siteIndexOffenders(broken), isNotEmpty);
-      // The spellings Jekyll accepts and that actually resolve. The previous
-      // version of this list contained `](/privacy)` and called it "a real
-      // link" — on a project page that resolves to
-      // honestarcade.github.io/privacy, which 404s. A negative fixture that
-      // blesses a broken URL is worse than no fixture, because the next
-      // person to write the correct form is told they are wrong (#101).
+      // The spellings that actually resolve. EVERY ONE was curled against
+      // the live site on 2026-09-20 before being added here — the step both
+      // this fixture and the one before it skipped, and two seconds each.
+      //
+      //   /privacy         200      /privacy.md      404
+      //   /privacy.html    200      /privacy/        404
+      //   /privacy#section 200      bare /privacy    404
+      //   /privacy?utm=x   200
+      //
+      // The previous list contained `](/privacy)` (#101) and then, three
+      // lines below the comment explaining why that was wrong, `](privacy.md)`
+      // (#110). A negative fixture that blesses a broken URL is worse than no
+      // fixture: the next person to write the correct form is told they are
+      // wrong.
       for (final good in const [
         '- [Privacy policy](privacy)',
         '- [Privacy policy](privacy.html)',
-        '- [Privacy policy](privacy.md)',
         '- [Privacy policy](privacy "Policy")',
+        // Six forms the rule used to refuse although they return 200.
+        '- [Privacy policy](./privacy)',
+        '- [Privacy policy](privacy#section)',
+        '- [Privacy policy](privacy?utm=x)',
+        '- [Privacy policy](<privacy>)',
+        "- [Privacy policy]({{ '/privacy' | absolute_url }})",
+        '- [Privacy policy]({{ site.url }}{{ site.baseurl }}/privacy)',
+        // And the ones it already accepted.
         '- [Privacy policy]({{ site.baseurl }}/privacy)',
         "- [Privacy policy]({{ '/privacy' | relative_url }})",
         '- [Privacy policy](https://honestarcade.github.io/HonestSudoku/privacy)',
@@ -237,6 +362,57 @@ void main() {
           reason: 'site-index-negative: refused a link that resolves: $good',
         );
       }
+
+      // Spellings that 404, refused by name. `privacy.md` is the source
+      // extension — Jekyll serves privacy.html — and a trailing slash is a
+      // directory that does not exist.
+      for (final bad in const [
+        '- [Privacy policy](privacy.md)',
+        '- [Privacy policy](privacy/)',
+        '- [Privacy policy](/privacy/)',
+      ]) {
+        expect(
+          siteIndexOffenders(bad),
+          isNotEmpty,
+          reason: 'site-index: blessed a URL that 404s: $bad',
+        );
+      }
+
+      // A link to a FOREIGN host passed, because the rule reduced an
+      // absolute URL to its path and compared only that (#110).
+      expect(
+        siteIndexOffenders(
+          '- [Privacy policy](https://evil.example.com/HonestSudoku/privacy)',
+        ),
+        isNotEmpty,
+        reason: 'site-index: any host serving /HonestSudoku/privacy passed',
+      );
+
+      // A link that renders nothing. Reproduced on the real docs/index.md by
+      // moving its only link into a fenced block, with the suite green.
+      for (final hidden in const [
+        '# Honest Sudoku\n\n```\n- [Privacy policy](privacy)\n```\n',
+        '# Honest Sudoku\n\n<!-- - [Privacy policy](privacy) -->\n',
+        '# Honest Sudoku\n\nWrite `[Privacy policy](privacy)` to link it.\n',
+      ]) {
+        expect(
+          siteIndexOffenders(hidden),
+          isNotEmpty,
+          reason:
+              'site-index: a link that is never published satisfied the '
+              'rule: $hidden',
+        );
+      }
+
+      // A page carrying BOTH a correct link and a broken one passes: the
+      // correct one resolves, and that is what a reader clicks.
+      expect(
+        siteIndexOffenders(
+          '- [Privacy policy](privacy)\n- [Old link](/privacy)\n',
+        ),
+        isEmpty,
+        reason: 'site-index: one resolving link is enough',
+      );
 
       // And the root-absolute form is refused BY NAME, with the reason.
       final rootAbsolute = siteIndexOffenders('- [Privacy policy](/privacy)');
@@ -258,7 +434,7 @@ void main() {
       final offenders = licenceOffenders(broken).join('\n');
       expect(
         offenders,
-        contains('MIT body'),
+        contains('not the MIT text'),
         reason:
             'licence-body: two substrings made a GPL body pass as MIT, which '
             'is what the licence says about itself rather than what it grants',
@@ -266,7 +442,8 @@ void main() {
     });
 
     test('a missing copyright line is caught', () {
-      final broken = readFile('LICENSE').replaceAll(
+      final broken = mutate(
+        readFile('LICENSE'),
         RegExp(r'Copyright \(c\) \d{4} Honest Arcade'),
         'Honest Arcade',
       );
@@ -313,7 +490,8 @@ void main() {
     });
 
     test('a wrong package id in the policy is caught', () {
-      final broken = policy.replaceAll(
+      final broken = mutate(
+        policy,
         '`$applicationId`',
         '`com.honestarcade.sudoku.honest_sudoku`',
       );
@@ -324,7 +502,8 @@ void main() {
     });
 
     test('a deleted effective date is caught', () {
-      final broken = policy.replaceAll(
+      final broken = mutate(
+        policy,
         RegExp(r'Effective date:\s*\d{4}-\d{2}-\d{2}'),
         'Effective date: soon',
       );
@@ -335,7 +514,7 @@ void main() {
     });
 
     test('a deleted contact address is caught', () {
-      final broken = policy.replaceAll('support@honestarcade.app', '');
+      final broken = mutate(policy, 'support@honestarcade.app', '');
       expect(
         policyOffenders(broken, applicationId).join('\n'),
         contains('contact address'),
@@ -348,7 +527,8 @@ void main() {
       // so the sentence is guarded, not merely present today.
       // Note the substring: the policy hard-wraps after "no", so the
       // sentence this mutates is not contiguous in the file either.
-      final broken = policy.replaceAll(
+      final broken = mutate(
+        policy,
         'permissions at all',
         'permissions for advertising',
       );
@@ -364,7 +544,8 @@ void main() {
       // The licence's ONE condition. Without it this is a bare grant with no
       // attribution requirement and is not MIT — and the whole suite stayed
       // green when it was deleted.
-      final broken = readFile('LICENSE').replaceAll(
+      final broken = mutate(
+        readFile('LICENSE'),
         RegExp(
           r'The above copyright notice and this permission notice shall be '
           r'included in all\ncopies or substantial portions of the Software\.\n\n',
@@ -383,7 +564,8 @@ void main() {
     });
 
     test('a policy that inverts its headline claim is caught', () {
-      final broken = policy.replaceAll(
+      final broken = mutate(
+        policy,
         'collects **no data**. None.',
         'collects diagnostics and usage analytics.',
       );
@@ -403,7 +585,7 @@ void main() {
       'Uninstalling the app deletes them': 'uninstalling',
     }.entries) {
       test('deleting the "${claim.value}" paragraph is caught', () {
-        final broken = policy.replaceAll(claim.key, 'something else entirely');
+        final broken = mutate(policy, claim.key, 'something else entirely');
         expect(broken, isNot(policy), reason: 'fixture-integrity');
         expect(
           policyOffenders(broken, applicationId).join('\n'),
@@ -419,7 +601,7 @@ void main() {
         'permalink: "/privacy"',
         "permalink: '/privacy'",
       ]) {
-        final edited = policy.replaceAll('permalink: /privacy', spelling);
+        final edited = mutate(policy, 'permalink: /privacy', spelling);
         expect(
           policyOffenders(
             edited,
@@ -464,7 +646,8 @@ void main() {
       );
 
       // An Oxford comma in the SDK sentence must not break the build.
-      final oxford = policy.replaceAll(
+      final oxford = mutate(
+        policy,
         'attribution or crash-reporting',
         'attribution, or crash-reporting',
       );
@@ -514,7 +697,43 @@ android {
     test('a non-MIT licence is caught', () {
       expect(
         licenceOffenders('GNU GENERAL PUBLIC LICENSE\nHonest Arcade\n').join(),
-        contains('not an MIT licence'),
+        contains('not the MIT text'),
+      );
+    });
+
+    test('a licence that negates the MIT grant in prose is caught', () {
+      // The rule was four substrings, so a licence could contain all four
+      // while saying the opposite around them. This text passed every check
+      // (#89, #104, #111).
+      const negated =
+          'MIT License\n\n'
+          'Copyright (c) 2026 Honest Arcade\n\n'
+          'THIS IS NOT AN MIT LICENCE. Commercial use, sublicensing and sale\n'
+          'are PROHIBITED. All other rights are reserved by Honest Arcade.\n\n'
+          'For the avoidance of doubt, nothing here should be read as saying\n'
+          '"Permission is hereby granted, free of charge" to deal in the\n'
+          'Software "without restriction".\n\n'
+          'The above copyright notice and this permission notice shall be\n'
+          'included in all copies or substantial portions of the Software.\n\n'
+          'THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.\n';
+      expect(
+        licenceOffenders(negated).join('\n'),
+        contains('not the MIT text'),
+        reason:
+            'licence-negated: a licence that says it is not MIT, and quotes '
+            'the required phrases only to disclaim them, passed',
+      );
+    });
+
+    test('the real licence re-wrapped is still accepted', () {
+      // The complement: comparison is whitespace-normalised, so re-flowing
+      // the file is fine. A check that also refuses the real licence in a
+      // different wrapping is a check people delete.
+      final real = readFile('LICENSE');
+      expect(
+        licenceOffenders(real.replaceAll('\n', ' ')),
+        isEmpty,
+        reason: 'licence-rewrap: re-wrapping must not be an offence',
       );
     });
 
@@ -529,7 +748,8 @@ android {
     // line was deleted once, by hand, and until now nothing objected to it
     // coming back.
     test('the returning -d chrome example is caught', () {
-      final broken = readme.replaceAll(
+      final broken = mutate(
+        readme,
         'flutter run                        #',
         'flutter run -d chrome              #',
       );
@@ -537,7 +757,8 @@ android {
     });
 
     test('a reworded intro is caught', () {
-      final broken = readme.replaceAll(
+      final broken = mutate(
+        readme,
         'A fully offline Sudoku game for Android phones, built with Flutter.',
         'A Sudoku game.',
       );
@@ -545,7 +766,7 @@ android {
     });
 
     test('a deleted Requirements line is caught', () {
-      final broken = readme.replaceAll('Android 7.0 (API 24) or newer', 'any');
+      final broken = mutate(readme, 'Android 7.0 (API 24) or newer', 'any');
       expect(readmeOffenders(broken).join('\n'), contains('Requirements'));
     });
 
@@ -555,7 +776,8 @@ android {
     });
 
     test('a dropped policy link is caught', () {
-      final broken = readme.replaceAll(
+      final broken = mutate(
+        readme,
         'honestarcade.github.io/HonestSudoku/privacy',
         'example.com',
       );
@@ -563,7 +785,7 @@ android {
     });
 
     test('a dropped trademark carve-out is caught', () {
-      final broken = readme.replaceAll('trademark', 'copyright');
+      final broken = mutate(readme, 'trademark', 'copyright');
       expect(readmeOffenders(broken).join('\n'), contains('trademark rights'));
     });
   });

@@ -77,9 +77,14 @@ const _keystorePath = 'HS_KEYSTORE_PATH';
 /// It has to exist: since #91 the gate refuses to promise the upload key for a
 /// keystore it cannot read, so a fixture pointing at a path that is not there
 /// would exercise that branch instead of the one it means to.
-final File _fakeKeystore = File(
-  '${Directory.systemTemp.createTempSync('hs-signing').path}/upload.p12',
-)..writeAsStringSync('not a real keystore');
+/// Created once and registered for removal, rather than leaked: a top-level
+/// `createTempSync` with no teardown left one directory behind per
+/// `flutter test` run (#180).
+final Directory _fakeKeystoreDir = Directory.systemTemp.createTempSync(
+  'hs-signing',
+);
+final File _fakeKeystore = File('${_fakeKeystoreDir.path}/upload.p12')
+  ..writeAsStringSync('not a real keystore');
 
 Map<String, String> get _allFour => {
   'HS_KEYSTORE_PATH': _fakeKeystore.path,
@@ -341,38 +346,146 @@ void _signingModeTests() {
   });
 
   test('the gate cross-checks its prediction against what Gradle did', () {
-    // The part that cannot drift. `signing_mode` is a prediction; the build is
-    // the fact. They have disagreed twice (#91, #106), each time with the gate
-    // announcing the upload key over a debug-signed bundle. A disagreement is
-    // now a gate failure, which is what makes the residual multi-byte gap in
-    // `hs_is_blank` harmless rather than merely unlikely.
-    final gate = readFile('tools/gate.sh');
-    expect(
-      gate,
-      contains('signed with the UPLOAD key'),
-      reason:
-          'cross-check: the gate no longer reads back which key Gradle used',
-    );
-    expect(gate, contains('signed with the DEBUG key'));
-    expect(
-      gate,
-      contains(r'GATE FAILED at $label: the header said'),
-      reason:
-          'cross-check: a disagreement between the header and the build must '
-          'fail the gate, not be printed and ignored',
-    );
+    // BEHAVIOURAL. The previous version of this test grepped gate.sh and
+    // build.gradle.kts for string literals, so it would have passed over a
+    // cross-check replaced by `true` — the load-bearing half of #106's fix
+    // was asserted by source inspection only (#120).
+    //
+    // This runs the real cross-check block against a verdict file the test
+    // writes, which is exactly what Gradle writes at build time, and reads
+    // the gate's conclusion.
+    final dir = Directory.systemTemp.createTempSync('hs-crosscheck');
+    addTearDown(() => dir.deleteSync(recursive: true));
 
-    // And the build file must say which key it used in BOTH branches, or the
-    // cross-check has nothing to read.
+    final gate = readFile('tools/gate.sh');
+    // The block under test, lifted from the real file so it cannot drift
+    // from it: everything between the verdict read and the agreement line.
+    final start = gate.indexOf(r'if [ ! -s "$VERDICT_FILE" ]; then');
+    final end = gate.indexOf('signing: Gradle used the \$actual key');
+    expect(
+      start,
+      greaterThan(0),
+      reason:
+          'cross-check: the verdict-file read is gone from gate.sh — the '
+          'gate is back to grepping the build log, which anything can write',
+    );
+    expect(end, greaterThan(start));
+    final block = gate.substring(start, gate.indexOf('\n', end) + 1);
+
+    ({int code, String out, String err}) runCheck({
+      required String verdict,
+      required String prediction,
+    }) {
+      final verdictFile = File('${dir.path}/verdict')
+        ..writeAsStringSync(verdict);
+      final script = File('${dir.path}/check.sh')
+        ..writeAsStringSync(
+          '#!/bin/bash\n'
+          'set -uo pipefail\n'
+          'VERDICT_FILE="${verdictFile.path}"\n'
+          'label="build release bundle"\n'
+          'SIGNING_MODE="a header"\n'
+          'signing_prediction() { echo "$prediction"; }\n'
+          '$block',
+        );
+      final r = Process.runSync(
+        '/bin/bash',
+        [script.path],
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8,
+      );
+      return (
+        code: r.exitCode,
+        out: r.stdout.toString(),
+        err: r.stderr.toString(),
+      );
+    }
+
+    // Agreement passes, both ways round.
+    for (final v in const ['upload', 'debug']) {
+      final r = runCheck(verdict: v, prediction: v);
+      expect(r.code, 0, reason: 'cross-check: $v/$v failed: ${r.err}');
+      expect(r.out, contains('prediction agreed'));
+    }
+
+    // Disagreement fails, both ways round. The second is the one that
+    // matters: a debug-signed bundle announced as the upload key.
+    for (final pair in const [
+      (verdict: 'debug', prediction: 'upload'),
+      (verdict: 'upload', prediction: 'debug'),
+    ]) {
+      final r = runCheck(verdict: pair.verdict, prediction: pair.prediction);
+      expect(
+        r.code,
+        isNot(0),
+        reason:
+            'cross-check: predicted ${pair.prediction}, built '
+            '${pair.verdict}, and the gate passed',
+      );
+      expect(r.err, contains('GATE FAILED'));
+    }
+
+    // A predicted refusal followed by a successful build is a failure.
+    // This is #120's case 1, and it used to print "header agreed": three
+    // distinct headers collapsed into `predicted=debug`, two of which
+    // predict FAILURE, so a successful debug-signed build matched them.
+    for (final v in const ['upload', 'debug']) {
+      final r = runCheck(verdict: v, prediction: 'refusal');
+      expect(
+        r.code,
+        isNot(0),
+        reason:
+            'cross-check: the header predicted a refusal, the build '
+            'produced a $v-signed bundle, and the gate passed',
+      );
+      expect(r.err, contains('succeeded anyway'));
+    }
+
+    // No verdict at all is a failure, not a pass. Otherwise deleting the
+    // write from build.gradle.kts disables the whole check silently.
+    final empty = runCheck(verdict: '', prediction: 'debug');
+    expect(empty.code, isNot(0));
+    expect(empty.err, contains('no signing verdict'));
+
+    // And a verdict that is neither token.
+    final junk = runCheck(verdict: 'maybe', prediction: 'debug');
+    expect(junk.code, isNot(0));
+    expect(junk.err, contains("says 'maybe'"));
+  });
+
+  test('the build writes the verdict to a file, in both branches', () {
+    // The gate reads a file rather than the log because the log is not
+    // ours: JAVA_TOOL_OPTIONS='-Dhs="signed with the UPLOAD key"' made the
+    // JVM print a line the old unanchored grep matched, reporting a
+    // debug-signed bundle as upload-signed with GATE PASSED and exit 0
+    // (#120).
     final gradle = readFile(_gradle);
     expect(
       gradle,
-      contains('signed with the UPLOAD key'),
+      contains('HS_SIGNING_VERDICT'),
       reason:
-          'cross-check: build.gradle.kts announces the debug fallback but not '
-          'the upload key, so the gate cannot tell the two apart',
+          'cross-check: build.gradle.kts no longer writes a verdict file, '
+          'so the gate has nothing to read',
     );
-    expect(gradle, contains('signed with the DEBUG key'));
+    expect(
+      RegExp(r'hsWriteVerdict\("upload"\)').hasMatch(gradle),
+      isTrue,
+      reason: 'cross-check: the upload branch writes no verdict',
+    );
+    expect(
+      RegExp(r'hsWriteVerdict\("debug"\)').hasMatch(gradle),
+      isTrue,
+      reason: 'cross-check: the debug branch writes no verdict',
+    );
+    // The gate must not be reading the log for this any more.
+    final gate = readFile('tools/gate.sh');
+    expect(
+      gate,
+      isNot(contains(r'grep -q "signed with the UPLOAD key" "$BUILD_LOG"')),
+      reason:
+          'cross-check: the gate is grepping the build log again, which any '
+          'JVM option can write into',
+    );
   });
 
   test('the gate dispatches through a function, not eval', () {
@@ -441,9 +554,13 @@ void _signingModeTests() {
   });
 
   test('the credentials file quotes its values', () {
-    // It documents itself as sourceable. An unquoted value containing a space
-    // breaks `. this-file`, and one containing a shell metacharacter executes
-    // on it (#108).
+    // The file is explicitly NOT sourceable — make_upload_key.sh says "Do
+    // NOT source this file" and set_ci_secrets.sh parses it — so the reason
+    // this test gave for quoting stopped being true (#119, #180). Quoting
+    // still matters: the parser reads to the matching quote, so an unquoted
+    // value containing a space is truncated, and anyone who sources the file
+    // by hand despite the warning executes whatever a metacharacter in the
+    // password expands to (#108).
     final script = readFile('tools/make_upload_key.sh');
     for (final name in _signingVars) {
       expect(
@@ -666,6 +783,14 @@ void _hardFailTests() {
 }
 
 void main() {
+  // One directory per `flutter test` run was left behind: the fixture was
+  // created in a top-level `final` with no teardown (#180).
+  tearDownAll(() {
+    if (_fakeKeystoreDir.existsSync()) {
+      _fakeKeystoreDir.deleteSync(recursive: true);
+    }
+  });
+
   group('gate.sh signing mode', _signingModeTests);
   group('hard failure produces nothing', _hardFailTests);
 
@@ -783,4 +908,74 @@ void main() {
       );
     },
   );
+
+  test('the committed certificate is not writable by a test run', () {
+    // This actually happened. make_upload_key.sh refused to overwrite the
+    // keystore and the credentials file and NOT the exported certificate,
+    // whose default path is relative to the repository root that the script
+    // cd's to. The guard suite runs that script with a fake $HOME, which
+    // moves the keystore and not the certificate — so `flutter test` wrote a
+    // throwaway key's certificate over the committed one, and
+    // verify_upload_cert.sh would then have failed every build (#123).
+    final script = readFile('tools/make_upload_key.sh');
+    expect(
+      script,
+      contains(r'for hs_existing in "$KEYSTORE" "$CREDENTIALS" "$CERT_OUT"'),
+      reason:
+          'cert-overwrite: the exported certificate is not in the refusal '
+          'list, so a run with a fake HOME can overwrite the committed one',
+    );
+    expect(
+      script,
+      contains('HS_UPLOAD_CERT_OUT'),
+      reason:
+          'cert-overwrite: the certificate path is not overridable, so a '
+          'test cannot exercise the script without writing to the real one',
+    );
+  });
+
+  test('the committed certificate is the one the README names', () {
+    // The fingerprint is recorded in android/signing/README.md so it can be
+    // compared without a keystore. If the two ever disagree, one of them is
+    // describing a key this project does not sign with.
+    // Resolved the way the scripts do: the pinned Homebrew path first,
+    // because /usr/bin/keytool on macOS is a stub that exists, is
+    // executable and cannot run.
+    const pinned = '/opt/homebrew/opt/openjdk@21/bin/keytool';
+    final keytool = File(pinned).existsSync()
+        ? pinned
+        : (Process.runSync('/usr/bin/which', ['keytool']).stdout as String)
+              .trim();
+    if (keytool.isEmpty) {
+      markTestSkipped('no keytool available');
+      return;
+    }
+    final printed = Process.runSync(
+      keytool,
+      [
+        '-printcert',
+        '-file',
+        '${repoRoot.path}/android/signing/upload_certificate.pem',
+      ],
+      stdoutEncoding: utf8,
+      stderrEncoding: utf8,
+    );
+    expect(printed.exitCode, 0, reason: 'cert: ${printed.stderr}');
+    final fingerprint = RegExp(r'SHA256: ([0-9A-F:]+)')
+        .firstMatch(printed.stdout.toString())
+        ?.group(1);
+    expect(fingerprint, isNotNull, reason: 'cert: no SHA-256 in the output');
+    expect(
+      readFile('android/signing/README.md'),
+      contains(fingerprint!),
+      reason:
+          'cert-record: android/signing/README.md names a different '
+          'fingerprint than the committed certificate has ($fingerprint)',
+    );
+    expect(
+      printed.stdout.toString(),
+      contains('O=Honest Arcade, CN=Honest Sudoku'),
+      reason: 'cert: the committed certificate is not this project\'s',
+    );
+  });
 }

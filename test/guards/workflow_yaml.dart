@@ -68,20 +68,49 @@ class WorkflowJob {
   const WorkflowJob({
     required this.name,
     required this.steps,
+    this.line = 0,
     this.uses,
     this.needs = const [],
     this.ifExpression,
     this.secretsInherit = false,
+    this.defaultShell,
+    this.continueOnError = false,
+    this.runsOn,
+    this.environment,
+    this.permissionsScalar,
   });
 
   final String name;
   final List<WorkflowStep> steps;
+
+  /// 1-based line of the job's key, for naming it in a failure.
+  final int line;
 
   /// The reusable workflow this job calls, for a `uses:` job.
   final String? uses;
   final List<String> needs;
   final String? ifExpression;
   final bool secretsInherit;
+
+  /// `defaults.run.shell` for this job, if it sets one.
+  final String? defaultShell;
+
+  /// `continue-on-error:` on the JOB. GitHub treats such a job's failure as
+  /// non-blocking for everything that `needs:` it, so a gate carrying this
+  /// still lets its dependants run — the same hole an `if:` on the dependant
+  /// opens, one level up, and invisible to any assertion about the dependant
+  /// (#169).
+  final bool continueOnError;
+
+  final String? runsOn;
+
+  /// `environment:`, as a name. A deployment environment can carry required
+  /// reviewers and its own secrets, so adding or changing one changes who can
+  /// release and with what.
+  final String? environment;
+
+  /// `permissions:` on the job, as a scalar. See [Workflow.permissionsScalar].
+  final String? permissionsScalar;
 
   WorkflowStep? stepById(String id) {
     for (final step in steps) {
@@ -99,18 +128,31 @@ class Workflow {
   Workflow._(
     this.path,
     this.jobs,
+    this.defaultShell,
     this.triggers,
     this.pushTags,
     this.pushBranches,
     this.runScripts,
-    this.problem,
-  );
+    this.problem, {
+    this.hasPermissions = false,
+    this.permissionsScalar,
+    this.hasConcurrency = false,
+    this.dispatchInputs = const {},
+  });
 
   final String path;
   final List<WorkflowJob> jobs;
 
   /// The keys under `on:`, so a trigger change is visible.
   final List<String> triggers;
+
+  /// `defaults.run.shell` at workflow level, and the same per job.
+  ///
+  /// A step's `shell:` was modelled and this was not, so changing the
+  /// workflow-level `shell: bash` to `bash -x` — a two-character diff on a
+  /// line that already exists — turned tracing on for every step in the job
+  /// holding all five secrets, with the suite green (#168).
+  final String? defaultShell;
 
   /// `on.push.tags` and `on.push.branches`. The key alone is not enough:
   /// swapping `tags: ['v*']` for `branches: [main]` leaves the trigger named
@@ -119,6 +161,45 @@ class Workflow {
   final List<String> pushBranches;
   final List<RunScript> runScripts;
   final String? problem;
+
+  /// A top-level `permissions:` key of any shape.
+  final bool hasPermissions;
+
+  /// `permissions:` when written as a scalar (`read-all`, `write-all`),
+  /// rather than a map of scopes. Parsed rather than line-matched, so the
+  /// quoted spelling `permissions: 'write-all'` is the same value as the
+  /// unquoted one — the line scan caught only the unquoted form (#175).
+  final String? permissionsScalar;
+
+  final bool hasConcurrency;
+
+  /// `on.workflow_dispatch.inputs`, by name: the declared `type` and, for a
+  /// `choice`, its `options`. Nothing modelled these, so reverting an input
+  /// from `type: choice` back to free text was invisible (#165, #179).
+  final Map<String, DispatchInput> dispatchInputs;
+
+  /// Every `uses:` in the file, job-level and step-level, with its line.
+  /// A job's `uses:` was parsed and never consulted by the pin rule, and a
+  /// step written as a flow mapping (`- {uses: x}`) was invisible to the
+  /// line scan entirely (#171, #175).
+  Iterable<({String uses, int line, String where})> get allUses sync* {
+    for (final job in jobs) {
+      final jobUses = job.uses;
+      if (jobUses != null) {
+        yield (uses: jobUses, line: job.line, where: 'job `${job.name}`');
+      }
+      for (final step in job.steps) {
+        final stepUses = step.uses;
+        if (stepUses != null) {
+          yield (
+            uses: stepUses,
+            line: step.line,
+            where: 'job `${job.name}` step ${step.id ?? step.index}',
+          );
+        }
+      }
+    }
+  }
 
   WorkflowJob? job(String name) {
     for (final j in jobs) {
@@ -131,10 +212,26 @@ class Workflow {
     dynamic doc;
     try {
       doc = loadYaml(text);
+    } on StackOverflowError {
+      // Deep nesting overflows the recursive loader. StackOverflowError is
+      // an Error, not an Exception, so `on YamlException` did not catch it
+      // and it escaped `parse` as a crash rather than the designed offender
+      // (#177).
+      return Workflow._(
+        path,
+        const [],
+        null,
+        const [],
+        const [],
+        const [],
+        const [],
+        'unparseable: nesting too deep to load',
+      );
     } on YamlException catch (e) {
       return Workflow._(
         path,
         const [],
+        null,
         const [],
         const [],
         const [],
@@ -146,6 +243,7 @@ class Workflow {
       return Workflow._(
         path,
         const [],
+        null,
         const [],
         const [],
         const [],
@@ -217,7 +315,9 @@ class Workflow {
                 uses: _stringOr(stepNode, 'uses'),
                 run: run,
                 shell: _stringOr(stepNode, 'shell'),
-                continueOnError: _lookup(stepNode, 'continue-on-error') == true,
+                continueOnError: _isTruthy(
+                  _lookup(stepNode, 'continue-on-error'),
+                ),
                 with_: _stringMap(stepNode, 'with'),
               ),
             );
@@ -238,24 +338,83 @@ class Workflow {
           WorkflowJob(
             name: jobName,
             steps: steps,
+            line: jobMap.span.start.line + 1,
             uses: _stringOr(jobMap, 'uses'),
             needs: needs,
             ifExpression: _rawOr(jobMap, 'if'),
             secretsInherit: '${_lookup(jobMap, 'secrets')}' == 'inherit',
+            defaultShell: _defaultShell(jobMap),
+            continueOnError: _isTruthy(_lookup(jobMap, 'continue-on-error')),
+            runsOn: _stringOr(jobMap, 'runs-on'),
+            environment: _environment(jobMap),
+            permissionsScalar: _permissionsScalar(jobMap),
           ),
         );
       }
     }
+    String? unusable;
+    if (jobsNode == null) {
+      unusable = 'no `jobs:` key — this is not a workflow';
+    } else if (jobsNode is! YamlMap) {
+      unusable =
+          '`jobs:` is a ${jobsNode.runtimeType}, not a mapping of job names';
+    } else if (jobs.isEmpty) {
+      unusable = '`jobs:` names no jobs';
+    } else {
+      for (final job in jobs) {
+        if (job.uses != null) continue;
+        if (job.steps.isEmpty) {
+          unusable = 'job `${job.name}` has no steps — `steps:` must be a list';
+          break;
+        }
+        for (final step in job.steps) {
+          if (step.uses == null && step.run == null) {
+            unusable =
+                'job `${job.name}` step ${step.id ?? step.index} has neither '
+                '`run:` nor `uses:` — a non-string `run:` reads as absent';
+            break;
+          }
+        }
+        if (unusable != null) break;
+      }
+    }
+
     return Workflow._(
       path,
       jobs,
+      _defaultShell(doc),
       triggers,
       pushTags,
       pushBranches,
       scripts,
-      null,
+      // Parsed is not the same as usable. These all loaded as YAML, produced
+      // zero jobs or steps, and yielded zero offenders from every rule — so
+      // a structurally wrong workflow scanned as clean, which is the larger
+      // class of the failure the header warns about (#177).
+      unusable,
+      hasPermissions: _lookup(doc, 'permissions') != null,
+      permissionsScalar: _permissionsScalar(doc),
+      hasConcurrency: _lookup(doc, 'concurrency') != null,
+      dispatchInputs: _dispatchInputs(doc),
     );
   }
+}
+
+/// GitHub honours `continue-on-error: "true"` — the quoted string — exactly
+/// as it honours the bare boolean, and an `${{ }}` expression that evaluates
+/// to true as well. Comparing to Dart's `true` matched only the unquoted YAML
+/// boolean, so the quoted spelling parsed as false and the guard passed
+/// (#171).
+bool _isTruthy(dynamic value) {
+  if (value is bool) return value;
+  if (value is String) {
+    final v = value.trim().toLowerCase();
+    // An expression cannot be evaluated here, so it is treated as possibly
+    // true: a step whose skipping depends on a runtime expression is not a
+    // step this guard can vouch for.
+    return v == 'true' || v.startsWith(r'${{');
+  }
+  return false;
 }
 
 dynamic _lookup(YamlMap map, String key) {
@@ -267,6 +426,58 @@ dynamic _lookup(YamlMap map, String key) {
   if (key == 'on') {
     final asBool = map.nodes[true];
     if (asBool != null) return asBool.value;
+  }
+  return null;
+}
+
+/// One `workflow_dispatch` input's declared shape.
+class DispatchInput {
+  const DispatchInput(this.type, this.options);
+
+  /// `type:` as written — `choice`, `string`, `boolean`, or null if omitted
+  /// (GitHub then treats it as free text).
+  final String? type;
+
+  /// `options:` for a `choice` input, in order; empty otherwise.
+  final List<String> options;
+}
+
+Map<String, DispatchInput> _dispatchInputs(YamlMap doc) {
+  final on = _lookup(doc, 'on');
+  if (on is! YamlMap) return const {};
+  final dispatch = on.nodes['workflow_dispatch']?.value;
+  if (dispatch is! YamlMap) return const {};
+  final inputs = dispatch.nodes['inputs']?.value;
+  if (inputs is! YamlMap) return const {};
+  final result = <String, DispatchInput>{};
+  inputs.nodes.forEach((key, node) {
+    final spec = node.value;
+    if (spec is! YamlMap) return;
+    final options = spec.nodes['options']?.value;
+    result['$key'] = DispatchInput(
+      _stringOr(spec, 'type'),
+      options is YamlList
+          ? options.map((o) => '$o').toList(growable: false)
+          : const [],
+    );
+  });
+  return result;
+}
+
+/// `permissions:` when it is a scalar rather than a map of scopes.
+String? _permissionsScalar(YamlMap map) {
+  final value = _lookup(map, 'permissions');
+  return value is String ? value : null;
+}
+
+/// `environment:` as a name, whether written as a bare string or as a map
+/// with `name:`.
+String? _environment(YamlMap map) {
+  final value = _lookup(map, 'environment');
+  if (value is String) return value;
+  if (value is YamlMap) {
+    final name = value.nodes['name']?.value;
+    return name is String ? name : null;
   }
   return null;
 }
@@ -287,4 +498,14 @@ Map<String, String> _stringMap(YamlMap map, String key) {
   final node = map.nodes[key];
   if (node is! YamlMap) return const {};
   return {for (final e in node.nodes.entries) '${e.key}': '${e.value.value}'};
+}
+
+/// `defaults: run: shell:` on a workflow or a job.
+String? _defaultShell(YamlMap map) {
+  final defaults = map.nodes['defaults']?.value;
+  if (defaults is! YamlMap) return null;
+  final run = defaults.nodes['run']?.value;
+  if (run is! YamlMap) return null;
+  final shell = run.nodes['shell']?.value;
+  return shell is String ? shell : null;
 }

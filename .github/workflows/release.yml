@@ -203,8 +203,13 @@ jobs:
           if ! gh release view "$GITHUB_REF_NAME" > /dev/null 2> "$view_err"; then
             if grep -qiE 'release not found|not found \(HTTP 404\)|could not find' "$view_err"; then
               echo "no GitHub release for this tag; skipping asset"
-            echo "no GitHub release for this tag; the bundle is in the run artifact only" \
-                >> "$GITHUB_STEP_SUMMARY"
+              # A note for the summary, not a write to it. This step runs
+              # before `summary`, so appending here put the line ABOVE the
+              # "### Release" heading it belongs under — and it was indented
+              # four columns out of line with its siblings, which is how it
+              # stayed unnoticed (#180).
+              echo "no GitHub release for this tag; the bundle is in the run artifact only" \
+                > "$RUNNER_TEMP/no-release-note"
               exit 0
             fi
             echo "gh release view failed for a reason other than not-found:" >&2
@@ -259,6 +264,10 @@ jobs:
             echo ""
             echo "Native debug symbols are not uploaded: this is a Flutter"
             echo "default build with no obfuscation mapping to attach."
+            if [ -f "$RUNNER_TEMP/no-release-note" ]; then
+              echo ""
+              cat "$RUNNER_TEMP/no-release-note"
+            fi
             echo ""
             echo "Play Console: https://play.google.com/console"
           } >> "$GITHUB_STEP_SUMMARY"

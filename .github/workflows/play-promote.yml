@@ -17,9 +17,16 @@ on:
       # `choice` rather than free text. Free text let a crafted `to_track`
       # append a forged "Promoted on Play ... -> production" line to the run
       # summary, and title a refused run "Promote internal to production" in
-      # the Actions list. The refusal step below stays: two barriers, and this
-      # one is GitHub's, so it cannot be bypassed by dispatching the API
-      # directly (#165).
+      # the Actions list (#165).
+      #
+      # What this does NOT establish: whether GitHub validates the option
+      # list for a dispatch made through the API rather than the UI. An
+      # earlier version of this comment asserted it could not be bypassed
+      # that way, which was a guess written as fact — the thing this project
+      # exists not to do. Untested, because the test is a live dispatch of
+      # the workflow whose refusal is the subject (#179). The refusal step
+      # below is therefore load-bearing, not decorative: it is the barrier
+      # that holds whichever way that question resolves.
       from_track:
         description: Track to promote from
         required: true

@@ -43,32 +43,18 @@ String _stripComment(String line) {
   return line;
 }
 
-String _unquote(String value) {
-  final v = value.trim();
-  if (v.length >= 2) {
-    final first = v[0];
-    final last = v[v.length - 1];
-    if ((first == "'" && last == "'") || (first == '"' && last == '"')) {
-      return v.substring(1, v.length - 1);
-    }
-  }
-  return v;
-}
-
 /// Every `uses:` in [text] must name an explicit, non-floating ref.
 ///
 /// Exempt: a local action (`./.github/...`) and a container (`docker://`),
 /// neither of which takes an `@ref`.
 List<WorkflowOffender> unpinnedUses(String path, String text) {
   final offenders = <WorkflowOffender>[];
-  final lines = text.split('\n');
-  for (var i = 0; i < lines.length; i++) {
-    final raw = lines[i];
-    if (raw.trimLeft().startsWith('#')) continue;
-    final match = RegExp(r'^\s*-?\s*uses:\s*(.+)$')
-        .firstMatch(_stripComment(raw));
-    if (match == null) continue;
-    final value = _unquote(match.group(1)!);
+  final wf = Workflow.parse(path, text);
+  if (wf.problem != null) {
+    return [WorkflowOffender(path, 1, wf.problem!)];
+  }
+  for (final entry in wf.allUses) {
+    final value = entry.uses.trim();
     if (value.isEmpty) continue;
     if (value.startsWith('./') || value.startsWith('docker://')) continue;
 
@@ -77,9 +63,9 @@ List<WorkflowOffender> unpinnedUses(String path, String text) {
       offenders.add(
         WorkflowOffender(
           path,
-          i + 1,
-          '`uses: $value` has no @ref — an unpinned action is a third party '
-          'that can change inside the merge gate',
+          entry.line,
+          '`uses: $value` in ${entry.where} has no @ref — an unpinned action '
+          'is a third party that can change inside the merge gate',
         ),
       );
       continue;
@@ -89,9 +75,9 @@ List<WorkflowOffender> unpinnedUses(String path, String text) {
       offenders.add(
         WorkflowOffender(
           path,
-          i + 1,
-          '`uses: $value` is pinned to the moving ref `$ref`; pin a release '
-          'tag and let Dependabot carry it forward',
+          entry.line,
+          '`uses: $value` in ${entry.where} is pinned to the moving ref '
+          '`$ref`; pin a release tag and let Dependabot carry it forward',
         ),
       );
     }
@@ -103,23 +89,31 @@ List<WorkflowOffender> unpinnedUses(String path, String text) {
 /// grant `write-all` at any level.
 List<WorkflowOffender> permissionOffenders(String path, String text) {
   final offenders = <WorkflowOffender>[];
-  final lines = text.split('\n');
-  var hasTopLevel = false;
-  for (var i = 0; i < lines.length; i++) {
-    final line = _stripComment(lines[i]);
-    if (lines[i].trimLeft().startsWith('#')) continue;
-    if (RegExp(r'^permissions:').hasMatch(line)) hasTopLevel = true;
-    if (RegExp(r'permissions:\s*write-all\s*$').hasMatch(line)) {
+  final wf = Workflow.parse(path, text);
+  if (wf.problem != null) {
+    return [WorkflowOffender(path, 1, wf.problem!)];
+  }
+
+  void check(String? scalar, int line, String where) {
+    if (scalar == null) return;
+    if (scalar.trim() == 'write-all') {
       offenders.add(
         WorkflowOffender(
           path,
-          i + 1,
-          '`permissions: write-all` grants every scope; name the ones needed',
+          line,
+          '`permissions: write-all` $where grants every scope; name the '
+          'ones needed',
         ),
       );
     }
   }
-  if (!hasTopLevel) {
+
+  check(wf.permissionsScalar, 1, 'at the top level');
+  for (final job in wf.jobs) {
+    check(job.permissionsScalar, job.line, 'on job `${job.name}`');
+  }
+
+  if (!wf.hasPermissions) {
     offenders.add(
       WorkflowOffender(
         path,
@@ -134,11 +128,11 @@ List<WorkflowOffender> permissionOffenders(String path, String text) {
 
 /// A workflow must declare a top-level `concurrency:`, in either form.
 List<WorkflowOffender> concurrencyOffenders(String path, String text) {
-  final hasIt = text
-      .split('\n')
-      .where((l) => !l.trimLeft().startsWith('#'))
-      .any((l) => RegExp(r'^concurrency:').hasMatch(_stripComment(l)));
-  return hasIt
+  final wf = Workflow.parse(path, text);
+  if (wf.problem != null) {
+    return [WorkflowOffender(path, 1, wf.problem!)];
+  }
+  return wf.hasConcurrency
       ? const []
       : [
           WorkflowOffender(
@@ -157,7 +151,7 @@ List<WorkflowOffender> concurrencyOffenders(String path, String text) {
 /// body is obtained by parsing (see workflow_yaml.dart), which is what makes
 /// a flow mapping, a quoted key, an anchor, an alias and a multi-line quoted
 /// scalar visible; the line scan this replaced missed all five (#154, #156).
-Iterable<({String expression, RunScript script})> _runExpressions(
+Iterable<({String expression, RunScript script, int line})> _runExpressions(
   String text,
 ) sync* {
   for (final script in Workflow.parse('', text).runScripts) {
@@ -165,7 +159,15 @@ Iterable<({String expression, RunScript script})> _runExpressions(
       r'\$\{\{(.*?)\}\}',
       dotAll: true,
     ).allMatches(script.body)) {
-      yield (expression: m.group(1)!, script: script);
+      // The offending line within the body, not the line the `run:` value
+      // starts on. The contract is `path:line: message`, and pointing at
+      // the top of a 60-line script makes the reader hunt (#180).
+      final before = script.body.substring(0, m.start);
+      yield (
+        expression: m.group(1)!,
+        script: script,
+        line: script.line + '\n'.allMatches(before).length,
+      );
     }
   }
 }
@@ -205,14 +207,13 @@ List<WorkflowOffender> secretsInRunOffenders(String path, String text) {
     r'\bsecrets\s*(\.\s*[A-Za-z_*]|\[)|\bto_?json\s*\(\s*secrets\s*\)',
     caseSensitive: false,
   );
-  for (final (expression: expression, script: script) in _runExpressions(
-    text,
-  )) {
+  for (final (expression: expression, script: script, line: line)
+      in _runExpressions(text)) {
     if (secret.hasMatch(expression)) {
       offenders.add(
         WorkflowOffender(
           path,
-          script.line,
+          line,
           'a secret reaches a `run:` script as text (`\${{$expression}}` in job '
           '`${script.jobName}`). GitHub substitutes it before the shell runs, '
           'so the log mask is the only thing between it and the output. Pass it '
@@ -242,15 +243,14 @@ List<WorkflowOffender> untrustedInRunOffenders(String path, String text) {
     r'|\bto_?json\s*\(\s*(github|inputs|needs|matrix|env)\s*\)',
     caseSensitive: false,
   );
-  for (final (expression: expression, script: script) in _runExpressions(
-    text,
-  )) {
+  for (final (expression: expression, script: script, line: line)
+      in _runExpressions(text)) {
     final match = untrusted.firstMatch(expression);
     if (match != null) {
       offenders.add(
         WorkflowOffender(
           path,
-          script.line,
+          line,
           '`${match.group(1)}` reaches a `run:` script as text '
           '(`\${{$expression}}` in job `${script.jobName}`); a tag name or '
           'dispatch input containing `\$(...)` would execute. Pass it as '
@@ -286,9 +286,14 @@ List<WorkflowOffender> shellTraceOffenders(String path, String text) {
 
   for (final script in workflow.runScripts) {
     final lines = script.body.split('\n');
-    for (final raw in lines) {
+    for (var i = 0; i < lines.length; i++) {
+      final raw = lines[i];
       if (raw.trimLeft().startsWith('#')) continue;
       final line = _stripComment(raw);
+      // The contract is `path:line: message`, and every offender reported
+      // the line where the `run:` VALUE starts — so a trace on line 40 of a
+      // 60-line script pointed at line 12, and the reader hunted (#180).
+      final lineNo = script.line + i;
       var flagged = false;
 
       for (final set in RegExp(
@@ -298,7 +303,7 @@ List<WorkflowOffender> shellTraceOffenders(String path, String text) {
         for (final long in RegExp(
           r'''-o\s+["']?(xtrace|verbose)["']?''',
         ).allMatches(args)) {
-          flag(script.line, '`set -o ${long.group(1)}`');
+          flag(lineNo, '`set -o ${long.group(1)}`');
           flagged = true;
         }
         if (flagged) break;
@@ -306,7 +311,7 @@ List<WorkflowOffender> shellTraceOffenders(String path, String text) {
           final flags = cluster.group(1)!;
           if (flags == 'o') continue;
           if (flags.contains('x') || flags.contains('v')) {
-            flag(script.line, '`set ${cluster.group(0)}`');
+            flag(lineNo, '`set ${cluster.group(0)}`');
             flagged = true;
             break;
           }
@@ -320,31 +325,40 @@ List<WorkflowOffender> shellTraceOffenders(String path, String text) {
       if (RegExp(
         r'''(^|[;&|(]|\s|["'])(/\S*/)?(ba|z|k|da|)sh\s+((-[A-Za-z]*[xv][A-Za-z]*|--verbose|--xtrace|-o\s+(xtrace|verbose))(\s|$))''',
       ).hasMatch(line)) {
-        flag(script.line, 'invoking a shell with a trace flag');
+        flag(lineNo, 'invoking a shell with a trace flag');
         continue;
       }
 
       if (RegExp(r'SHELLOPTS\s*[:=].*\b(xtrace|verbose)\b').hasMatch(line)) {
-        flag(script.line, '`SHELLOPTS` carrying a trace option');
+        flag(lineNo, '`SHELLOPTS` carrying a trace option');
       }
     }
   }
 
-  // `shell: bash -x` turns tracing on for a whole step without a `set`, and is
-  // read structurally so a quoted or flow-style value is seen.
+  // A `shell:` value carrying a trace flag turns tracing on without a `set`.
+  // Checked at all three levels: the workflow's `defaults`, each job's, and
+  // each step's. Only the step level was checked, so changing the
+  // workflow-level `shell: bash` to `bash -x` traced every step in the job
+  // holding all five secrets with the suite green (#168).
+  void checkShell(String? shell, int line, String where) {
+    if (shell == null) return;
+    for (final word in shell.trim().split(RegExp(r'\s+')).skip(1)) {
+      if (RegExp(r'^-[A-Za-z]*[xv][A-Za-z]*$').hasMatch(word) ||
+          word == '--verbose' ||
+          word == '--xtrace') {
+        flag(line, '`$where: ${shell.trim()}`');
+        return;
+      }
+    }
+  }
+
+  checkShell(workflow.defaultShell, 1, 'defaults.run.shell');
   for (final job in workflow.jobs) {
+    checkShell(job.defaultShell, 1, 'defaults.run.shell in job `${job.name}`');
     for (final step in job.steps) {
       final shell = step.shell;
       if (shell == null) continue;
-      final words = shell.trim().split(RegExp(r'\s+'));
-      for (final word in words.skip(1)) {
-        if (RegExp(r'^-[A-Za-z]*[xv][A-Za-z]*$').hasMatch(word) ||
-            word == '--verbose' ||
-            word == '--xtrace') {
-          flag(step.line, '`shell: ${shell.trim()}`');
-          break;
-        }
-      }
+      checkShell(shell, step.line, 'shell');
     }
   }
   return offenders;

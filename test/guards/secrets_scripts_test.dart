@@ -86,6 +86,16 @@ List<int> _uploadedLengths() {
       .toList();
 }
 
+/// The `read_credential` function, lifted from the script so a test can parse a
+/// credentials file exactly as `set_ci_secrets.sh` does, without running the
+/// upload path.
+String _readCredentialFunction() {
+  final text = readFile('tools/set_ci_secrets.sh');
+  final start = text.indexOf('read_credential() {');
+  final end = text.indexOf('\n}\n', start) + 3;
+  return text.substring(start, end);
+}
+
 void main() {
   setUp(() {
     _tmp = Directory.systemTemp.createTempSync('hs-secrets-guard');
@@ -474,6 +484,162 @@ exit 0
     });
   });
 
+  group('make_upload_key.sh quoting', () {
+    // #108 wrapped the credential values in double quotes, which stops a space
+    // and a semicolon and does not stop command substitution. The file is
+    // written by a heredoc, so `$(...)` expanded when it was written AND again
+    // when it was sourced: the recorded password was the expanded form, and it
+    // did not open the keystore that had just been made with the literal one
+    // (#119).
+    //
+    // The fixture that missed it asserted the line *contains* `export NAME="`
+    // — which is exactly the shape that was wrong. This one writes, sources,
+    // parses and then opens the keystore.
+
+    /// A real keytool, resolved the way the scripts do: the pinned path first,
+    /// then PATH (which is where a CI runner's setup-java puts it).
+    String resolveKeytool() {
+      const pinned = '/opt/homebrew/opt/openjdk@21/bin/keytool';
+      if (File(pinned).existsSync()) return pinned;
+      final found = Process.runSync('command', [
+        '-v',
+        'keytool',
+      ], runInShell: true).stdout.toString().trim();
+      expect(
+        found,
+        isNotEmpty,
+        reason: 'no keytool available; this test needs a real one',
+      );
+      return found;
+    }
+
+    test('a password full of shell metacharacters survives the round trip', () {
+      final keytool = resolveKeytool();
+      final marker = '${_tmp.path}/PWNED';
+      // Command substitution, a backtick, a double quote, a backslash, a
+      // single quote and a space — every character that has bitten this file.
+      final password =
+          'p4ss\$(touch $marker)w`touch ${marker}2`d "q" \\b \'s\' end';
+
+      final made = Process.runSync(
+        '/bin/bash',
+        ['tools/make_upload_key.sh'],
+        workingDirectory: repoRoot.path,
+        includeParentEnvironment: false,
+        environment: {
+          'PATH': Platform.environment['PATH'] ?? '/usr/bin:/bin',
+          'HOME': _home,
+          'HS_KEYSTORE_PASS': password,
+          'HS_KEYTOOL': keytool,
+          // Or the throwaway key's certificate is written over the
+          // committed one: CERT_OUT defaults to a path relative to the
+          // repository root, which the script cd's to, and a fake $HOME does
+          // not move it (#123).
+          'HS_UPLOAD_CERT_OUT': '$_home/cert.pem',
+        },
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8,
+      );
+      expect(made.exitCode, 0, reason: 'make: ${made.stderr}');
+
+      // 1. Nothing ran while the file was being written.
+      expect(
+        File(marker).existsSync() || File('${marker}2').existsSync(),
+        isFalse,
+        reason: 'write: the password executed while the file was written',
+      );
+
+      // 2. Nothing runs if someone sources it anyway, and the value comes back
+      //    whole.
+      final sourced = Process.runSync('/bin/bash', [
+        '-c',
+        'set -a; . "\$1"; set +a; printf %s "\$HS_KEYSTORE_PASS"',
+        'bash',
+        _credentials,
+      ], stdoutEncoding: utf8);
+      expect(
+        File(marker).existsSync() || File('${marker}2').existsSync(),
+        isFalse,
+        reason: 'source: the password executed on a dot-source',
+      );
+      expect(
+        sourced.stdout,
+        password,
+        reason: 'source: the value came back changed',
+      );
+
+      // 3. The supported path — parsing — gives the same value.
+      final parsed = Process.runSync('/bin/bash', [
+        '-c',
+        'CREDENTIALS="\$1"\n'
+            '${_readCredentialFunction()}\n'
+            'read_credential HS_KEYSTORE_PASS',
+        'bash',
+        _credentials,
+      ], stdoutEncoding: utf8);
+      expect(
+        parsed.stdout.toString().trimRight(),
+        password,
+        reason: 'parse: the value came back changed',
+      );
+
+      // 4. And the value actually opens the keystore that was just made — the
+      //    check that would have caught #119 on its own.
+      final opens = Process.runSync(
+        keytool,
+        [
+          '-list',
+          '-keystore',
+          '$_home/HonestArcadeApps/secrets/sudoku-upload.keystore',
+          '-storetype',
+          'PKCS12',
+          '-storepass:env',
+          'HSP',
+          '-alias',
+          'upload',
+        ],
+        environment: {'HSP': password},
+        stdoutEncoding: utf8,
+      );
+      expect(
+        opens.exitCode,
+        0,
+        reason: 'keystore: the recorded password does not open the key',
+      );
+    });
+
+    test('it refuses to overwrite either file', () {
+      // #93: refusing on the keystore alone meant a run with the keystore
+      // moved aside silently replaced the password of a key that still exists.
+      final keytool = resolveKeytool();
+      Directory('$_home/HonestArcadeApps/secrets').createSync(recursive: true);
+      for (final existing in [
+        '$_home/HonestArcadeApps/secrets/sudoku-upload.keystore',
+        _credentials,
+      ]) {
+        File(existing).writeAsStringSync('in the way');
+        final r = Process.runSync(
+          '/bin/bash',
+          ['tools/make_upload_key.sh'],
+          workingDirectory: repoRoot.path,
+          includeParentEnvironment: false,
+          environment: {
+            'PATH': Platform.environment['PATH'] ?? '/usr/bin:/bin',
+            'HOME': _home,
+            'HS_KEYSTORE_PASS': 'irrelevant',
+            'HS_KEYTOOL': keytool,
+            'HS_UPLOAD_CERT_OUT': '$_home/cert.pem',
+          },
+          stdoutEncoding: utf8,
+          stderrEncoding: utf8,
+        );
+        expect(r.exitCode, 2, reason: 'overwrite: ${r.stderr}');
+        expect(r.stderr, contains('refusing to overwrite'));
+        File(existing).deleteSync();
+      }
+    });
+  });
+
   group('setup_play_ci.sh past the confirmation gate', () {
     // The four refusal tests all stopped at the account gate, so nothing ever
     // exercised a line below it — which is where the #134 trap, the key
@@ -481,7 +647,10 @@ exit 0
     // battery (#160).
     late String gcloudLog;
 
-    void stubGcloud({bool keysCreateFails = false}) {
+    void stubGcloud({
+      bool keysCreateFails = false,
+      bool serviceAccountExists = true,
+    }) {
       gcloudLog = '${_tmp.path}/gcloud.log';
       File(gcloudLog).writeAsStringSync('');
       _writeExecutable('${_tmp.path}/bin/gcloud', '''#!/bin/sh
@@ -492,7 +661,7 @@ case "\$1 \$2" in
   "services list") echo "androidpublisher.googleapis.com"; exit 0 ;;
 esac
 case "\$1 \$2 \$3" in
-  "iam service-accounts describe") exit 0 ;;
+  "iam service-accounts describe") ${serviceAccountExists ? 'exit 0' : 'exit 1'} ;;
   "iam service-accounts keys")
      if [ "\$4" = "list" ]; then exit 0; fi
      if [ "\$4" = "create" ]; then
@@ -554,12 +723,24 @@ exit 1
       // Play access is granted in the Console, not in Cloud IAM. A role here
       // would be authority nobody needs, and `--role roles/owner` passed the
       // whole suite (#160).
-      stubGcloud();
+      // The stub must report the account as ABSENT. With `describe`
+      // exiting 0 the script skips the whole create block — the one
+      // `--role roles/owner` is inserted into — so the assertions below
+      // passed over a command that never ran, and both sanity checks were
+      // satisfied by `describe` and `keys create` (#176).
+      stubGcloud(serviceAccountExists: false);
       _run(
         'tools/setup_play_ci.sh',
         env: {'HS_PLAY_ACCOUNT': 'owner@example.com'},
       );
       final calls = File(gcloudLog).readAsStringSync();
+      expect(
+        calls,
+        contains('iam service-accounts create'),
+        reason:
+            'sanity: the service account was never created, so no --role '
+            'could appear whatever the script says',
+      );
       expect(
         calls,
         isNot(contains('add-iam-policy-binding')),
@@ -729,6 +910,293 @@ exit 0
         isNot(contains(masked)),
         reason: 'the access token must not reach the summary',
       );
+    });
+  });
+
+  group('the keystore step of play-api-check, as the workflow writes it', () {
+    // #160 taught the suite to extract a `run:` body and execute it, and was
+    // applied to exactly one step. This is the other one — the step with the
+    // most acceptance-criterion text attached, and the one that handles the
+    // keystore password. Six mutations of it were green, including
+    // `if false` in place of the alias assertion and a line putting
+    // $HS_KEYSTORE_PASS into the job summary (#173).
+    late String stepScript;
+
+    setUp(() {
+      final workflow = Workflow.parse(
+        '.github/workflows/play-api-check.yml',
+        readFile('.github/workflows/play-api-check.yml'),
+      );
+      expect(workflow.problem, isNull);
+      final keystore = workflow.jobs.single.stepById('keystore');
+      expect(keystore, isNotNull, reason: 'the `keystore` step has gone');
+      stepScript = keystore!.run!;
+
+      // Records every invocation so a test can assert what the step ASKED
+      // for, not only what it did with the answer: dropping `-alias` from
+      // `keytool -list` changes the question, and the answer looks the same.
+      _writeExecutable('${_tmp.path}/bin/keytool', r"""#!/bin/sh
+printf '%s\n' "$*" >> "$HS_KEYTOOL_CALLS"
+case "$1" in
+  -list)
+    # Faithful to keytool: with -alias it exits 1 when the keystore holds
+    # no such entry, and otherwise echoes back the REQUESTED spelling
+    # rather than the stored one. That is why the step needs no explicit
+    # alias comparison — and why one was dead code (#180).
+    want=""
+    prev=""
+    for a in "$@"; do
+      if [ "$prev" = "-alias" ]; then want="$a"; fi
+      prev="$a"
+    done
+    lc_want=$(printf '%s' "$want" | tr '[:upper:]' '[:lower:]')
+    lc_have=$(printf '%s' "$HS_STUB_ALIAS" | tr '[:upper:]' '[:lower:]')
+    if [ -n "$want" ] && [ "$lc_want" != "$lc_have" ]; then
+      printf 'keytool error: java.lang.Exception: Alias <%s> does not exist\n' "$want" >&2
+      exit 1
+    fi
+    printf 'Alias name: %s\n' "$want"
+    printf 'SHA256: %s\n' "$HS_STUB_KS_FP"
+    ;;
+  -printcert)
+    printf 'SHA256: %s\n' "$HS_STUB_PEM_FP"
+    ;;
+  -certreq) printf 'CERTREQ\n' ;;
+esac
+exit 0
+""");
+    });
+
+    ({int code, String out, String err, String summary, String calls}) runStep({
+      String b64 = 'a2V5c3RvcmU=',
+      String pass = 'correct horse',
+      String alias = 'upload',
+      String? keyPass,
+      String stubAlias = 'upload',
+      String ksFp = 'AA:BB',
+      String pemFp = 'AA:BB',
+    }) {
+      final script = '${_tmp.path}/keystore_step.sh';
+      File(script).writeAsStringSync(stepScript);
+      final runnerTemp = '${_tmp.path}/runner';
+      Directory(runnerTemp).createSync(recursive: true);
+      final summary = '${_tmp.path}/ks_summary.md';
+      File(summary).writeAsStringSync('');
+      final calls = '${_tmp.path}/keytool_calls.txt';
+      File(calls).writeAsStringSync('');
+
+      final r = Process.runSync(
+        '/bin/bash',
+        [script],
+        workingDirectory: repoRoot.path,
+        includeParentEnvironment: false,
+        environment: {
+          'PATH': '${_tmp.path}/bin:/usr/bin:/bin',
+          'RUNNER_TEMP': runnerTemp,
+          'GITHUB_STEP_SUMMARY': summary,
+          'HS_KEYSTORE_B64': b64,
+          'HS_KEYSTORE_PASS': pass,
+          'HS_KEY_ALIAS': alias,
+          'HS_KEY_PASS': keyPass ?? pass,
+          'HS_KEYTOOL_CALLS': calls,
+          'HS_STUB_ALIAS': stubAlias,
+          'HS_STUB_KS_FP': ksFp,
+          'HS_STUB_PEM_FP': pemFp,
+        },
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8,
+      );
+      return (
+        code: r.exitCode,
+        out: r.stdout.toString(),
+        err: r.stderr.toString(),
+        summary: File(summary).readAsStringSync(),
+        calls: File(calls).readAsStringSync(),
+      );
+    }
+
+    test('a matching keystore, alias and fingerprint pass', () {
+      final r = runStep();
+      expect(r.code, 0, reason: 'keystore-happy: ${r.err}');
+      expect(r.out, contains('matches the committed certificate'));
+    });
+
+    test('an alias that is not the configured one is refused', () {
+      // keytool itself refuses: `-alias` makes it exit 1 for an absent
+      // entry, and `set -euo pipefail` ends the step there. What this
+      // asserts is that the step lets that failure through — the explicit
+      // comparison that used to follow could never fire, because with
+      // `-alias` keytool echoes back the requested spelling (#173, #180).
+      final r = runStep(alias: 'upload', stubAlias: 'someone-else');
+      expect(r.code, isNot(0), reason: 'wrong alias must fail');
+      expect(r.err, contains('does not exist'));
+    });
+
+    test('the alias comparison ignores case, as keytool lowercases', () {
+      final r = runStep(alias: 'Upload', stubAlias: 'upload');
+      expect(r.code, 0, reason: 'alias-case: ${r.err}');
+    });
+
+    test('keytool -list is asked for the configured alias', () {
+      // Without `-alias`, keytool lists the whole keystore and the step reads
+      // the FIRST entry, so a multi-entry keystore passes here and fails in
+      // release.yml (#165). The answer is identical either way; only the
+      // question differs, so the question is what is asserted.
+      final r = runStep();
+      final listCall = r.calls
+          .split('\n')
+          .firstWhere((l) => l.startsWith('-list'), orElse: () => '');
+      expect(
+        listCall,
+        contains('-alias upload'),
+        reason: 'keytool -list must be scoped to the configured alias',
+      );
+    });
+
+    test('a key password that differs from the store password is refused', () {
+      // #143. PKCS12 has one password, so this is the only checkable form.
+      final r = runStep(pass: 'one', keyPass: 'two');
+      expect(r.code, isNot(0), reason: 'mismatched passwords must fail');
+      expect(r.err, contains('HS_KEY_PASS differs'));
+    });
+
+    test('a keystore that is not the committed certificate is refused', () {
+      final r = runStep(ksFp: 'AA:BB', pemFp: 'CC:DD');
+      expect(r.code, isNot(0), reason: 'fingerprint mismatch must fail');
+      expect(r.err, contains('NOT the one this repository committed'));
+    });
+
+    for (final missing in const [
+      'HS_KEYSTORE_B64',
+      'HS_KEYSTORE_PASS',
+      'HS_KEY_ALIAS',
+      'HS_KEY_PASS',
+    ]) {
+      test('an empty $missing refuses before touching the keystore', () {
+        final r = runStep(
+          b64: missing == 'HS_KEYSTORE_B64' ? '' : 'a2V5c3RvcmU=',
+          pass: missing == 'HS_KEYSTORE_PASS' ? '' : 'pw',
+          alias: missing == 'HS_KEY_ALIAS' ? '' : 'upload',
+          keyPass: missing == 'HS_KEY_PASS' ? '' : 'pw',
+        );
+        expect(r.code, isNot(0), reason: 'empty $missing must fail');
+        expect(r.err, contains('$missing is not set'));
+        expect(
+          r.calls.trim(),
+          isEmpty,
+          reason: 'the secret check must run before any keytool call',
+        );
+      });
+    }
+
+    test('no password reaches stdout or the job summary', () {
+      // The leak this group exists to make impossible: one line reading
+      // `($HS_KEYSTORE_PASS)` in the summary table put the upload-keystore
+      // password into a rendered, downloadable, retained artifact (#173).
+      const secret = 'S3CRET-store-password';
+      final r = runStep(pass: secret);
+      expect(r.code, 0, reason: 'leak-check: ${r.err}');
+      for (final where in {
+        'stdout': r.out,
+        'stderr': r.err,
+        'summary': r.summary,
+      }.entries) {
+        expect(
+          where.value,
+          isNot(contains(secret)),
+          reason: 'the store password reached ${where.key}',
+        );
+      }
+    });
+  });
+
+  group('the keystore_check step of release.yml, as the tag path runs it', () {
+    // #158 put the HS_KEY_PASS == HS_KEYSTORE_PASS assertion on the tag path.
+    // Deleting it was green, and so was INVERTING it — which fails every
+    // correct release while the suite reports all green (#174).
+    late String stepScript;
+
+    setUp(() {
+      final workflow = Workflow.parse(
+        '.github/workflows/release.yml',
+        readFile('.github/workflows/release.yml'),
+      );
+      expect(workflow.problem, isNull);
+      final step = workflow.job('ship')!.stepById('keystore_check');
+      expect(step, isNotNull, reason: 'the `keystore_check` step has gone');
+      stepScript = step!.run!;
+
+      _writeExecutable('${_tmp.path}/bin/keytool', r"""#!/bin/sh
+printf '%s\n' "$*" >> "$HS_KEYTOOL_CALLS"
+exit 0
+""");
+    });
+
+    ({int code, String out, String err, String calls}) runStep({
+      required String pass,
+      required String keyPass,
+      String alias = 'upload',
+    }) {
+      final script = '${_tmp.path}/keystore_check.sh';
+      File(script).writeAsStringSync(stepScript);
+      final runnerTemp = '${_tmp.path}/runner2';
+      Directory(runnerTemp).createSync(recursive: true);
+      File('$runnerTemp/upload.keystore').writeAsStringSync('not a keystore');
+      final calls = '${_tmp.path}/keytool_calls2.txt';
+      File(calls).writeAsStringSync('');
+
+      final r = Process.runSync(
+        '/bin/bash',
+        [script],
+        workingDirectory: repoRoot.path,
+        includeParentEnvironment: false,
+        environment: {
+          'PATH': '${_tmp.path}/bin:/usr/bin:/bin',
+          'RUNNER_TEMP': runnerTemp,
+          'HS_KEYSTORE_PASS': pass,
+          'HS_KEY_ALIAS': alias,
+          'HS_KEY_PASS': keyPass,
+          'HS_KEYTOOL_CALLS': calls,
+        },
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8,
+      );
+      return (
+        code: r.exitCode,
+        out: r.stdout.toString(),
+        err: r.stderr.toString(),
+        calls: File(calls).readAsStringSync(),
+      );
+    }
+
+    test('matching passwords pass', () {
+      final r = runStep(pass: 'same', keyPass: 'same');
+      expect(r.code, 0, reason: 'matching: ${r.err}');
+      expect(r.out, contains('the keystore opens'));
+    });
+
+    test('differing passwords are refused before the build', () {
+      final r = runStep(pass: 'one', keyPass: 'two');
+      expect(r.code, isNot(0), reason: 'differing passwords must fail');
+      expect(r.err, contains('HS_KEY_PASS differs'));
+      expect(
+        r.calls.trim(),
+        isEmpty,
+        reason: 'the comparison must run before keytool, not after',
+      );
+    });
+
+    test('keytool is scoped to the configured alias', () {
+      final r = runStep(pass: 'same', keyPass: 'same', alias: 'upload');
+      expect(r.calls, contains('-alias upload'));
+    });
+
+    test('no password reaches stdout or stderr', () {
+      const secret = 'S3CRET-tag-path';
+      final r = runStep(pass: secret, keyPass: secret);
+      expect(r.code, 0, reason: 'leak: ${r.err}');
+      expect(r.out, isNot(contains(secret)));
+      expect(r.err, isNot(contains(secret)));
     });
   });
 }

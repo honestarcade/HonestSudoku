@@ -101,7 +101,7 @@ void main() {
     ]) {
       test('the ref `$bad`', () {
         final r = _run([bad, '7', '1']);
-        expect(r.code, isNot(0), reason: 'refuse-ref: `$bad` was accepted');
+        expect(r.code, 2, reason: 'refuse-ref: `$bad` was accepted');
         expect(
           r.out.trim(),
           isEmpty,
@@ -134,8 +134,8 @@ void main() {
     }.entries) {
       test(entry.key, () {
         final r = _run(entry.value);
-        expect(r.code, isNot(0), reason: '${entry.key} was accepted');
-        expect(r.out.trim(), isEmpty);
+        expect(r.code, 2, reason: '${entry.key} was accepted');
+        expect(r.out, isEmpty);
       });
     }
 
@@ -143,7 +143,7 @@ void main() {
       // 1000 + N*10 + 10 equals 1000 + (N+1)*10 + 0. The bound is not
       // cosmetic, and a comment in the script says so.
       final r = _run(['v1.0.0', '1', '10']);
-      expect(r.code, isNot(0));
+      expect(r.code, 2);
       expect(r.err.toLowerCase(), contains('attempt'));
     });
 
@@ -154,8 +154,41 @@ void main() {
     ]) {
       test('${args.length} argument(s)', () {
         final r = _run(args);
-        expect(r.code, isNot(0));
-        expect(r.out.trim(), isEmpty);
+        expect(r.code, 2);
+        expect(r.out, isEmpty);
+      });
+    }
+  });
+
+  group('the prerelease is validated to semver, not just to shape', () {
+    // The ref pattern accepts any run of alphanumerics, dots and hyphens
+    // after the `-`, and the leading-zero guard covers only the core triple.
+    // So these three were accepted as version names (#180).
+    for (final bad in const ['v1.2.3-rc.01', 'v1.2.3-00', 'v1.2.3-rc.1.']) {
+      test('$bad is refused', () {
+        final r = _run([bad, '7', '1']);
+        expect(r.code, 2, reason: 'ci_version: $bad must be refused');
+        expect(r.out, isEmpty, reason: 'nothing may reach stdout');
+      });
+    }
+
+    // The complement: a validator that also refuses valid input is not a
+    // working validator.
+    for (final good in const [
+      'v1.2.3',
+      'v1.2.3-rc.1',
+      'v1.2.3-alpha.beta.1',
+      'v1.2.3-0',
+      'v1.2.3-rc-1',
+    ]) {
+      test('$good is accepted', () {
+        final r = _run([good, '7', '1']);
+        expect(
+          r.code,
+          0,
+          reason: 'ci_version: $good must be accepted: ${r.err}',
+        );
+        expect(r.out, contains('name=${good.substring(1)}'));
       });
     }
   });
