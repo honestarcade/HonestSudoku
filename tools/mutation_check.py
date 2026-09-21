@@ -267,6 +267,13 @@ MUTATIONS: list[Mutation] = [
              sub(r"Workflow\.parse\(", "WorkflowFast.of(", 5),
              "the rules reach a parse path with no error handling at all",
              'parse-path',
+             # Also needs the overflow document. Repointing five of six leaves
+             # one `Workflow.parse(`, which satisfies the text assertion's set
+             # equality, so the EXECUTION test is what catches this one — and
+             # excluding `slow` excluded it. The battery reported WRONG-REASON
+             # the first time the two interacted, which is the marker earning
+             # its keep.
+             slow=True,
              also=(("test/guards/workflow_yaml.dart",
                     append("extension WorkflowFast on Workflow {\n"
                            "  static Workflow of(String path, String text) {\n"
