@@ -232,7 +232,7 @@ MUTATIONS: list[Mutation] = [
       - id: promote
         run: tools/play_promote.sh com.honestarcade.sudoku internal production"""),
              "a job with no refusal mints the credential and promotes",
-             'is a legitimate promotion and was refused'),
+             'not the dispatch input'),
 
     # ---- play-api-check's keystore step (#173) ----------------------------
     # Was "the alias assertion is disabled", replacing `if [ "$alias_got" !=
@@ -323,7 +323,10 @@ MUTATIONS: list[Mutation] = [
              "tools/make_upload_key.sh",
              sub(r"escape_for_double_quotes \"\$HS_KEYSTORE_PASS\"", '$HS_KEYSTORE_PASS'),
              "a password containing $( ) executes and is recorded wrong",
-             'source:'),
+             # The leak scan added for #190 now fires first, inside the same
+             # round-trip test: an unescaped password partially reaches
+             # stderr. Earlier and more specific than the old marker.
+             'survives the round trip'),
 ]
 
 
