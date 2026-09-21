@@ -56,7 +56,15 @@ case "$method" in
     if [ -n "$out" ]; then printf '{"id":"E1"}' > "$out"; fi
     if [ "$want_status" = 1 ]; then printf '200'; fi
     exit 0 ;;
-  DELETE) exit 22 ;;
+  DELETE)
+    # A 500, and let curl's own --fail decide the exit status. The stub
+    # exited 22 unconditionally, which is what --fail already does — so it
+    # could not tell a script WITH --fail from one without, and removing
+    # --fail left the whole suite green (#183).
+    if [ -n "$out" ]; then printf '{"error":"boom"}' > "$out"; fi
+    if [ "$want_status" = 1 ]; then printf '500'; fi
+    case " $* " in *" --fail "*) exit 22 ;; esac
+    exit 0 ;;
   *)
     if [ -n "$out" ]; then printf '{"error":"boom"}' > "$out"; fi
     if [ "$want_status" = 1 ]; then printf '500'; fi
@@ -180,6 +188,26 @@ void _assertPromoteShape(Workflow wf) {
           'refusal: the first step of `${job.name}` is '
           '`${refuse.uses ?? refuse.id}`, not a refusal that runs',
     );
+    // The refusal must read the DISPATCH INPUTS, not constants. _runRefusal
+    // supplies FROM_TRACK/TO_TRACK from Dart's own environment and never
+    // looked at the step's `env:`, so rewiring it to
+    // `FROM_TRACK: internal / TO_TRACK: alpha` — or deleting the block —
+    // left a refusal that always passes while the real inputs flowed on to
+    // `promote`, with the suite green (#184).
+    for (final wiring in const [
+      (name: 'FROM_TRACK', input: 'from_track'),
+      (name: 'TO_TRACK', input: 'to_track'),
+    ]) {
+      expect(
+        refuse.env[wiring.name],
+        '\${{ inputs.${wiring.input} }}',
+        reason:
+            'refusal: the refusal step\'s ${wiring.name} is '
+            '`${refuse.env[wiring.name]}`, not the dispatch input. It would '
+            'evaluate something the user never typed',
+      );
+    }
+
     for (final probe in const [
       (from: 'internal', to: 'production', shouldPass: false),
       (from: 'production', to: 'alpha', shouldPass: false),
@@ -505,12 +533,28 @@ void main() {
       // Two of three sites had no warning branch, so the fix is only as good
       // as its application. A bare `curl ... -X DELETE` anywhere in the
       // script means one more silent failure.
-      final text = File('${repoRoot.path}/$_script').readAsStringSync();
-      final bare = RegExp(r'curl[^\n]*-X DELETE')
+      // Continuations joined FIRST. The real invocation wraps — `curl …\`
+      // on one line, `-X DELETE …` on the next — and `[^\n]*` cannot cross
+      // a newline, so the pattern matched ZERO strings and this assertion
+      // passed unconditionally. I proved it blind by injecting a bare
+      // multi-line DELETE, which it did not notice (#183).
+      final text = File('${repoRoot.path}/$_script')
+          .readAsStringSync()
+          .replaceAll(RegExp(r'\\\n\s*'), ' ');
+      final deletes = RegExp(r'curl[^\n]*-X DELETE')
           .allMatches(text)
           .map((m) => m.group(0)!)
-          .where((m) => !m.contains('--fail'))
           .toList();
+      // The count, so a NEW delete site is noticed rather than silently
+      // joining the ones already checked.
+      expect(
+        deletes,
+        hasLength(1),
+        reason:
+            'delete-sites: expected exactly one curl -X DELETE, in '
+            'delete_edit. Found ${deletes.length}: $deletes',
+      );
+      final bare = deletes.where((m) => !m.contains('--fail')).toList();
       expect(
         bare,
         isEmpty,

@@ -507,6 +507,13 @@ List<_Entry> _sectionEntries(String pubspecText, String section) {
   return entries;
 }
 
+/// The entry names of one dependency section, for guards that care where a
+/// package is declared rather than whether it is blocked (#185).
+Set<String> sectionNames(String pubspecText, String section) => _sectionEntries(
+  normaliseText(pubspecText),
+  section,
+).map((e) => e.name).toSet();
+
 Set<String> _directDependencyNames(String pubspecText, {bool dev = false}) =>
     _sectionEntries(
       pubspecText,

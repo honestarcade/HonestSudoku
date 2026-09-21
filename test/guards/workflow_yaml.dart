@@ -225,10 +225,23 @@ class Workflow {
     return null;
   }
 
-  static Workflow parse(String path, String text) {
+  static Workflow parse(String path, String text) =>
+      parseWithLoader(path, text, loadYaml);
+
+  /// [parse], with the loader injected.
+  ///
+  /// Only so the StackOverflowError branch can be exercised: a depth that
+  /// reliably overflows under `flutter test` also destabilises whatever file
+  /// runs beside it, which is why the depth was lowered and the test went
+  /// vacuous (#177, #191).
+  static Workflow parseWithLoader(
+    String path,
+    String text,
+    dynamic Function(String) load,
+  ) {
     dynamic doc;
     try {
-      doc = loadYaml(text);
+      doc = load(text);
     } on StackOverflowError {
       // Deep nesting overflows the recursive loader. StackOverflowError is
       // an Error, not an Exception, so `on YamlException` did not catch it

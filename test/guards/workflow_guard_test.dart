@@ -1172,17 +1172,50 @@ void main() {
       });
     });
 
-    test('nesting too deep to load is an offender, not a crash', () {
-      // StackOverflowError is an Error, not an Exception, so `on
-      // YamlException` did not catch it and it escaped parse() as a crash
-      // (#177).
-      // 6000 is the measured threshold on this SDK — 3000 raises a
-      // YamlException, 6000 overflows. Deeper works too, but 60000 put
-      // enough stack pressure on the runner to fail an unrelated test file
-      // running concurrently, which is a worse guard than none.
-      final deep = 'a:\n    ${'[' * 6000}';
-      final wf = Workflow.parse('x.yml', deep);
-      expect(wf.problem, isNotNull);
+    test('an Error escaping the loader is an offender, not a crash', () {
+      // The handler exists because StackOverflowError is an Error, not an
+      // Exception, so `on YamlException` misses it and it escapes parse().
+      //
+      // The test that guarded it asserted nothing. It nested 6000 deep, and
+      // I had measured that depth with `dart run` — `flutter test` has a
+      // different stack size, so under the real runner 6000 raises a
+      // YamlException and the test passed through the wrong branch.
+      // Deleting the handler left the suite green (#191).
+      //
+      // Raising the depth is not the fix: it was lowered from 60000 because
+      // that much stack pressure failed an unrelated file running
+      // concurrently. So the handler is exercised directly instead, by
+      // throwing the Error from inside the load.
+      expect(
+        () => Workflow.parseWithLoader(
+          'x.yml',
+          'a: b\n',
+          (_) => throw StackOverflowError(),
+        ),
+        returnsNormally,
+        reason:
+            'parse-error: a StackOverflowError from the loader escaped as a '
+            'crash. It is an Error, not an Exception, so `on YamlException` '
+            'does not catch it',
+      );
+      final wf = Workflow.parseWithLoader(
+        'x.yml',
+        'a: b\n',
+        (_) => throw StackOverflowError(),
+      );
+      expect(
+        wf.problem,
+        contains('too deep'),
+        reason: 'parse-error: the offender must name what went wrong',
+      );
+
+      // And the real thing still behaves, at whatever depth this runner
+      // overflows or refuses — either outcome is an offender, which is the
+      // property that matters.
+      expect(
+        Workflow.parse('x.yml', 'a:\n    ${'[' * 6000}').problem,
+        isNotNull,
+      );
     });
 
     test('a workflow that cannot be parsed is refused, not skipped', () {
