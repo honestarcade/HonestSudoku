@@ -287,6 +287,28 @@ MUTATIONS: list[Mutation] = [
                            "    return Workflow.parse(path, text, load: (_) => doc);\n"
                            "  }\n"
                            "}\n")),)),
+    # ---- #215/#216: what a step DOES, not what it exits with -------------
+    # All three were GREEN at 933cfad. The first is a secret published from an
+    # already-pinned step; the other two are steps that exist to destroy a
+    # credential and were exercised by nothing.
+    Mutation("#215", "a pinned step publishes the keystore to the run summary",
+             ".github/workflows/release.yml",
+             sub(r'(          test -s "\$RUNNER_TEMP/upload\.keystore")',
+                 r'\1\n          echo "$HS_KEYSTORE_B64" >> "$GITHUB_STEP_SUMMARY"', 1),
+             "the base64 of the signing keystore lands in a retained, downloadable summary",
+             'published-secret'),
+    Mutation("#216", "the shred step stops deleting the keystore",
+             ".github/workflows/release.yml",
+             sub(r'run: rm -f "\$RUNNER_TEMP/upload\.keystore"',
+                 'run: echo "keystore removed"', 1),
+             "the decoded signing keystore survives the job",
+             'destroys'),
+    Mutation("#216", "the play-api-check forget step stops deleting",
+             ".github/workflows/play-api-check.yml",
+             sub(r'rm -f "\$RUNNER_TEMP/play-sa\.json" "\$RUNNER_TEMP/upload\.keystore"',
+                 'echo "credentials forgotten"', 1),
+             "the service-account key and the keystore both survive the job",
+             'destroys'),
     # ---- #202: the ruleset, compared as whole tokens ---------------------
     # All three were GREEN at round eight: `contains('active')` is satisfied
     # by `inactive`, and `contains('gate:15368')` by `CI / gate:15368` --

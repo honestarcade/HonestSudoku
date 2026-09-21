@@ -415,6 +415,17 @@ const _dependsOn = <String, Map<String, Map<String, List<String>>>>{
   },
 };
 
+/// Every command any step in any workflow is exercised against.
+///
+/// Shared so a test that runs a body for a reason other than propagation —
+/// asking what it published, or whether it removed a credential — stubs the
+/// same set and does not quietly diverge from it.
+final Set<String> _ambientCommands = {
+  for (final jobs in _dependsOn.values)
+    for (final steps in jobs.values)
+      for (final commands in steps.values) ...commands,
+};
+
 /// Every command any step of [workflow] is exercised against.
 Set<String> _propagationCommands(String workflow) => {
   for (final steps in (_dependsOn[workflow] ?? const {}).values)
@@ -451,10 +462,13 @@ bool _isRateLimited(String status, String payload) {
 ///  * **The workspace has the files the body opens.** A redirect into a
 ///    directory that does not exist fails for a reason that has nothing to
 ///    do with the command being tested (`sidecar`).
-({int code, String out, String err}) _runStepBody(
+({int code, String out, String err, String wrote, Directory workspace})
+_runStepBody(
   String body, {
   required Iterable<String> ambient,
   String? failing,
+  Map<String, String> extraEnv = const {},
+  bool keepWorkspace = false,
 }) {
   final dir = Directory.systemTemp.createTempSync('hs-stepbody');
   try {
@@ -572,17 +586,35 @@ exit 0
         'FROM_TRACK': 'internal',
         'TO_TRACK': 'alpha',
         'PROMOTE_OUTCOME': 'success',
+        ...extraEnv,
       },
       stdoutEncoding: utf8,
       stderrEncoding: utf8,
     );
+    // Everything the body WROTE, not only what it returned. A step's exit
+    // code says nothing about what it published, and #215 is a step that
+    // exits 0 and puts the signing keystore in the run summary.
+    final wrote = StringBuffer();
+    for (final entity in dir.listSync(recursive: true)) {
+      if (entity is! File) continue;
+      if (entity.path.startsWith('${bin.path}/')) continue;
+      if (entity.path == script.path) continue;
+      try {
+        wrote.writeln(entity.readAsStringSync());
+      } catch (_) {
+        // A binary the body produced; not a channel prose can hide in.
+      }
+    }
+
     return (
       code: r.exitCode,
       out: r.stdout.toString(),
       err: r.stderr.toString(),
+      wrote: wrote.toString(),
+      workspace: dir,
     );
   } finally {
-    dir.deleteSync(recursive: true);
+    if (!keepWorkspace) dir.deleteSync(recursive: true);
   }
 }
 
@@ -2347,6 +2379,165 @@ void main() {
       });
     });
 
+    test('every step that promises to destroy a credential destroys it', () {
+      // #216. Nine steps were declared `[]` in `_dependsOn` — "this step's
+      // failure does not matter" — and a `[]` step is never run at all, so
+      // seven of them were exercised by nothing. Three of those exist solely
+      // to destroy a credential, and each could be replaced by `echo` with
+      // the whole suite green:
+      //
+      //   release.yml      ship    shred   -> the decoded signing keystore
+      //   play-promote.yml promote forget  -> the service-account key
+      //   play-api-check   check   forget  -> the key AND the keystore
+      //
+      // Declaring a step exempt from the propagation check is reasonable —
+      // its failure genuinely should not stop the job. What was missing is
+      // the other half: saying what DOES cover it. This is that half, and it
+      // asks the only question that matters for a step named "remove": run
+      // it, then look for the file.
+      const destroys =
+          <String, ({String job, String step, List<String> files})>{
+            '.github/workflows/release.yml': (
+              job: 'ship',
+              step: 'shred',
+              files: ['upload.keystore'],
+            ),
+            '.github/workflows/play-promote.yml': (
+              job: 'promote',
+              step: 'forget',
+              files: ['play-sa.json'],
+            ),
+            '.github/workflows/play-api-check.yml': (
+              job: 'check',
+              step: 'forget',
+              files: ['play-sa.json', 'upload.keystore'],
+            ),
+          };
+
+      destroys.forEach((path, spec) {
+        final wf = Workflow.parse(path, readFile(path));
+        expect(wf.problem, isNull, reason: '$path: ${wf.problem}');
+        final step = wf
+            .job(spec.job)!
+            .steps
+            .firstWhere(
+              (s) => s.id == spec.step,
+              orElse: () => fail(
+                'destroys: $path job `${spec.job}` has no step `${spec.step}` — '
+                'the step that removes ${spec.files.join(' and ')} is gone',
+              ),
+            );
+
+        final r = _runStepBody(
+          step.run!,
+          ambient: _ambientCommands,
+          keepWorkspace: true,
+        );
+        try {
+          for (final name in spec.files) {
+            final left = File('${r.workspace.path}/runner/$name');
+            expect(
+              left.existsSync(),
+              isFalse,
+              reason:
+                  'destroys: $path job `${spec.job}` step `${spec.step}` ran '
+                  'and `$name` is still in \$RUNNER_TEMP. The credential '
+                  'survives the job — on a hosted runner that is the end of '
+                  'it, but the step promises otherwise and nothing else '
+                  'checks',
+            );
+          }
+        } finally {
+          r.workspace.deleteSync(recursive: true);
+        }
+      });
+    });
+
+    test('no step publishes a secret it was handed', () {
+      // #215. Pinning a step set fixes WHICH steps exist; it says nothing
+      // about what they do. At 933cfad a single line appended to the
+      // already-pinned `keystore` step —
+      //
+      //     echo "$HS_KEYSTORE_B64" >> "$GITHUB_STEP_SUMMARY"
+      //
+      // put the base64 of the release signing keystore into a rendered,
+      // retained, downloadable run summary, and the whole suite was green.
+      // Three guards each declined for a different reason: the step set was
+      // unchanged; the textual secret rule only refuses `${{ secrets.* }}`
+      // INSIDE a `run:` body, and this secret arrives through `env:`; and
+      // the propagation harness reads exit codes, never output.
+      //
+      // So the question is asked of bash, the way #205 asks every other
+      // runtime question: bind each secret the step declares to a value
+      // nothing else could produce, run the body, and look at everything it
+      // wrote.
+      //
+      // Scope, stated because the name is broader than the rule: this covers
+      // a secret the step is HANDED, through workflow-, job- or step-level
+      // `env:`. A step with no `env:` cannot leak one this way — `forget` in
+      // play-promote.yml is the example, and a body of `echo
+      // "$PLAY_SERVICE_ACCOUNT_JSON"` there expands to nothing. What it does
+      // NOT cover is a step reading a secret back off DISK that an earlier
+      // step wrote, such as `$RUNNER_TEMP/play-sa.json`. `forget` removing
+      // that file is asserted separately (#216); a step publishing its
+      // contents is not covered here.
+      for (final path in _workflowFiles()) {
+        final wf = Workflow.parse(path, readFile(path));
+        expect(wf.problem, isNull, reason: '$path: ${wf.problem}');
+        for (final job in wf.jobs) {
+          for (final step in job.steps) {
+            final body = step.run;
+            if (body == null) continue;
+
+            // The secrets THIS step is given, workflow- and job-level env
+            // included — a value in scope is a value the body can echo.
+            final secretEnv = <String, String>{};
+            var n = 0;
+            for (final env in [wf.env, job.env, step.env]) {
+              env.forEach((name, value) {
+                if (!RegExp(r'\$\{\{\s*secrets\.').hasMatch(value)) return;
+                // The keystore ALIAS is stored as a secret and is public by
+                // design: it is in `android/signing/README.md`, on keytool's
+                // command line, and the play-api-check summary reports it on
+                // purpose. `secrets_scripts_test.dart` already excludes it
+                // from sentinel derivation for the same reason; the two must
+                // agree or one of them is wrong.
+                if (name.toUpperCase().endsWith('ALIAS')) return;
+                secretEnv[name] = 'HS-SENTINEL-${n++}-do-not-publish';
+              });
+            }
+            if (secretEnv.isEmpty) continue;
+
+            final r = _runStepBody(
+              body,
+              ambient: _ambientCommands,
+              extraEnv: secretEnv,
+            );
+
+            for (final entry in secretEnv.entries) {
+              for (final channel in <(String, String)>[
+                ('stdout', r.out),
+                ('stderr', r.err),
+                ('a file it wrote (the run summary is one)', r.wrote),
+              ]) {
+                expect(
+                  channel.$2,
+                  isNot(contains(entry.value)),
+                  reason:
+                      'published-secret: $path job `${job.name}` step '
+                      '`${step.id}` writes the value of `${entry.key}` to '
+                      '${channel.$1}. A step set pins which steps exist, not '
+                      r'what they do — and `$GITHUB_STEP_SUMMARY` is '
+                      'rendered, '
+                      'retained and downloadable by anyone with read access',
+                );
+              }
+            }
+          }
+        }
+      }
+    });
+
     test('a step fails when the command it runs fails', () {
       // #205's principle, applied to every workflow rather than one job.
       //
@@ -2398,11 +2589,7 @@ void main() {
             'dependsOn. Say which command it depends on, or say none',
       );
 
-      final ambient = <String>{
-        for (final jobs in _dependsOn.values)
-          for (final steps in jobs.values)
-            for (final commands in steps.values) ...commands,
-      };
+      final ambient = _ambientCommands;
 
       _dependsOn.forEach((path, jobs) {
         final wf = Workflow.parse(path, readFile(path));
