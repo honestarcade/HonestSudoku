@@ -628,7 +628,7 @@ CI and the tag-to-Play pipeline, on `milestone/m1-ci`. Three stories implemented
   **Issue:** #154, and the owner chose this over keeping the scans or adding actionlint
 
 - **Decision (Rule 1):** the two dispatch inputs on `play-promote.yml` are `type: choice` with an explicit option list.
-  **Why:** free text let a crafted `to_track` append a forged "Promoted on Play … -> production" line to the run summary and title a refused run "Promote internal to production" in the Actions list (#165). The refusal step stays — two barriers, and GitHub's cannot be bypassed by dispatching the API directly.
+  **Why:** free text let a crafted `to_track` append a forged "Promoted on Play … -> production" line to the run summary and title a refused run "Promote internal to production" in the Actions list (#165). The refusal step stays — two barriers. *(Corrected 2026-09-21, #196: this sentence originally continued "and GitHub's cannot be bypassed by dispatching the API directly". That was a guess stated as fact; see the #179 entry below, which retracts it. The two readings stood twenty-five lines apart until now.)*
   **Issue:** #165
 
 - **Decision:** `report-gate-failure` triggers on `needs.gate.result != 'success'` rather than `failure()`.
@@ -674,7 +674,7 @@ CI and the tag-to-Play pipeline, on `milestone/m1-ci`. Three stories implemented
 
 ## /n8-exec M1 — 2026-09-21 (fifth fix pass, the eleven bugs the fifth verification filed)
 
-- **Decision:** `#192`'s first item — "the guard suite races itself" — was not reproduced and is recorded as **not a defect**. No test writes into the repository (`grep` finds zero `File('${repoRoot.path}…')` writes, and a verifier independently confirmed the suite is hermetic). The contention every verifier reported came from eight of them sharing one worktree, which was my orchestration error in the verification run.
+- **Decision:** `#192`'s first item — "the guard suite races itself" — was not reproduced and is recorded as **not a defect**. No test modifies a **tracked** file (`grep` finds zero `File('${repoRoot.path}…')` writes, and a verifier independently confirmed it). *(Corrected 2026-09-21, #196: the original sentence said "no test writes into the repository", which is too strong. `signing_guard_test.dart` runs a real `flutter build appbundle --release` with `workingDirectory: repoRoot.path`, so it writes `build/` and `.dart_tool/` while other files run concurrently. Both are gitignored, so neither `git status` nor the battery's dirty-tree refusal would ever see it.)* The contention every verifier reported came from eight of them sharing one worktree, which was my orchestration error in the verification run.
   **Why it still produced a change:** the battery reading a single pass/fail per mutation is a real robustness gap regardless of what caused the flake this time. It now re-runs the suite before reporting a SURVIVED verdict — that is the verdict that matters, and one flaky green would either invent a hole or let a real one be dismissed as flake.
   **Issue:** #192
 - **Decision (Rule 2):** `#176`/`#190`'s argv row could not be closed by the leak scan alone. The keytool pre-flight resolves the **real** keytool by its pinned path, so no stub ever sees that argv. Added a **source rule** over `tools/*.sh` refusing `-storepass <value>`, `-keypass <value>` and `--body "$(cat …)"`.

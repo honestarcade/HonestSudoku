@@ -292,6 +292,14 @@ jobs:
     needs: gate
     # `needs.gate.result` rather than `failure()`: a CANCELLED gate is not a
     # failure, so `failure()` produced no "nothing shipped" line for it (#165).
+    #
+    # UNVERIFIED, and flagged as such rather than left reading as fact: when a
+    # run is cancelled GitHub cancels its dependent jobs rather than
+    # evaluating their `if:`, so this job may well not run for a cancelled
+    # gate either. The change is still right — `result != 'success'` is
+    # broader than `failure()` and costs nothing — but the cancelled case is
+    # a claim nobody has tested, and it needs a cancelled run to settle
+    # (#180, #196).
     if: needs.gate.result != 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5

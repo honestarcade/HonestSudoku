@@ -14,6 +14,7 @@ library;
 // Dependabot's job, which is why the `github-actions` ecosystem is asserted
 // here too. Nor whether the required-status-check context string matches the
 // job name; that lives in the repository ruleset and is recorded on the issue.
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -1291,10 +1292,10 @@ void main() {
       // concurrently. So the handler is exercised directly instead, by
       // throwing the Error from inside the load.
       expect(
-        () => Workflow.parseWithLoader(
+        () => Workflow.parse(
           'x.yml',
           'a: b\n',
-          (_) => throw StackOverflowError(),
+          load: (_) => throw StackOverflowError(),
         ),
         returnsNormally,
         reason:
@@ -1302,10 +1303,12 @@ void main() {
             'crash. It is an Error, not an Exception, so `on YamlException` '
             'does not catch it',
       );
-      final wf = Workflow.parseWithLoader(
+      // The SAME method the guards call, with its loader replaced — not a
+      // sibling that `parse` might or might not delegate to (#194).
+      final wf = Workflow.parse(
         'x.yml',
         'a: b\n',
-        (_) => throw StackOverflowError(),
+        load: (_) => throw StackOverflowError(),
       );
       expect(
         wf.problem,
@@ -1494,13 +1497,39 @@ void main() {
 
     test('a folded or anchored uses: is not a false positive', () {
       // Both were flagged as missing a ref by the line scan, erring safe but
-      // wrongly — the parser resolves them to their value (#175).
+      // wrongly — the parser resolves them to their value (#175). The
+      // anchored half was fixed and untested, in a test whose name claims
+      // it (#196).
       expect(
         unpinnedUses(
           'good.yml',
           _workflow('      - uses: >-\n          actions/checkout@v7\n'),
         ),
         isEmpty,
+        reason: 'folded',
+      );
+      expect(
+        unpinnedUses(
+          'good.yml',
+          'name: X\non: push\npermissions:\n  contents: read\n'
+              'concurrency: x\n'
+              'x: &pin actions/checkout@v7\n'
+              'jobs:\n  a:\n    steps:\n      - uses: *pin\n',
+        ),
+        isEmpty,
+        reason: 'anchored: an alias resolves to its pinned value',
+      );
+      // And the complement, so the anchor case cannot pass by being unread.
+      expect(
+        unpinnedUses(
+          'bad.yml',
+          'name: X\non: push\npermissions:\n  contents: read\n'
+              'concurrency: x\n'
+              'x: &bad attacker/action\n'
+              'jobs:\n  a:\n    steps:\n      - uses: *bad\n',
+        ),
+        isNotEmpty,
+        reason: 'anchored: an alias to an unpinned action must be refused',
       );
     });
 
@@ -1633,12 +1662,13 @@ void main() {
       }
     });
 
-    test('an offender names the line the offence is on', () {
-      // The contract is `path:line: message`, and every trace offender
-      // reported the line of the `run:` KEY — one short for a block scalar,
-      // which is all of them. Nothing asserted a line number, so it could
-      // not be caught either (#180, #188).
-      const doc =
+    test('an offender names its line in every scalar style', () {
+      // #188 fixed the block style and broke the single-line one, because
+      // `bodyLine = line + 1` was unconditional and the issue's premise
+      // ("every block-scalar run: … and that is all of them") was false.
+      // Nine single-line `run:` values live in these workflows. All four
+      // styles are asserted now, so neither direction can drift (#188, #195).
+      const head =
           'name: X\n' // 1
           'on: push\n' // 2
           'permissions:\n' // 3
@@ -1646,45 +1676,30 @@ void main() {
           'concurrency: x\n' // 5
           'jobs:\n' // 6
           '  a:\n' // 7
-          '    steps:\n' // 8
-          '      - run: |\n' // 9
-          '          echo one\n' // 10
-          '          echo two\n' // 11
-          '          set -x\n' // 12
-          '          echo three\n'; // 13
-      final offenders = shellTraceOffenders('x.yml', doc);
-      expect(offenders, hasLength(1));
-      expect(
-        offenders.single.line,
-        12,
-        reason:
-            'offender-line: `set -x` is on line 12 and the offender says '
-            '${offenders.single.line}',
-      );
-
-      // And a secret in a run: body, same contract.
-      const secretDoc =
-          'name: X\n'
-          'on: push\n'
-          'permissions:\n'
-          '  contents: read\n'
-          'concurrency: x\n'
-          'jobs:\n'
-          '  a:\n'
-          '    steps:\n'
-          '      - run: |\n'
-          '          echo one\n'
-          r'          echo "${{ secrets.HS_KEY_PASS }}"'
-          '\n';
-      final secretOffenders = secretsInRunOffenders('x.yml', secretDoc);
-      expect(secretOffenders, hasLength(1));
-      expect(
-        secretOffenders.single.line,
-        11,
-        reason:
-            'offender-line: the secret is on line 11 and the offender says '
-            '${secretOffenders.single.line}',
-      );
+          '    steps:\n'; // 8
+      final cases = <String, ({String yaml, int line})>{
+        'block scalar': (
+          yaml: '$head      - run: |\n          echo one\n          set -x\n',
+          line: 11,
+        ),
+        'folded scalar': (
+          yaml: '$head      - run: >-\n          set -x\n',
+          line: 10,
+        ),
+        'plain single line': (yaml: '$head      - run: set -x\n', line: 9),
+        'quoted single line': (yaml: '$head      - run: "set -x"\n', line: 9),
+      };
+      cases.forEach((style, c) {
+        final offenders = shellTraceOffenders('x.yml', c.yaml);
+        expect(offenders, hasLength(1), reason: 'offender-line: $style');
+        expect(
+          offenders.single.line,
+          c.line,
+          reason:
+              'offender-line: $style — the offence is on line ${c.line} and '
+              'the offender says ${offenders.single.line}',
+        );
+      });
     });
 
     test('a job that is not a mapping is refused, not skipped', () {
@@ -1729,6 +1744,53 @@ void main() {
         );
       }
     });
+
+    test(
+      'the required checks are still bound, and are the check-run names',
+      () {
+        // The one part of the merge gate with no guard on it: the ruleset lives
+        // in GitHub config, so #187 is real today and silently reversible
+        // tomorrow — the same failure mode as the issue itself, a gate that
+        // exists but does not bind (#196).
+        //
+        // Skipped rather than failed without network or auth: this asserts a
+        // fact about the remote, and a developer offline should not see a red
+        // suite for it. CI has both.
+        final probe = Process.runSync(
+          'gh',
+          [
+            'api',
+            'repos/honestarcade/HonestSudoku/rulesets/23682733',
+            '--jq',
+            '[.enforcement] + [.rules[] | select(.type=="required_status_checks") '
+                '| .parameters.required_status_checks[] '
+                '| .context + ":" + (.integration_id|tostring)] | join(" ")',
+          ],
+          stdoutEncoding: utf8,
+          stderrEncoding: utf8,
+        );
+        if (probe.exitCode != 0) {
+          markTestSkipped('gh unavailable or unauthenticated');
+          return;
+        }
+        final got = probe.stdout.toString().trim();
+        expect(
+          got,
+          contains('active'),
+          reason: 'ruleset: the main branch ruleset is not active',
+        );
+        for (final check in const ['gate', 'mutations']) {
+          expect(
+            got,
+            contains('$check:15368'),
+            reason:
+                'ruleset: `$check` is not a required status check pinned to '
+                'GitHub Actions. The context is the CHECK-RUN NAME, not the '
+                "PR UI's rendering (`CI / $check`) — #137 learned that twice",
+          );
+        }
+      },
+    );
 
     test('dependabot watches both ecosystems', () {
       final offenders = dependabotOffenders(
