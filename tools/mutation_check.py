@@ -119,7 +119,7 @@ MUTATIONS: list[Mutation] = [
           track: production
           status: completed"""),
              "automation reaches production, and the summary still says internal",
-             'release-shape: exactly one Play upload'),
+             'release-shape: exactly these three jobs'),
     Mutation("#169", "continue-on-error on the gate job", ".github/workflows/release.yml",
              sub(r"^  gate:$", "  gate:\n    continue-on-error: true", flags=re.M),
              "`needs: gate` succeeds on a red gate, so a failing build ships",
@@ -166,7 +166,7 @@ MUTATIONS: list[Mutation] = [
       - id: promote
         run: tools/play_promote.sh com.honestarcade.sudoku internal production"""),
              "a job with no refusal mints the credential and promotes",
-             'calls the reusable workflow'),
+             'is a legitimate promotion and was refused'),
 
     # ---- play-api-check's keystore step (#173) ----------------------------
     Mutation("#173", "the alias assertion is disabled", ".github/workflows/play-api-check.yml",
