@@ -87,3 +87,47 @@ jobs:
           path: build/app/outputs/bundle/release/app-release.aab
           retention-days: 7
           if-no-files-found: error
+
+  # The guards' own gate. Every fix in this project began as a defect that
+  # the suite reported green, so "the suite passes" is not evidence that the
+  # suite can fail. tools/mutation_check.py reintroduces 31 known defects one
+  # at a time and requires the guards to catch each one, naming the assertion
+  # that must fire — a mutation that merely turns the suite red some other
+  # way is reported as WRONG-REASON, not a pass.
+  #
+  # Its own job rather than a step in gate.sh: it runs the guard suite once
+  # per mutation, which is minutes, and tools/gate.sh is the script a
+  # contributor runs locally before every commit.
+  mutations:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      FLUTTER_SUPPRESS_ANALYTICS: "true"
+    steps:
+      - id: checkout
+        name: Checkout
+        uses: actions/checkout@v7
+
+      - id: java
+        name: Set up Java
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      - id: flutter
+        name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version-file: .fvmrc
+          cache: true
+
+      - id: deps
+        name: Resolve dependencies
+        run: flutter pub get --enforce-lockfile
+
+      - id: mutations
+        name: Mutation battery
+        run: tools/mutation_check.py

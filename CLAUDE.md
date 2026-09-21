@@ -8,6 +8,15 @@ format check, `flutter test` (which includes the invariant guards below), the
 release bundle build, and `tools/check_aab.sh` over that bundle. It must print
 `GATE PASSED` before anything is considered done.
 
+CI runs one more thing the gate does not: **`tools/mutation_check.py`**, its own
+job, which reintroduces 31 known defects one at a time and requires the guard
+suite to catch each — naming the assertion that must fire, so a mutation that
+merely turns the suite red some other way is reported as WRONG-REASON rather
+than a pass. It refuses to run on a dirty tree and restores through a
+`try/finally`. Run it locally before changing a guard: a guard weakened by
+accident is the failure this project keeps finding, and a green suite is not
+evidence that the suite can fail. Adding a guard means adding its mutation.
+
 ## Project invariants
 
 Load-bearing constraints no story may breach without an explicit conversation with the owner. Changing one is plan drift by definition: log it as an ad-hoc ledger entry in `.n8/decisions.md` and suggest `/n8-replan`.

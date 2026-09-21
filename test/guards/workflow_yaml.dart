@@ -294,7 +294,9 @@ class Workflow {
                 uses: _stringOr(stepNode, 'uses'),
                 run: run,
                 shell: _stringOr(stepNode, 'shell'),
-                continueOnError: _isTruthy(_lookup(stepNode, 'continue-on-error')),
+                continueOnError: _isTruthy(
+                  _lookup(stepNode, 'continue-on-error'),
+                ),
                 with_: _stringMap(stepNode, 'with'),
               ),
             );

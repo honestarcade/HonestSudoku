@@ -113,7 +113,13 @@ void _assertCiShape(Workflow ci) {
   );
   expect(ci.jobs.map((j) => j.name).toList(), [
     'gate',
-  ], reason: 'ci-shape: one job — a second job can run anything');
+    'mutations',
+  ], reason: 'ci-shape: exactly these jobs — another one can run anything');
+  _expectRunsExactly(
+    ci.job('mutations')!.stepById('mutations'),
+    'tools/mutation_check.py',
+    'ci-shape: the mutation battery must actually run',
+  );
   for (final job in ci.jobs) {
     expect(
       job.continueOnError,
