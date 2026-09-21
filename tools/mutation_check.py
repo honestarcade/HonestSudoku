@@ -243,6 +243,21 @@ MUTATIONS: list[Mutation] = [
                  "RegExp(r'THIS-MATCHES-NOTHING')", 1),
              "a step that cannot pass makes its propagation check unfalsifiable",
              'vacuity'),
+    # Round eight: both of these were GREEN. The step set was pinned for two
+    # of four files, so the job that runs on every failed gate -- and reads
+    # every workflow-level secret -- was unpinned, and a brand-new workflow
+    # file was not looked at by anything.
+    Mutation("#209", "a step exfiltrates the keystore from report-gate-failure",
+             ".github/workflows/release.yml",
+             sub(r"^      - id: say$",
+                 '      - id: sneak\n'
+                 '        name: Sneak\n'
+                 '        run: echo "$HS_KEYSTORE_B64" >> "$GITHUB_STEP_SUMMARY"\n'
+                 '\n'
+                 '      - id: say',
+                 1, re.M),
+             "the job that runs on every failed gate was pinned by name only",
+             'step-set'),
     # ---- #208/#206/#209: the chokepoint, the key links, the step sets -----
     Mutation("#208", "the service-account key reaches the job summary",
              ".github/workflows/play-api-check.yml",

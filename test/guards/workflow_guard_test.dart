@@ -468,6 +468,21 @@ List<String> _swallowsFailure(String body) {
   }
 }
 
+/// What an inserted step in this job would have access to.
+///
+/// The shared reason string used to name `promote`'s Play token whatever job
+/// it was reporting on, which reads as a copy-paste in a failure message that
+/// is supposed to tell you what is at stake (#209).
+String _jobHolds(String path, String job) {
+  if (job == 'promote') return 'a live Play token';
+  if (job == 'check') return 'the service-account key and the keystore';
+  if (job == 'ship') return 'the signing keystore and every release secret';
+  if (job == 'report-gate-failure') {
+    return 'every workflow-level secret, on every failed gate';
+  }
+  return 'that job\'s secrets';
+}
+
 /// A step that hands the service-account key to a Play upload action.
 /// Matched on the action's repository path rather than a substring of the
 /// whole `uses:`, so a lookalike under another owner is not this (#169).
@@ -1977,9 +1992,21 @@ void main() {
     test('every workflow pins its step set', () {
       // `ship`'s 18 ids were pinned for #182; `play-promote.yml` was not, so
       // a NEW step there could publish #130's literal string on every
-      // failure path with the suite green (#209). Derived from the files
-      // rather than named per-file, because naming them per-file is exactly
-      // how two of four came to be unpinned.
+      // failure path with the suite green (#209).
+      //
+      // The first version of this test said it was "derived from the files
+      // rather than named per-file" and was a two-entry literal covering two
+      // of the four workflows. That comment was false, and what it hid was
+      // `release.yml`'s `report-gate-failure`: a job whose NAME was pinned,
+      // whose steps were pinned nowhere, which runs on every failed gate and
+      // can read every workflow-level secret. A step there that base64'd the
+      // signing keystore into the run summary passed the whole suite.
+      //
+      // So the enumeration is now closed against the directory: every file
+      // `_workflowFiles()` finds, and every job in it, must appear below.
+      // A new workflow, or a new job in an existing one, fails this test
+      // until someone writes down what its steps are. That is the property
+      // the old comment claimed and the old code did not have.
       const expected = <String, Map<String, List<String>>>{
         '.github/workflows/play-promote.yml': {
           'promote': [
@@ -1994,7 +2021,55 @@ void main() {
         '.github/workflows/play-api-check.yml': {
           'check': ['checkout', 'java', 'play', 'keystore', 'forget'],
         },
+        '.github/workflows/release.yml': {
+          'gate': <String>[],
+          'ship': [
+            'checkout',
+            'secrets_present',
+            'version',
+            'java',
+            'flutter',
+            'deps',
+            'keystore',
+            'keystore_check',
+            'build',
+            'scan',
+            'cert',
+            'sidecar',
+            'artifact',
+            'asset',
+            'play',
+            'summary',
+            'name_failure',
+            'shred',
+          ],
+          'report-gate-failure': ['say'],
+        },
+        '.github/workflows/ci.yml': {
+          'gate': [
+            'checkout',
+            'shellcheck',
+            'java',
+            'flutter',
+            'deps',
+            'guards',
+            'gate',
+            'artifact',
+          ],
+          'mutations': ['checkout', 'java', 'flutter', 'deps', 'mutations'],
+        },
       };
+
+      expect(
+        expected.keys.toSet(),
+        _workflowFiles().toSet(),
+        reason:
+            'step-set: a workflow file is not pinned here. Every file in '
+            '$_workflowDir must have its jobs and steps written down — an '
+            'unpinned file is a place a step can be added silently, which '
+            'is #209',
+      );
+
       expected.forEach((path, jobs) {
         final wf = Workflow.parse(path, readFile(path));
         expect(wf.problem, isNull, reason: '$path: ${wf.problem}');
@@ -2010,7 +2085,7 @@ void main() {
             reason:
                 'step-set: exactly these steps in this order in '
                 '$path job `$job` — an inserted step runs with whatever '
-                'that job holds, and in `promote` that is a live Play token',
+                'that job holds, which here is ${_jobHolds(path, job)}',
           );
         });
       });
