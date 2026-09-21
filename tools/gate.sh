@@ -315,3 +315,12 @@ while [ "$i" -lt "$total" ]; do
 done
 
 echo "GATE PASSED $BUNDLE"
+# The battery is NOT part of this gate, and saying so here is the point: it
+# runs as its own CI job because it executes the guard suite once per
+# mutation, which is minutes. A green gate says the guards pass; it says
+# nothing about whether they can fail. Before changing a guard, run:
+#
+#   tools/mutation_check.py
+#
+# (#196)
+echo "note: tools/mutation_check.py is not part of this gate — run it before changing a guard"

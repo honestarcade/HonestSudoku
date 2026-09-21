@@ -562,4 +562,169 @@ void main() {
       );
     });
   });
+
+  group('the source track must hold a completed release', () {
+    test('an empty source track fails the run, not just the helper', () {
+      // #21 AC6's other half. `play_release_codes_test.dart` tests the Python
+      // helper's exit 1; nothing read the SCRIPT's handling of it, so
+      // neutering both `die_api "no completed release on $FROM"` sites left
+      // the suite green (#198).
+      final dir = Directory.systemTemp.createTempSync('hs-nocr');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      // A curl that opens an edit and returns a track holding only a DRAFT
+      // release — the state this refusal exists for.
+      File('${dir.path}/curl')
+        ..writeAsStringSync(r'''#!/bin/sh
+out=""; method="GET"; want=0; prev=""
+for a in "$@"; do
+  case "$prev" in -o) out="$a" ;; -X) method="$a" ;; esac
+  if [ "$a" = "-w" ]; then want=1; fi
+  prev="$a"
+done
+case "$method" in
+  POST) if [ -n "$out" ]; then printf '{"id":"E1"}' > "$out"; fi
+        if [ "$want" = 1 ]; then printf '200'; fi ;;
+  DELETE) : ;;
+  *) if [ -n "$out" ]; then printf '{"releases":[{"status":"draft","versionCodes":["101"]}]}' > "$out"; fi
+     if [ "$want" = 1 ]; then printf '200'; fi ;;
+esac
+exit 0
+''')
+        ..createSync(recursive: false);
+      Process.runSync('chmod', ['+x', '${dir.path}/curl']);
+
+      final r = Process.runSync(
+        _script,
+        [_package, 'internal', 'alpha'],
+        workingDirectory: repoRoot.path,
+        includeParentEnvironment: false,
+        environment: {
+          'PATH': '${dir.path}:/usr/bin:/bin',
+          'PLAY_TOKEN': 'fake',
+          'HS_PLAY_API': _unreachableApi,
+        },
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8,
+      );
+      expect(
+        r.exitCode,
+        isNot(0),
+        reason:
+            'no-completed-release: a track holding only a draft must fail '
+            'the run, not promote nothing and report success',
+      );
+      expect(
+        r.stderr.toString(),
+        contains('no completed release on internal'),
+        reason: 'no-completed-release: the message must name the track',
+      );
+      expect((r.stdout as String).trim(), isEmpty);
+    });
+  });
+
+  group('the promote summary, as the workflow writes it', () {
+    // #130: the summary printed "Promoted on Play: versionCode []" on every
+    // failure path, because `tee` creates the output file the moment the step
+    // starts. The fix gated the line on the step's outcome AND on there being
+    // codes — and nothing tested it, so `if true` reinstated #130 verbatim
+    // with the suite green (#198).
+    //
+    // The comment above that line reads "An honesty-first project must not
+    // publish that line." This is what makes it so.
+    late String stepScript;
+    late Directory dir;
+
+    setUp(() {
+      final wf = Workflow.parse(
+        '.github/workflows/play-promote.yml',
+        readFile('.github/workflows/play-promote.yml'),
+      );
+      expect(wf.problem, isNull);
+      final summary = wf.job('promote')!.stepById('summary');
+      expect(summary, isNotNull, reason: 'the `summary` step has gone');
+      stepScript = summary!.run!;
+      dir = Directory.systemTemp.createTempSync('hs-summary');
+    });
+    tearDown(() => dir.deleteSync(recursive: true));
+
+    ({int code, String summary}) runSummary({
+      required String outcome,
+      String? promoteOut,
+    }) {
+      final runnerTemp = '${dir.path}/runner';
+      Directory(runnerTemp).createSync(recursive: true);
+      if (promoteOut != null) {
+        File('$runnerTemp/promote.out').writeAsStringSync(promoteOut);
+      }
+      final summaryFile = '${dir.path}/summary.md';
+      File(summaryFile).writeAsStringSync('');
+      final script = File('${dir.path}/summary.sh')
+        ..writeAsStringSync(stepScript);
+      final r = Process.runSync(
+        '/bin/bash',
+        [script.path],
+        includeParentEnvironment: false,
+        environment: {
+          'PATH': '/usr/bin:/bin',
+          'RUNNER_TEMP': runnerTemp,
+          'GITHUB_STEP_SUMMARY': summaryFile,
+          'PROMOTE_OUTCOME': outcome,
+          'FROM_TRACK': 'internal',
+          'TO_TRACK': 'alpha',
+        },
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8,
+      );
+      return (code: r.exitCode, summary: File(summaryFile).readAsStringSync());
+    }
+
+    test('a successful promotion names the codes it moved', () {
+      final r = runSummary(
+        outcome: 'success',
+        promoteOut: 'promoted=101 102\nstatus=completed\n',
+      );
+      expect(r.code, 0, reason: 'summary: rc=${r.code}');
+      expect(r.summary, contains('Promoted on Play'));
+      expect(r.summary, contains('101 102'));
+      expect(r.summary, contains('internal -> alpha'));
+    });
+
+    for (final failed in const ['failure', 'cancelled', 'skipped']) {
+      test('a $failed promote step says nothing was promoted', () {
+        // The `tee` file exists and holds codes — that is the #130 trap. The
+        // outcome is what decides.
+        final r = runSummary(
+          outcome: failed,
+          promoteOut: 'promoted=101\nstatus=completed\n',
+        );
+        expect(r.code, 0, reason: 'summary: rc=${r.code}');
+        expect(
+          r.summary,
+          contains('Nothing was promoted'),
+          reason: 'summary-honesty: a $failed step must say so',
+        );
+        expect(
+          r.summary,
+          isNot(contains('Promoted on Play')),
+          reason:
+              'summary-honesty: a $failed step published a success line — '
+              'this is #130, and an honesty-first project must not publish '
+              'that line',
+        );
+      });
+    }
+
+    test('a successful step with no codes still says nothing was promoted', () {
+      final r = runSummary(outcome: 'success', promoteOut: 'status=draft\n');
+      expect(r.code, 0, reason: 'summary: rc=${r.code}');
+      expect(r.summary, contains('Nothing was promoted'));
+      expect(r.summary, isNot(contains('Promoted on Play')));
+    });
+
+    test('no promote.out at all says nothing was promoted', () {
+      final r = runSummary(outcome: 'failure');
+      expect(r.code, 0, reason: 'summary: rc=${r.code}');
+      expect(r.summary, isNot(contains('Promoted on Play')));
+    });
+  });
 }

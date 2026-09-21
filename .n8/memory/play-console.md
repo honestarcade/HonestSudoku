@@ -29,8 +29,12 @@ and neither is recoverable from the repository.
 
 The package id is typed on the **Create app** screen and is permanent from that
 moment — not from the first upload. `test/guards/docs_consistency_test.dart`
-asserts it across the build, `docs/privacy.md`, `README.md`, `.n8/config.yml`,
-`docs/index.md`, `docs/_config.yml` and `LICENSE`. It does **not** read this
+READS seven files and asserts the package id against the build in exactly
+**two** of them: `docs/privacy.md` and `.n8/config.yml`. On `README.md` it
+asserts the secret names and the Release section, on `LICENSE` the MIT grant,
+on `docs/_config.yml` the site title, and on `docs/index.md` the policy link.
+The earlier wording here said it "asserts it across" all seven, which is false
+for four of them (#196). It does **not** read this
 file, so the copy above is unguarded — changing it here alone leaves the suite
 green (#180).
 

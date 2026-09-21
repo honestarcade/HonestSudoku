@@ -15,21 +15,29 @@ import 'package:yaml/yaml.dart';
 
 /// One `run:` script, with the line its value starts on.
 class RunScript {
-  const RunScript(this.body, this.line, this.jobName, this.stepId);
+  const RunScript(
+    this.body,
+    this.line,
+    this.bodyLine,
+    this.jobName,
+    this.stepId,
+  );
 
   /// The script text as the shell will receive it, aliases resolved.
   final String body;
 
   /// 1-based line in the source file of the `run:` KEY.
-  ///
-  /// The body's first line is `line + 1`: for a block scalar the value's
-  /// span starts at the `|`, which sits on the key's line. Offenders add the
-  /// body index to [bodyLine], not to this, which is why every trace
-  /// offender pointed one line short (#180, #188).
   final int line;
 
-  /// 1-based line in the source file where the body's first line sits.
-  int get bodyLine => line + 1;
+  /// 1-based line in the source file where the body's FIRST line sits.
+  ///
+  /// Depends on the scalar style, and assuming it did not is how #188's fix
+  /// went sideways: `line + 1` is right for a block or folded scalar, where
+  /// the value starts after the `|` or `>` indicator — and wrong for a
+  /// plain or quoted single-line `run:`, where the body sits ON the key's
+  /// line. Nine such values exist in these workflows, and they went from
+  /// correct to off-by-one (#188, #195).
+  final int bodyLine;
   final String jobName;
   final String? stepId;
 }
@@ -233,20 +241,27 @@ class Workflow {
     return null;
   }
 
-  static Workflow parse(String path, String text) =>
-      parseWithLoader(path, text, loadYaml);
-
-  /// [parse], with the loader injected.
+  /// Parse a workflow, with the loader injectable.
   ///
-  /// Only so the StackOverflowError branch can be exercised: a depth that
-  /// reliably overflows under `flutter test` also destabilises whatever file
-  /// runs beside it, which is why the depth was lowered and the test went
-  /// vacuous (#177, #191).
-  static Workflow parseWithLoader(
+  /// ONE body, reached by a defaulted parameter rather than two methods.
+  /// The previous shape had `parse` delegating to `parseWithLoader`, and
+  /// nothing asserted the delegation — so `parse` could be rewritten to do
+  /// its own `loadYaml` inside a `try` catching only YamlException, leaving
+  /// the StackOverflowError handler intact-but-unreached, with the suite
+  /// green and `dart analyze` clean (#194).
+  ///
+  /// A guard on an injected seam does not guard the seam itself. With one
+  /// body there is no second implementation to write.
+  ///
+  /// The loader is injectable at all because a depth that reliably overflows
+  /// under `flutter test` also destabilises whatever file runs beside it,
+  /// which is why the nesting depth was lowered and the test went vacuous
+  /// (#177, #191).
+  static Workflow parse(
     String path,
-    String text,
-    dynamic Function(String) load,
-  ) {
+    String text, {
+    dynamic Function(String) load = loadYaml,
+  }) {
     dynamic doc;
     try {
       doc = load(text);
@@ -373,6 +388,12 @@ class Workflow {
                 RunScript(
                   run,
                   runNode!.span.start.line + 1,
+                  // Multi-line value ⇒ the body starts on the next line;
+                  // single-line ⇒ it starts on this one. Measured from the
+                  // span rather than guessed from the indicator, so a folded
+                  // scalar and a quoted one are both right.
+                  runNode.span.start.line +
+                      (runNode.span.end.line > runNode.span.start.line ? 2 : 1),
                   jobName,
                   _stringOr(stepNode, 'id'),
                 ),

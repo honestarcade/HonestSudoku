@@ -39,7 +39,12 @@ def main() -> int:
     # (#163). Raising the ceiling to 100000 did not fix that: above the new
     # threshold the behaviour was bit-for-bit the original bug, and below it
     # a 99999-digit "version code" was printed and PUT to the target track.
-    # The limit is a backstop; the ValueError is CAUGHT below, and a version
+    # The limit is a backstop, and so is the handler: the length check below
+    # refuses anything over ten digits first, so the ValueError can no longer
+    # be raised at all. Both are kept against a change to that check, and
+    # both are documented as unreachable rather than described as working —
+    # the shape #180 was filed for, and which this file did not do (#196).
+    # The ValueError is still CAUGHT below, and a version
     # code is length-checked against what Android actually accepts (#178).
     if hasattr(sys, "set_int_max_str_digits"):
         sys.set_int_max_str_digits(100000)

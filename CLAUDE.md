@@ -9,7 +9,7 @@ release bundle build, and `tools/check_aab.sh` over that bundle. It must print
 `GATE PASSED` before anything is considered done.
 
 CI runs one more thing the gate does not: **`tools/mutation_check.py`**, its own
-job, which reintroduces 31 known defects one at a time and requires the guard
+job, which reintroduces every known defect one at a time and requires the guard
 suite to catch each — naming the assertion that must fire, so a mutation that
 merely turns the suite red some other way is reported as WRONG-REASON rather
 than a pass. It refuses to run on a dirty tree and restores through a

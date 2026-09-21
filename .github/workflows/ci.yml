@@ -90,7 +90,7 @@ jobs:
 
   # The guards' own gate. Every fix in this project began as a defect that
   # the suite reported green, so "the suite passes" is not evidence that the
-  # suite can fail. tools/mutation_check.py reintroduces 31 known defects one
+  # suite can fail. tools/mutation_check.py reintroduces every known defect one
   # at a time and requires the guards to catch each one, naming the assertion
   # that must fire — a mutation that merely turns the suite red some other
   # way is reported as WRONG-REASON, not a pass.
