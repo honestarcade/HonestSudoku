@@ -30,6 +30,9 @@ String get _credentials =>
     '$_home/HonestArcadeApps/secrets/sudoku-signing-credentials.txt';
 String get _ghLog => '${_tmp.path}/gh.log';
 
+/// Scratch space handed to every script, inside the scanned tree.
+String get _scratch => '${_tmp.path}/scratch';
+
 void _writeExecutable(String path, String body) {
   File(path)
     ..createSync(recursive: true)
@@ -39,126 +42,273 @@ void _writeExecutable(String path, String body) {
 
 /// Values that must never appear anywhere a script can write.
 ///
-/// A test registers what it planted; `_run` then checks **every** channel on
-/// **every** invocation. #155's test searched stdout and stderr for three
-/// literals on three chosen code paths, and #176 listed nine shapes it
-/// missed — appended leaks on unasserted paths, a secret written to a file, a
-/// private key copied to a file, argv (two channels), a partial value, and
-/// base64/hex/reversed transforms. #176 was closed without closing any of
-/// them (#190).
+/// **Derived, not registered.** The previous version asked each test to call
+/// `_plant`, and `_plant` was called in exactly two places — so `_run` scanned
+/// on every invocation over an empty set for every other test, and rows 3 and
+/// 4 of #176's table survived in a group that planted nothing. "A test cannot
+/// forget to check" was true of the scan and false of the planting (#200).
 ///
-/// Registered rather than hard-coded, because the values differ per test and
-/// a fixed list is how the three-literals version stayed stuck.
+/// So the sentinels come from the environment the script is actually handed,
+/// plus the credentials file it is pointed at. A test that passes a secret is
+/// scanned for that secret because it passed it, and there is no separate
+/// step to leave out.
 final Set<String> _sentinels = {};
 
-void _plant(Iterable<String> values) {
-  for (final v in values) {
-    if (v.trim().length >= 6) _sentinels.add(v);
+/// Sentinels whose home IS the credentials file.
+///
+/// That file exists to hold these values, so finding them there is not a
+/// leak. The previous version excluded the whole file unconditionally, which
+/// any script could write any other secret into (#200) — this excludes the
+/// values that came from it and nothing else, so a private key appended to
+/// the same file is still caught.
+final Set<String> _credentialSentinels = {};
+
+/// Environment variable names whose VALUES are secrets.
+///
+/// Anything ending in these, so `HS_KEYSTORE_PASS`, `KEYSTORE_PASS` and
+/// `HS_STUB_PASS` are all covered without listing each.
+const _secretSuffixes = [
+  'PASS',
+  'PASSWORD',
+  'SECRET',
+  'TOKEN',
+  'KEY',
+  'B64',
+  'JSON',
+];
+
+// Deliberately NOT here: ALIAS. The upload key's alias is public by design —
+// android/signing/README.md publishes it beside the certificate fingerprint,
+// and keytool takes it on the command line because it is not a secret.
+// Treating it as one made every legitimate `-alias upload` a leak (#200).
+
+bool _looksSecret(String name) {
+  final upper = name.toUpperCase();
+  return _secretSuffixes.any(upper.endsWith);
+}
+
+/// Adds every secret-shaped value in [env], and the contents of the
+/// credentials file if one exists, to the scan set.
+/// The variables the credentials file exists to carry.
+///
+/// A value derived from one of these is at home in that file. Anything else
+/// found there — a service-account private key, say — is a leak, so the
+/// exclusion cannot be abused by appending to it (#200).
+const _credentialHomed = {
+  'HS_KEYSTORE_PASS',
+  'HS_KEY_PASS',
+  'HS_KEY_ALIAS',
+  'HS_KEYSTORE_PATH',
+};
+
+void _deriveSentinels(Map<String, String> env) {
+  for (final entry in env.entries) {
+    if (!_looksSecret(entry.key)) continue;
+    _addSentinel(entry.value, entry.key);
+    if (_credentialHomed.contains(entry.key.toUpperCase())) {
+      _credentialSentinels.add(entry.value.trim());
+    }
   }
+  final creds = File(_credentials);
+  if (creds.existsSync()) {
+    for (final m in RegExp(
+      r'''^export\s+(\w+)="(.*)"$''',
+      multiLine: true,
+    ).allMatches(creds.readAsStringSync())) {
+      // By NAME, like the environment above. The file also carries
+      // HS_KEYSTORE_PATH, which is a path the scripts print in error
+      // messages on purpose — treating every exported value as a secret made
+      // "the keystore named here is not readable: /nonexistent" a leak.
+      if (!_looksSecret(m.group(1)!)) continue;
+      _addSentinel(m.group(2)!, 'credentials file');
+      if (_credentialHomed.contains(m.group(1)!.toUpperCase())) {
+        _credentialSentinels.add(m.group(2)!.trim());
+      }
+    }
+  }
+}
+
+/// A value too short to search for is a hole, not a pass.
+///
+/// `_plant` silently dropped anything under six characters, and the pre-flight
+/// group's fixture password is `"pw"` — so that group's scan was doubly dead.
+/// A fixture that cannot be scanned for now fails loudly rather than
+/// disabling the check it was written for (#200).
+void _addSentinel(String value, String where) {
+  final v = value.trim();
+  if (v.isEmpty) return;
+  // A one- or two-character value would match half the English in a log.
+  // Four is short enough to keep real fixtures working and long enough that a
+  // match means something.
+  if (v.length < 4) {
+    fail(
+      'leak-fixture: the value of `$where` is ${v.length} character(s), too '
+      'short to search a log for. Give the fixture a distinctive value — a '
+      'short one silently disables the leak scan for this test',
+    );
+  }
+  _sentinels.add(v);
 }
 
 /// Every form of [secret] a script could emit instead of the literal.
 ///
-/// A leak does not have to be faithful to be a leak: eight characters of a
-/// password narrows a search enormously, and `| base64` defeats a literal
-/// scan completely while remaining trivially reversible.
-Iterable<String> _leakForms(String secret) sync* {
-  yield secret;
-  yield base64.encode(utf8.encode(secret));
-  yield secret.split('').reversed.join();
-  yield utf8
-      .encode(secret)
-      .map((b) => b.toRadixString(16).padLeft(2, '0'))
-      .join();
-  if (secret.length >= 8) yield secret.substring(0, 8);
+/// A leak does not have to be faithful to be a leak. The previous set was five
+/// fixed forms, so rot13, gzip, URL-encoding, case folding, the LAST eight
+/// characters and a value split across two writes all walked past it (#200).
+///
+/// This cannot be complete — no fixed set can be — so the forms here are the
+/// ones reachable with a single shell builtin or a command these scripts
+/// already use. The honest statement of scope is in the issue, not in a
+/// comment claiming the property is general.
+Iterable<({String form, String how})> _leakForms(String secret) sync* {
+  yield (form: secret, how: 'verbatim');
+  yield (form: base64.encode(utf8.encode(secret)), how: 'base64');
+  yield (form: secret.split('').reversed.join(), how: 'reversed');
+  yield (
+    form: utf8
+        .encode(secret)
+        .map((b) => b.toRadixString(16).padLeft(2, '0'))
+        .join(),
+    how: 'hex',
+  );
+  yield (form: secret.toLowerCase(), how: 'lowercased');
+  yield (form: secret.toUpperCase(), how: 'uppercased');
+  yield (form: _rot13(secret), how: 'rot13');
+  yield (form: Uri.encodeComponent(secret), how: 'URL-encoded');
+  if (secret.length >= 8) {
+    yield (form: secret.substring(0, 8), how: 'its first 8 characters');
+    yield (
+      form: secret.substring(secret.length - 8),
+      how: 'its last 8 characters',
+    );
+  }
 }
+
+String _rot13(String s) => String.fromCharCodes(
+  s.codeUnits.map((c) {
+    if (c >= 0x41 && c <= 0x5A) return (c - 0x41 + 13) % 26 + 0x41;
+    if (c >= 0x61 && c <= 0x7A) return (c - 0x61 + 13) % 26 + 0x61;
+    return c;
+  }),
+);
 
 /// Everything a script wrote that a human or another process could read.
 ///
-/// Files under the fake `$HOME` are included because a script that writes a
-/// secret to disk has leaked it just as surely as one that prints it, and
-/// that row of #176's table survived the fix. Recorded argv is included
-/// because `set_ci_secrets.sh:130` asserts `-storepass:env` "keeps the
-/// password off the command line and out of the process table" — a property
-/// nothing tested, while changing it to `-storepass "$PASS"` stayed green.
-List<({String where, String text})> _channels(String out, String err) {
-  final channels = <({String where, String text})>[
-    (where: 'stdout', text: out),
-    (where: 'stderr', text: err),
+/// `$HOME` alone was not enough: `$RUNNER_TEMP` is where these workflows put
+/// the decoded keystore, `/tmp` is where a debugging dump naturally lands, and
+/// the scripts `cd` to the repository root (#200).
+List<({String where, String text, String path})> _channels(
+  String out,
+  String err,
+) {
+  final channels = <({String where, String text, String path})>[
+    (where: 'stdout', text: out, path: ''),
+    (where: 'stderr', text: err, path: ''),
   ];
   for (final log in const ['gh.log', 'keytool.log', 'gcloud.log']) {
     final f = File('${_tmp.path}/$log');
     if (f.existsSync()) {
-      channels.add((where: '$log (recorded argv)', text: f.readAsStringSync()));
-    }
-  }
-  final home = Directory(_home);
-  if (home.existsSync()) {
-    for (final entity in home.listSync(recursive: true)) {
-      if (entity is! File) continue;
-      // The credentials file is written by make_upload_key.sh on purpose and
-      // is the one place a secret is meant to land; every other file under
-      // $HOME is a leak.
-      if (entity.path == _credentials) continue;
-      String text;
-      try {
-        text = entity.readAsStringSync();
-      } catch (_) {
-        // A binary file the scripts produced — a PKCS12 keystore throws
-        // FileSystemException, not FormatException, when decoded as UTF-8.
-        // Scanning its bytes for a sentinel would be a different check; a
-        // keystore is supposed to contain the key.
-        continue;
-      }
       channels.add((
-        where: 'file ${entity.path.replaceFirst(_home, r'$HOME')}',
-        text: text,
+        where: '$log (recorded argv)',
+        text: f.readAsStringSync(),
+        path: f.path,
       ));
     }
+  }
+  for (final dir in [_home, _scratch, '${_tmp.path}/runner', _tmp.path]) {
+    _collectFiles(Directory(dir), channels);
   }
   return channels;
 }
 
-/// Fails if any planted value, in any of its forms, reached any channel.
+void _collectFiles(
+  Directory dir,
+  List<({String where, String text, String path})> channels,
+) {
+  if (!dir.existsSync()) return;
+  for (final entity in dir.listSync(recursive: true)) {
+    if (entity is! File) continue;
+    // Skip the harness's own fixtures. `bin/` holds the stub executables this
+    // file writes, and a stub that echoes a value it was given is the test
+    // working, not a script leaking.
+    if (entity.path.startsWith('${_tmp.path}/bin/')) continue;
+    if (entity.path.endsWith('.sh')) continue;
+    String text;
+    try {
+      text = entity.readAsStringSync();
+    } catch (_) {
+      // Not UTF-8. Read the BYTES instead of skipping: the previous version
+      // skipped any unreadable file, so two junk bytes in front of a secret
+      // hid it completely, while the comment claimed only keystores were
+      // skipped (#200).
+      try {
+        text = latin1.decode(entity.readAsBytesSync(), allowInvalid: true);
+      } catch (_) {
+        continue;
+      }
+    }
+    channels.add((
+      where: 'file ${entity.path.replaceFirst(_home, r'$HOME')}',
+      text: text,
+      path: entity.path,
+    ));
+  }
+}
+
+/// Fails if any derived value, in any of its forms, reached any channel.
 void _assertNoLeak(String out, String err, String why) {
+  final channels = _channels(out, err);
   for (final secret in _sentinels) {
+    final ownHome = _credentialSentinels.contains(secret);
     for (final form in _leakForms(secret)) {
-      for (final channel in _channels(out, err)) {
+      if (form.form.length < 4) continue;
+      for (final channel in channels) {
+        // The credentials file is this value's own home, and only for values
+        // that came from it.
+        // Compared on the real path: `where` is rewritten for display, so
+        // matching on it silently never fired.
+        // The file holds an escaped spelling, so the raw value and the
+        // written one differ as strings — match on the value's home, not on
+        // the exact bytes.
+        if (ownHome && channel.path == _credentials) continue;
         expect(
           channel.text,
-          isNot(contains(form)),
+          isNot(contains(form.form)),
           reason:
-              'leak: $why — a planted secret reached ${channel.where}'
-              '${form == secret ? '' : ' (as ${_describeForm(secret, form)})'}',
+              'leak: $why — a secret reached ${channel.where}'
+              '${form.how == 'verbatim' ? '' : ' (as ${form.how})'}',
         );
       }
     }
   }
 }
 
-String _describeForm(String secret, String form) {
-  if (form == base64.encode(utf8.encode(secret))) return 'base64';
-  if (form == secret.split('').reversed.join()) return 'reversed';
-  if (form.length == 8) return 'its first 8 characters';
-  return 'hex';
-}
-
 ({int code, String out, String err}) _run(
   String script, {
   Map<String, String> env = const {},
 }) {
+  final environment = {
+    'PATH':
+        '${_tmp.path}/bin:${Platform.environment['PATH'] ?? '/usr/bin:/bin'}',
+    'HOME': _home,
+    'GH_LOG': _ghLog,
+    // Point the script's scratch space somewhere the scan walks. A leak to
+    // $TMPDIR or /tmp is the most natural place for a debugging dump, and
+    // scanning the real system temp directory is not an option (#200).
+    'TMPDIR': _scratch,
+    'RUNNER_TEMP': '$_scratch/runner',
+    ...env,
+  };
+  // Derived from what this run is actually handed, before it runs. No test
+  // has to remember to register anything (#200).
+  Directory('$_scratch/runner').createSync(recursive: true);
+  _deriveSentinels(environment);
   final r = Process.runSync(
     '/bin/bash',
     [script],
     workingDirectory: repoRoot.path,
     includeParentEnvironment: false,
-    environment: {
-      'PATH':
-          '${_tmp.path}/bin:${Platform.environment['PATH'] ?? '/usr/bin:/bin'}',
-      'HOME': _home,
-      'GH_LOG': _ghLog,
-      ...env,
-    },
+    environment: environment,
     stdoutEncoding: utf8,
     stderrEncoding: utf8,
   );
@@ -166,13 +316,19 @@ String _describeForm(String secret, String form) {
   final err = r.stderr.toString();
   // Every run, not three chosen ones. A test cannot forget to check, which
   // is how nine of #176's eleven rows survived its own fix (#190).
+  // Again after the run: the credentials file may have been written BY the
+  // run, and its values are secrets from that moment on.
+  _deriveSentinels(const {});
   _assertNoLeak(out, err, script);
   return (code: r.exitCode, out: out, err: err);
 }
 
 /// Sentinels are per-test; a value planted by one group must not make another
 /// group's unrelated output look like a leak.
-void _clearSentinels() => _sentinels.clear();
+void _clearSentinels() {
+  _sentinels.clear();
+  _credentialSentinels.clear();
+}
 
 void _writeCredentials(String text) {
   File(_credentials)
@@ -271,9 +427,9 @@ echo "SET bytes=\$n argv=\$*" >> "\$GH_LOG"
       // and fail there with no earlier warning (#143).
       _writeCredentials(
         'export HS_KEYSTORE_PATH="/nonexistent"\n'
-        'export HS_KEYSTORE_PASS="one"\n'
+        'export HS_KEYSTORE_PASS="MISMATCH-ONE-7k"\n'
         'export HS_KEY_ALIAS="upload"\n'
-        'export HS_KEY_PASS="two"\n',
+        'export HS_KEY_PASS="MISMATCH-TWO-9p"\n',
       );
       final r = _run('tools/set_ci_secrets.sh');
       expect(r.code, 2, reason: 'keypass-mismatch: ${r.err}');
@@ -301,9 +457,9 @@ echo "SET bytes=\$n argv=\$*" >> "\$GH_LOG"
       );
       _writeCredentials(
         'export HS_KEYSTORE_PATH="$keystore"\n'
-        'export HS_KEYSTORE_PASS="pw"\n'
+        'export HS_KEYSTORE_PASS="PREFLIGHT-PASS-8fJ2"\n'
         'export HS_KEY_ALIAS="upload"\n'
-        'export HS_KEY_PASS="pw"\n',
+        'export HS_KEY_PASS="PREFLIGHT-PASS-8fJ2"\n',
       );
       final r = _run(
         'tools/set_ci_secrets.sh',
@@ -325,9 +481,9 @@ echo "SET bytes=\$n argv=\$*" >> "\$GH_LOG"
     test('an empty value is refused rather than uploaded', () {
       _writeCredentials(
         'export HS_KEYSTORE_PATH=""\n'
-        'export HS_KEYSTORE_PASS="pw"\n'
+        'export HS_KEYSTORE_PASS="PREFLIGHT-PASS-8fJ2"\n'
         'export HS_KEY_ALIAS="upload"\n'
-        'export HS_KEY_PASS="pw"\n',
+        'export HS_KEY_PASS="PREFLIGHT-PASS-8fJ2"\n',
       );
       final r = _run('tools/set_ci_secrets.sh');
       expect(r.code, 2);
@@ -416,9 +572,9 @@ echo "SET bytes=\$n argv=\$*" >> "\$GH_LOG"
       File(keystore).writeAsStringSync('not a real keystore');
       _writeCredentials(
         'export HS_KEYSTORE_PATH="$keystore"\n'
-        'export HS_KEYSTORE_PASS="pw"\n'
+        'export HS_KEYSTORE_PASS="PREFLIGHT-PASS-8fJ2"\n'
         'export HS_KEY_ALIAS="upload"\n'
-        'export HS_KEY_PASS="pw"\n',
+        'export HS_KEY_PASS="PREFLIGHT-PASS-8fJ2"\n',
       );
       // Answers `-help` so the probe accepts it as a real keytool, and
       // refuses everything else — a wrong password or alias, in effect.
@@ -444,9 +600,9 @@ echo "SET bytes=\$n argv=\$*" >> "\$GH_LOG"
       File(keystore).writeAsStringSync('not a real keystore');
       _writeCredentials(
         'export HS_KEYSTORE_PATH="$keystore"\n'
-        'export HS_KEYSTORE_PASS="pw"\n'
+        'export HS_KEYSTORE_PASS="PREFLIGHT-PASS-8fJ2"\n'
         'export HS_KEY_ALIAS="upload"\n'
-        'export HS_KEY_PASS="pw"\n',
+        'export HS_KEY_PASS="PREFLIGHT-PASS-8fJ2"\n',
       );
       _writeExecutable(
         '${_tmp.path}/bin/keytool',
@@ -479,7 +635,9 @@ echo "SET bytes=\$n argv=\$*" >> "\$GH_LOG"
     // invocation, so a path this group never thought to list is covered
     // anyway. That is the difference between #155's three chosen cases and
     // what #176 asked for (#190).
-    setUp(() => _plant(const [password, alias, keyBody]));
+    // No registration step. `_run` derives the sentinels from the
+    // environment it passes, and these three values reach the scripts
+    // through the credentials file and through env (#200).
     tearDown(_clearSentinels);
 
     void expectNoLeak(({int code, String out, String err}) r, String why) {
@@ -643,7 +801,9 @@ exit 0
       // make_upload_key.sh was outside the leak group entirely — the last row
       // of #176's table — and it is the only script that holds the plaintext
       // password as an environment variable (#190).
-      _plant([password]);
+      // make_upload_key.sh is invoked directly, so its environment is
+      // declared to the scan the same way `_run` declares its own.
+      _deriveSentinels({'HS_KEYSTORE_PASS': password});
       addTearDown(_clearSentinels);
 
       final made = Process.runSync(
@@ -670,6 +830,10 @@ exit 0
       // scan has to be asked for. It was outside the leak group entirely —
       // the last row of #176's table — and it is the only script holding the
       // plaintext password as an environment variable (#190).
+      // This script CREATES the credentials file, so re-derive first: its
+      // password is credential-homed from the moment it is written, the same
+      // as for a run that was handed an existing file.
+      _deriveSentinels(const {});
       _assertNoLeak(
         made.stdout.toString(),
         made.stderr.toString(),
@@ -1343,11 +1507,19 @@ exit 0
     // A source rule rather than a stub check, because the pre-flight resolves
     // the REAL keytool by its pinned path, so a stub never sees that argv.
     // The property is about what the script writes, and that is readable.
-    final scripts = Directory('${repoRoot.path}/tools')
-        .listSync()
-        .whereType<File>()
-        .where((f) => f.path.endsWith('.sh'))
-        .toList();
+    // tools/*.sh AND the workflows. #186 demonstrated the defect in
+    // play-api-check.yml; the rule was written over tools/ only, so the
+    // issue's own reproduction stayed green after it was closed (#200).
+    final scripts = [
+      ...Directory('${repoRoot.path}/tools')
+          .listSync()
+          .whereType<File>()
+          .where((f) => f.path.endsWith('.sh')),
+      ...Directory('${repoRoot.path}/.github/workflows')
+          .listSync()
+          .whereType<File>()
+          .where((f) => RegExp(r'\.ya?ml$').hasMatch(f.path)),
+    ];
 
     test('the tools directory was found', () {
       expect(
@@ -1372,7 +1544,8 @@ exit 0
           // `-storepass:env NAME` and `-keypass:env NAME` are the safe forms.
           // Anything else after -storepass/-keypass is a value on argv.
           for (final m in RegExp(
-            r'-(storepass|keypass)(:env)?\s+(\S+)',
+            // `\s+` missed `-storepass$IFS"$PASS"`; `[\s$]` covers it.
+            r'-(storepass|keypass)(:env)?[\s$]+(\S+)',
           ).allMatches(line)) {
             if (m.group(2) == ':env') continue;
             offenders.add(
@@ -1395,7 +1568,8 @@ exit 0
         final text = f.readAsStringSync().replaceAll(RegExp(r'\\\n\s*'), ' ');
         for (final line in text.split('\n')) {
           if (line.trimLeft().startsWith('#')) continue;
-          if (RegExp(r'--body\s+"?\$\(\s*cat\b').hasMatch(line)) {
+          // `=` as well as whitespace, and `$(< file)` as well as `cat`.
+          if (RegExp(r'''--body[\s=]+"?\$\(\s*(cat\b|<)''').hasMatch(line)) {
             offenders.add(
               '${f.path.split('/').last}: `--body "\$(cat …)"` expands a '
               'secret file into argv. Pipe it on stdin',
