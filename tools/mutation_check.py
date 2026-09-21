@@ -212,7 +212,9 @@ MUTATIONS: list[Mutation] = [
     Mutation("#209", "a new step publishes the promoted line",
              ".github/workflows/play-promote.yml",
              sub(r"^      - id: promote$",
-                 '      - id: note\n        run: echo "Promoted on Play: versionCode []" >> "$GITHUB_STEP_SUMMARY"\n\n      - id: promote',
+                 '      - id: note\n'
+                 '        run: echo "Promoted on Play: versionCode []"\n'
+                 '      - id: promote',
                  1, re.M),
              "#130's literal string on every failure path, from outside the guarded step",
              'step-set'),
