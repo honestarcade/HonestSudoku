@@ -627,9 +627,16 @@ echo "SET bytes=\$n argv=\$*" >> "\$GH_LOG"
     // The values below are distinctive so a partial or transformed leak is
     // still caught, and every run's stdout AND stderr is searched, including
     // the failure paths, which is where a debugging echo survives longest.
-    const password = 'S3CRET-PASSWORD-abcdefghijklmnop';
-    const alias = 'S3CRET-ALIAS-qrstuvwx';
-    const keyBody = 'S3CRET-PRIVATE-KEY-yz0123456789';
+    const password = 'PW-S3CRET-abcdefghijklmnop';
+    const alias = 'AL-S3CRET-qrstuvwx';
+    const keyBody = 'PK-S3CRET-yz0123456789';
+
+    // The private key is minted by a stub INTO A FILE, so it never appears in
+    // the environment `_run` derives from — and deriving instead of
+    // registering silently dropped it. Declared here for the same reason
+    // make_upload_key declares its password: what a stub plants, the stub's
+    // test declares (#200).
+    setUp(() => _deriveSentinels(const {'STUB_PRIVATE_KEY': keyBody}));
 
     // Registered, not searched here: `_run` scans every channel on every
     // invocation, so a path this group never thought to list is covered
