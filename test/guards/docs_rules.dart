@@ -61,6 +61,17 @@ List<String> configIdOffenders(String configYaml, String applicationId) {
 /// (#102). Normalising the punctuation that carries no meaning removes the
 /// silliest of those false alarms.
 String proseOf(String text) => text
+    // PUBLISHED text only. The rules read raw file text with no notion of
+    // what renders, so the entire visible policy could be replaced with an
+    // inverted one and all nine pinned sentences smuggled into a single
+    // HTML comment, with the suite green (#117).
+    .replaceAll(RegExp(r'<!--[\s\S]*?-->'), ' ')
+    // Struck-through text is retracted text, so it is REMOVED rather than
+    // unwrapped. The normalisation added in #102 stripped `*` and left `~`,
+    // so `~~collects **no data**. None.~~` satisfied the pin while
+    // rendering as a crossed-out sentence — and stripping the tildes would
+    // have made it match even more cleanly (#102, #117).
+    .replaceAll(RegExp(r'~~[\s\S]*?~~'), ' ')
     .toLowerCase()
     // Markdown emphasis and code ticks carry no meaning for these claims, and
     // the policy bolds half of them.
@@ -167,6 +178,16 @@ List<String> policyOffenders(String policy, String applicationId) {
       'uninstalling the app deletes them',
       'that uninstalling removes the stored data',
     ),
+    // The NEGATION, pinned. #104 closed one half of this gap and the closing
+    // comment said "all three of the substantive gaps"; this was the second
+    // half of gap 2. Changing the sentence to "...ARE collected, stored,
+    // shared and sold to third parties" left the suite green, because every
+    // pin matched a different sentence (#104, #117).
+    PinnedClaim(
+      'no personal information identifiers usage analytics crash reports '
+          'advertising ids or diagnostics are collected stored shared or sold',
+      'that nothing at all is collected, stored, shared or sold',
+    ),
   ];
   for (final claim in claims) {
     if (!prose.contains(claim.text)) {
@@ -175,6 +196,36 @@ List<String> policyOffenders(String policy, String applicationId) {
         'there. Looked for "${claim.text}". If you reworded it deliberately, '
         'update test/guards/docs_rules.dart in the same commit — this text is '
         'published and some of it is quoted in the Play listing.',
+      );
+    }
+  }
+
+  // Sentences that must NOT appear, however the rest of the page reads.
+  //
+  // A pin asks whether a true sentence is present, and a page can contain
+  // every pinned sentence and then contradict them: appending "Update: the
+  // app now collects diagnostics and shares them with our ad partners"
+  // leaves every pin satisfied. Most of that is inherent to a substring
+  // check, but the specific inversions are worth naming (#117).
+  const contradictions = [
+    'sold to third parties',
+    'we collect',
+    'we share',
+    'shares them with',
+    'shows banner ads',
+    'contains ads',
+    'we use cookies',
+    'third-party analytics',
+    'sends your data',
+  ];
+  for (final phrase in contradictions) {
+    if (prose.contains(phrase)) {
+      offenders.add(
+        'docs/privacy.md: the published policy says "$phrase". Every pinned '
+        'sentence can still be present while the page contradicts them — '
+        'that is what a substring pin cannot see, so this phrase is refused '
+        'by name. If the app genuinely changed, the invariants in CLAUDE.md '
+        'changed first and that is a conversation, not an edit.',
       );
     }
   }
