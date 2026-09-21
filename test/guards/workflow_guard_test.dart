@@ -490,6 +490,11 @@ void main() {
         final mutated = mutate(text);
         expect(mutated, isNot(text), reason: 'sanity: "$why" changed nothing');
         expect(
+          Workflow.parse('ci.yml', mutated).problem,
+          isNull,
+          reason: 'sanity: "$why" produced YAML that does not parse',
+        );
+        expect(
           () => _assertCiShape(Workflow.parse('ci.yml', mutated)),
           throwsA(isA<TestFailure>()),
           reason: 'ci-shape-negative: "$why" was not caught',
@@ -528,10 +533,15 @@ void main() {
               t.replaceFirst('run: tools/verify_upload_cert.sh', "run: 'true'"),
           'track switched to production': (t) =>
               t.replaceFirst('track: internal', 'track: production'),
-          'if: always() on the Play upload': (t) => t.replaceFirst(
+          // replaceFirstMapped, not replaceFirst: the plain form inserts the
+          // replacement LITERALLY, so `$1` went in as two characters at
+          // column 0, broke the block scalar, and the workflow stopped
+          // parsing. The battery then saw `expect(wf.problem, isNull)` throw
+          // and called it a catch — having proved that malformed YAML fails
+          // to parse, not that the rule detects an `if:` on the upload (#172).
+          'if: always() on the Play upload': (t) => t.replaceFirstMapped(
             RegExp(r'(      - id: play\n        name: [^\n]*\n)'),
-            r'$1        if: always()'
-            '\n',
+            (m) => '${m[1]}        if: always()\n',
           ),
           'trigger changed to every push to main': (t) => t.replaceFirst(
             RegExp(r"    tags:\n      - 'v\*'\n"),
@@ -586,6 +596,14 @@ void main() {
             mutated,
             isNot(text),
             reason: 'sanity: "$why" changed nothing',
+          );
+          // A mutation that breaks the YAML proves nothing: the shape
+          // assertion throws on its first line and the battery records a
+          // catch it did not earn (#172).
+          expect(
+            Workflow.parse('release.yml', mutated).problem,
+            isNull,
+            reason: 'sanity: "$why" produced YAML that does not parse',
           );
           expect(
             () => _assertReleaseShape(Workflow.parse('release.yml', mutated)),

@@ -323,19 +323,25 @@ void main() {
           '      - id: token\n        run: gcloud auth activate-service-account\n'
           '      - id: promote\n        run: tools/play_promote.sh pkg internal production\n',
       // #171: the four remaining defeats of the text-matching version.
-      'every exit 1 becomes a shell comment': (t) => t.replaceAll(
+      'every exit 1 becomes a shell comment': (t) => t.replaceAllMapped(
         RegExp(r'^(\s*)exit 1$', multiLine: true),
-        r': # exit 1',
+        (m) => '${m[1]}: # exit 1',
       ),
       'exit 1 survives only inside an uncalled function': (t) => t
-          .replaceAll(RegExp(r'^(\s*)exit 1$', multiLine: true), r':')
+          .replaceAllMapped(
+            RegExp(r'^(\s*)exit 1$', multiLine: true),
+            (m) => '${m[1]}:',
+          )
           .replaceFirst(
             '          set -euo pipefail\n',
             '          set -euo pipefail\n'
                 '          never_called() { exit 1; }\n',
           ),
       'exit 1 survives only inside if false': (t) => t
-          .replaceAll(RegExp(r'^(\s*)exit 1$', multiLine: true), r':')
+          .replaceAllMapped(
+            RegExp(r'^(\s*)exit 1$', multiLine: true),
+            (m) => '${m[1]}:',
+          )
           .replaceFirst(
             '          set -euo pipefail\n',
             '          set -euo pipefail\n'
@@ -352,14 +358,28 @@ void main() {
       'a reusable-workflow job with no steps': (t) =>
           '$t\n  sneaky:\n    uses: ./.github/workflows/evil.yml\n'
           '    secrets: inherit\n',
-      'the refusal stops refusing': (t) => t.replaceFirst(
-        RegExp(r'^(\s*)exit 1$', multiLine: true),
-        r'$1: # exit 1',
-      ),
+      // There is no 'first exit 1 commented out' entry, and that is a
+      // finding rather than an omission. The entry that used to be here
+      // passed `r'$1: # exit 1'` to replaceFirst, which inserts it
+      // LITERALLY: a `$1` landed at column 0, terminated the block scalar,
+      // and the shape assertion threw on `expect(wf.problem, isNull)`. The
+      // battery scored that as a catch, so the one entry that would have
+      // found #171's shell-comment defeat reported a pass while it was live
+      // (#172).
+      //
+      // Written correctly it does not defeat anything: the refusal rejects
+      // production twice — once by name, once by falling through the `case`
+      // to `*)` — so neutering the first `exit 1` leaves production refused.
+      // The honest mutation is the one below, which neuters them all.
     };
     mutations.forEach((why, mutate) {
       final mutated = mutate(text);
       expect(mutated, isNot(text), reason: 'sanity: "$why" changed nothing');
+      expect(
+        Workflow.parse('play-promote.yml', mutated).problem,
+        isNull,
+        reason: 'sanity: "$why" produced YAML that does not parse',
+      );
       expect(
         () => _assertPromoteShape(Workflow.parse('play-promote.yml', mutated)),
         throwsA(isA<TestFailure>()),
