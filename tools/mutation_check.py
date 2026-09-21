@@ -196,10 +196,15 @@ MUTATIONS: list[Mutation] = [
                  r'\1 --debug-sa "$PLAY_SERVICE_ACCOUNT_JSON"', 1),
              "the whole key lands in the process table, readable by any later step",
              'gcloud.log'),
+    # Placed AFTER the credentials are read, and using the name the script
+    # actually binds. The first draft wrote `${HS_KEYSTORE_PASS:-}` before
+    # line 92 gives `KEYSTORE_PASS` its value, so it created an empty file and
+    # SURVIVED -- the battery reporting, correctly, that the mutation tested
+    # nothing. The guard was never the problem.
     Mutation("#208", "a password is written into the workspace",
              "tools/set_ci_secrets.sh",
-             sub(r"(\nset -euo pipefail\n)",
-                 r'\1printf "%s" "${HS_KEYSTORE_PASS:-}" > "$PWD/hs-leak-probe.txt"\n', 1),
+             sub(r'(KEY_PASS="\$\(read_credential HS_KEY_PASS\)"\n)',
+                 r'\1printf "%s" "$KEYSTORE_PASS" > "$PWD/hs-leak-probe.txt"\n', 1),
              "on CI the workspace is $GITHUB_WORKSPACE, which upload-artifact sweeps",
              'GITHUB_WORKSPACE'),
     Mutation("#208", "the key is copied beside the one path forget removes",
@@ -370,13 +375,14 @@ MUTATIONS: list[Mutation] = [
              sub(r'tools/ci_version\.sh "\$GITHUB_REF_NAME"',
                  'echo name=9.9.9; echo code=9999; : "$GITHUB_REF_NAME"', 0),
              "tag validation and the version-code formula become dead code",
-             'key-link'),
+             # Caught by running the step now, not by a substring (#206).
+             'propagation'),
     Mutation("#206", "play-promote.yml stops calling play_promote.sh",
              ".github/workflows/play-promote.yml",
              sub(r"tools/play_promote\.sh com\.honestarcade\.sudoku",
                  "echo promoted=999; : com.honestarcade.sudoku", 0),
              "the track allowlist and production refusal become dead code",
-             'key-link'),
+             'propagation'),
     Mutation("#209", "a new step publishes the promoted line",
              ".github/workflows/play-promote.yml",
              sub(r"^      - id: promote$",
@@ -391,7 +397,7 @@ MUTATIONS: list[Mutation] = [
              sub(r"PROMOTE_OUTCOME: \$\{\{ steps\.promote\.outcome \}\}",
                  "PROMOTE_OUTCOME: success"),
              "a failed run reports the promote step ended as success",
-             'not the promote step'),
+             'refusal'),
     Mutation("#209", "the sidecar computes nothing",
              ".github/workflows/release.yml",
              sub(r'sha256sum "\$aab" > "\$aab\.sha256"', ': > "$aab.sha256"'),
