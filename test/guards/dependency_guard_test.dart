@@ -220,6 +220,91 @@ void main() {
     // truncated, half-written — yields no packages and therefore no offenders,
     // and reads exactly like a clean one. That is the blocklist failing open.
 
+    test('a blocklisted direct dependency is labelled direct', () {
+      // With the pubspec collapsed by lone-CR endings the direct set was
+      // empty, so a DIRECT blocklisted package was reported as
+      // `http (transitive)` — the mislabel #79 and #96 both reported, and
+      // the one that makes the finding read as someone else's problem
+      // (#112).
+      const pubspec =
+          'name: honest_sudoku\n'
+          'environment:\n'
+          '  sdk: ^3.0.0\n'
+          'dependencies:\n'
+          '  flutter:\n'
+          '    sdk: flutter\n'
+          '  http: ^1.0.0\n';
+      const lock =
+          'packages:\n'
+          '  http:\n'
+          '    dependency: "direct main"\n'
+          '    version: "1.0.0"\n'
+          'sdks:\n';
+      for (final entry in {
+        'LF': pubspec,
+        'CRLF': pubspec.replaceAll('\n', '\r\n'),
+        'lone CR': pubspec.replaceAll('\n', '\r'),
+      }.entries) {
+        final offenders = lockOffenders(lock, entry.value);
+        expect(offenders.map((o) => o.what), [
+          'http (direct)',
+        ], reason: '${entry.key}: a direct dependency must read as direct');
+      }
+    });
+
+    test('the real pubspec passes its own preconditions', () {
+      final offenders = pubspecPreconditions(readFile('pubspec.yaml'));
+      expect(
+        offenders,
+        isEmpty,
+        reason: describeOffenders(
+          'pubspec-scannable',
+          offenders.map((o) => o.toString()).toList(),
+        ),
+      );
+    });
+
+    test('a pubspec the rules cannot read is an offender, not silence', () {
+      // #96 was filed because a CRLF pubspec silenced every dependency rule.
+      // Its fix normalised by DELETING carriage returns, so a file with lone
+      // `\r` endings collapsed into one line and the guard went silent
+      // again — with path_provider in the lockfile and 190 tests green
+      // (#112). normaliseText now translates; this is the backstop.
+      for (final entry in {
+        'empty': '',
+        'whitespace only': '   \n  \n',
+        'not a pubspec':
+            'hello: world\nand: more\nlines: here\n'
+            'to: pass\nthe: length check\n',
+      }.entries) {
+        expect(
+          pubspecPreconditions(entry.value),
+          isNotEmpty,
+          reason: 'pubspec-scannable: "${entry.key}" scanned as clean',
+        );
+      }
+    });
+
+    test('lone-CR line endings no longer collapse the file', () {
+      // The complement of the above: with translation, the rules read a
+      // lone-CR pubspec exactly as they read the real one.
+      final real = readFile('pubspec.yaml');
+      expect(
+        pubspecPreconditions(real.replaceAll('\n', '\r')),
+        isEmpty,
+        reason:
+            'with translation a lone-CR pubspec is readable; if this fires '
+            'again the normalisation has regressed to deleting',
+      );
+      expect(
+        normaliseText(real.replaceAll('\n', '\r')),
+        normaliseText(real),
+        reason:
+            'a lone-CR pubspec must normalise to the same text as the real '
+            'one, or every rule below scans a different document',
+      );
+    });
+
     test('the real lockfile passes its own preconditions', () {
       final offenders = lockfilePreconditions(readFile('pubspec.lock'));
       expect(

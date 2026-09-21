@@ -40,7 +40,13 @@ class Offender {
 String normaliseText(String text) {
   var out = text;
   if (out.startsWith('﻿')) out = out.substring(1);
-  return out.replaceAll('\r', '');
+  // TRANSLATE, do not delete. Deleting works for CRLF because the `\n`
+  // survives, but a file terminated with lone `\r` — classic Mac endings,
+  // still produced by some editors and Git filters — collapsed into a single
+  // line, so every rule saw one unparseable string and the whole guard went
+  // silent. That is the same failure #96 was filed for, reintroduced by its
+  // own fix (#112).
+  return out.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
 }
 
 /// Why the lockfile itself cannot be trusted to be there and be whole.
@@ -387,6 +393,58 @@ String? _entryNameOf(RegExpMatch match) =>
 /// recognising them one at a time, anything that is not a plain block opener
 /// is refused **because** the rule cannot read it. "I cannot read this" must
 /// never render as "there is nothing here" — that is the whole defect class.
+/// What must be true of pubspec.yaml before any rule's silence means
+/// anything.
+///
+/// The rules are line scans, and a file they cannot split into lines
+/// produces no lines, no matches and no offenders — which reads exactly like
+/// a clean pubspec. A lone-`\r` file collapsed into one string and silenced
+/// every dependency rule while `path_provider` sat in the lockfile and 190
+/// tests passed. normaliseText now translates those endings, and this is the
+/// backstop for whatever the next unreadable shape turns out to be: a
+/// pubspec that does not look like a pubspec is an offender, not a pass
+/// (#96, #112).
+///
+/// Its own rule, applied to the real file, rather than a prelude inside
+/// another rule: the unit fixtures are deliberately small fragments, and
+/// folding this in would have failed them all for being short.
+List<Offender> pubspecPreconditions(String pubspecText) {
+  final text = normaliseText(pubspecText);
+  if (text.trim().isEmpty) {
+    return [
+      const Offender(
+        'pubspec.yaml:1',
+        '',
+        'pubspec.yaml is empty; every dependency rule would report nothing',
+      ),
+    ];
+  }
+  final lines = text.split('\n');
+  if (lines.length < 5) {
+    return [
+      Offender(
+        'pubspec.yaml:1',
+        '${lines.length} line(s)',
+        'pubspec.yaml did not split into lines, so every rule below scans '
+            'one unparseable string and finds nothing. Check its line '
+            'endings',
+      ),
+    ];
+  }
+  if (!RegExp(r'^name:\s*\S', multiLine: true).hasMatch(text) ||
+      !RegExp(r'^dependencies:\s*$', multiLine: true).hasMatch(text)) {
+    return [
+      const Offender(
+        'pubspec.yaml:1',
+        '',
+        'pubspec.yaml has no top-level `name:` or no `dependencies:` block, '
+            'so the rules cannot locate what they check',
+      ),
+    ];
+  }
+  return const [];
+}
+
 List<Offender> unreadableDependencySections(String pubspecText) {
   pubspecText = normaliseText(pubspecText);
   final offenders = <Offender>[];
