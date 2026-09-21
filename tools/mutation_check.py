@@ -196,15 +196,19 @@ MUTATIONS: list[Mutation] = [
                  r'\1 --debug-sa "$PLAY_SERVICE_ACCOUNT_JSON"', 1),
              "the whole key lands in the process table, readable by any later step",
              'gcloud.log'),
-    # Placed AFTER the credentials are read, and using the name the script
-    # actually binds. The first draft wrote `${HS_KEYSTORE_PASS:-}` before
-    # line 92 gives `KEYSTORE_PASS` its value, so it created an empty file and
-    # SURVIVED -- the battery reporting, correctly, that the mutation tested
-    # nothing. The guard was never the problem.
+    # In make_upload_key.sh, where the password is in the environment the run
+    # is handed and therefore in the sentinel set.
+    #
+    # The first two drafts targeted set_ci_secrets.sh and SURVIVED. Tracing it
+    # rather than assuming: the leak file IS listed by the workspace scan, so
+    # the channel works; that script's password arrives through the
+    # credentials file and was not a sentinel at the moment of the scan. That
+    # residue is #213 -- a real gap, filed rather than hidden behind a
+    # mutation pointed somewhere easier.
     Mutation("#208", "a password is written into the workspace",
-             "tools/set_ci_secrets.sh",
-             sub(r'(KEY_PASS="\$\(read_credential HS_KEY_PASS\)"\n)',
-                 r'\1printf "%s" "$KEYSTORE_PASS" > "$PWD/hs-leak-probe.txt"\n', 1),
+             "tools/make_upload_key.sh",
+             sub(r'(chmod 600 "\$KEYSTORE"\n)',
+                 r'\1printf "%s" "$HS_KEYSTORE_PASS" > "$PWD/hs-leak-probe.txt"\n', 1),
              "on CI the workspace is $GITHUB_WORKSPACE, which upload-artifact sweeps",
              'GITHUB_WORKSPACE'),
     Mutation("#208", "the key is copied beside the one path forget removes",
