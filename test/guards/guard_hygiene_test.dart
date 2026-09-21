@@ -74,15 +74,38 @@ void main() {
     );
   });
 
-  test('no test file writes into the repository it reads', () {
-    // `hs-leak-probe.txt`, a 0-byte artefact from a debugging session, was
-    // committed to `main` by a `git add -A`. Being TRACKED then put it in the
-    // leak scan's skip set, so a secret written to that path was never read —
-    // the guard was blinded by its own debris (#213).
+  test('the repository root holds only the files it is meant to', () {
+    // A CLOSED list, not a pattern. The first version of this test matched
+    // probe-shaped NAMES — `leak`, `debug`, `probe`, `tmp`, `scratch` — and
+    // caught `hs-leak-probe.txt`, the artefact that prompted it. It then
+    // missed `hs-workspace-leak.txt`, committed by the very next pass, for
+    // the sole reason that `workspace` was not a word I had thought of.
     //
-    // The general rule is cheap: nothing at the repository root should be
-    // untracked-and-unignored after a suite run, and no file matching a
-    // probe-shaped name should be tracked at all.
+    // That file mattered: it held a fixture password, and being TRACKED took
+    // it out of the workspace leak scan, which is the second time debugging
+    // debris blinded that guard (#213). Subtracting modified files did not
+    // help, because the mutation writes the same bytes the commit contains.
+    //
+    // The root is small and changes rarely, so enumerate it. Anything new
+    // must be added here deliberately — which is the whole point, since
+    // everything that went wrong here arrived by `git add -A`.
+    const expected = {
+      '.fvmrc',
+      '.gitattributes',
+      '.gitignore',
+      '.metadata',
+      'analysis_options.yaml',
+      'CLAUDE.md',
+      'dart_test.yaml',
+      'LICENSE',
+      'pubspec.lock',
+      'pubspec.yaml',
+      'README.md',
+      'SECURITY.md',
+    };
+
+    // chokepoint-exempt: lists tracked paths to compare against the set
+    // above; passes no secret and its output is a list of file names.
     final tracked = Process.runSync(
       'git',
       ['ls-files'],
@@ -90,21 +113,20 @@ void main() {
       stdoutEncoding: systemEncoding,
     ).stdout.toString().split('\n');
 
-    final debris = tracked
-        .where(
-          (p) =>
-              RegExp(r'(^|/)(hs-)?(leak|debug|probe|tmp|scratch)[-_.][^/]*$')
-                  .hasMatch(p),
-        )
-        .toList();
+    final atRoot = {
+      for (final path in tracked)
+        if (path.isNotEmpty && !path.contains('/')) path,
+    };
 
     expect(
-      debris,
-      isEmpty,
+      atRoot,
+      expected,
       reason:
-          'hygiene: these look like debugging artefacts and they are TRACKED. '
-          'A tracked file is skipped by the workspace leak scan, so committed '
-          'debris can blind a guard (#213):\n${debris.join('\n')}',
+          'hygiene: the set of tracked files at the repository root has '
+          'changed. A file that arrives here unannounced is usually debris '
+          'from a debugging session, and a TRACKED file is skipped by the '
+          'workspace leak scan — so committing one blinds that guard for its '
+          'path (#213). If the new file belongs, add it to this list',
     );
   });
 }
