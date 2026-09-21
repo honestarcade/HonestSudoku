@@ -293,7 +293,16 @@ void _collectWorkspaceLeaks(
   }
 }
 
-/// Top-level files git tracks, so an untracked one is something a run made.
+/// Top-level files git tracks AND that a run has not modified.
+///
+/// Tracking alone was the wrong test. `hs-leak-probe.txt` — a 0-byte artefact
+/// from a debugging session — was committed to `main`, which put it in this
+/// set, so a secret written to that path was skipped before the file was ever
+/// read. The guard was blinded by its own debris (#213).
+///
+/// Subtracting the MODIFIED files fixes the general case too: a script that
+/// overwrites a committed file with a secret leaves it modified, so it is
+/// scanned rather than exempted for having a familiar name.
 final Set<String> _trackedAtRoot = () {
   // chokepoint-exempt: reads the git index to tell a committed file from one
   // a script created; handles no secret and its output is a list of names.
@@ -306,10 +315,21 @@ final Set<String> _trackedAtRoot = () {
     workingDirectory: repoRoot.path,
     stdoutEncoding: utf8,
   );
-  return {
-    for (final line in r.stdout.toString().split('\n'))
+  // chokepoint-exempt: reads which tracked files differ from the index, so a
+  // committed file a run overwrote is scanned rather than skipped; handles no
+  // secret and its output is a list of names.
+  final modified = Process.runSync(
+    'git',
+    ['ls-files', '--modified'],
+    workingDirectory: repoRoot.path,
+    stdoutEncoding: utf8,
+  );
+  Set<String> topLevel(String out) => {
+    for (final line in out.split('\n'))
       if (!line.contains('/') && line.isNotEmpty) line,
   };
+  return topLevel(r.stdout.toString())
+    ..removeAll(topLevel(modified.stdout.toString()));
 }();
 
 void _collectFiles(

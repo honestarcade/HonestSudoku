@@ -196,18 +196,17 @@ MUTATIONS: list[Mutation] = [
                  r'\1 --debug-sa "$PLAY_SERVICE_ACCOUNT_JSON"', 1),
              "the whole key lands in the process table, readable by any later step",
              'gcloud.log'),
-    # NO workspace mutation here, deliberately, and #213 says why.
-    #
-    # The channel exists and the scan LISTS the leaked file -- printed the
-    # directory listing to confirm it, rather than inferring from a green
-    # run. What could not be reproduced in an isolated worktree is a MATCH:
-    # in both scripts tried, the password that reaches `$PWD` is not in the
-    # sentinel set at the moment of the scan. So the channel's effectiveness
-    # is unproven, and an entry that passes would say the opposite.
-    #
-    # Leaving the battery green with no entry, and the gap filed, beats
-    # either a SURVIVED entry nobody can action or a mutation aimed at
-    # whatever happens to go red (#208, #213).
+    # The workspace channel. The previous pass removed this entry, reasoning
+    # that the channel reached the file but nothing matched. That reasoning was
+    # wrong: the leak was written to `hs-leak-probe.txt`, a debugging artefact
+    # the pass had itself committed, and a TRACKED file was skipped before it
+    # was ever read (#213). The channel was never the problem.
+    Mutation("#208", "a password is written into the workspace",
+             "tools/set_ci_secrets.sh",
+             sub(r'(KEY_PASS="\$\(read_credential HS_KEY_PASS\)"\n)',
+                 r'\1printf "%s" "$KEYSTORE_PASS" > "$PWD/hs-workspace-leak.txt"\n', 1),
+             "on CI the workspace is $GITHUB_WORKSPACE, which upload-artifact sweeps",
+             'GITHUB_WORKSPACE'),
     Mutation("#208", "the key is copied beside the one path forget removes",
              ".github/workflows/play-api-check.yml",
              sub(r'(\n(\s*)gcloud auth activate-service-account)',
