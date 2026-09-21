@@ -137,6 +137,7 @@ class Workflow {
     this.hasPermissions = false,
     this.permissionsScalar,
     this.hasConcurrency = false,
+    this.dispatchInputs = const {},
   });
 
   final String path;
@@ -171,6 +172,11 @@ class Workflow {
   final String? permissionsScalar;
 
   final bool hasConcurrency;
+
+  /// `on.workflow_dispatch.inputs`, by name: the declared `type` and, for a
+  /// `choice`, its `options`. Nothing modelled these, so reverting an input
+  /// from `type: choice` back to free text was invisible (#165, #179).
+  final Map<String, DispatchInput> dispatchInputs;
 
   /// Every `uses:` in the file, job-level and step-level, with its line.
   /// A job's `uses:` was parsed and never consulted by the pin rule, and a
@@ -389,6 +395,7 @@ class Workflow {
       hasPermissions: _lookup(doc, 'permissions') != null,
       permissionsScalar: _permissionsScalar(doc),
       hasConcurrency: _lookup(doc, 'concurrency') != null,
+      dispatchInputs: _dispatchInputs(doc),
     );
   }
 }
@@ -421,6 +428,40 @@ dynamic _lookup(YamlMap map, String key) {
     if (asBool != null) return asBool.value;
   }
   return null;
+}
+
+/// One `workflow_dispatch` input's declared shape.
+class DispatchInput {
+  const DispatchInput(this.type, this.options);
+
+  /// `type:` as written — `choice`, `string`, `boolean`, or null if omitted
+  /// (GitHub then treats it as free text).
+  final String? type;
+
+  /// `options:` for a `choice` input, in order; empty otherwise.
+  final List<String> options;
+}
+
+Map<String, DispatchInput> _dispatchInputs(YamlMap doc) {
+  final on = _lookup(doc, 'on');
+  if (on is! YamlMap) return const {};
+  final dispatch = on.nodes['workflow_dispatch']?.value;
+  if (dispatch is! YamlMap) return const {};
+  final inputs = dispatch.nodes['inputs']?.value;
+  if (inputs is! YamlMap) return const {};
+  final result = <String, DispatchInput>{};
+  inputs.nodes.forEach((key, node) {
+    final spec = node.value;
+    if (spec is! YamlMap) return;
+    final options = spec.nodes['options']?.value;
+    result['$key'] = DispatchInput(
+      _stringOr(spec, 'type'),
+      options is YamlList
+          ? options.map((o) => '$o').toList(growable: false)
+          : const [],
+    );
+  });
+  return result;
 }
 
 /// `permissions:` when it is a scalar rather than a map of scopes.

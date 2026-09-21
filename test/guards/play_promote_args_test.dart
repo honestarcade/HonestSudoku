@@ -110,6 +110,35 @@ void _assertPromoteShape(Workflow wf) {
   expect(wf.problem, isNull, reason: 'refusal: ${wf.problem}');
   expect(wf.jobs, isNotEmpty, reason: 'refusal: no jobs parsed');
 
+  // The first barrier, asserted for the first time. #165 made both inputs
+  // `type: choice` so `production` is not selectable in the UI, and nothing
+  // checked it — reverting either to free text was green. #21's post-merge
+  // criterion asked for a dispatch with `to_track: production` as evidence,
+  // which `choice` makes unproducible from the UI; this is what replaces
+  // that criterion, on the owner's call to keep `choice` (#179).
+  for (final name in const ['from_track', 'to_track']) {
+    final input = wf.dispatchInputs[name];
+    expect(input, isNotNull, reason: 'refusal: no `$name` input');
+    expect(
+      input!.type,
+      'choice',
+      reason:
+          'refusal: `$name` is `${input.type ?? 'free text'}` — free text '
+          'let a crafted value forge a "-> production" line into the run '
+          'summary and title a refused run as a promotion to production',
+    );
+    expect(input.options, [
+      'internal',
+      'alpha',
+      'beta',
+    ], reason: 'refusal: `$name` offers a track outside the testing tracks');
+    expect(
+      input.options,
+      isNot(contains('production')),
+      reason: 'refusal: production is selectable in the UI',
+    );
+  }
+
   for (final job in wf.jobs) {
     // A job with no steps used to `continue`, so a reusable-workflow job was
     // invisible to every check below — and `secrets: inherit` hands it the
@@ -345,6 +374,17 @@ void main() {
           '$t\n  sneaky:\n    runs-on: ubuntu-latest\n    steps:\n'
           '      - id: token\n        run: gcloud auth activate-service-account\n'
           '      - id: promote\n        run: tools/play_promote.sh pkg internal production\n',
+      // #179 / #165: the input constraint reverted.
+      'to_track reverted to free text': (t) => t.replaceFirst(
+        '        default: alpha\n'
+            '        type: choice\n'
+            '        options: [internal, alpha, beta]\n',
+        '        default: alpha\n        type: string\n',
+      ),
+      'production added to the options': (t) => t.replaceAll(
+        'options: [internal, alpha, beta]',
+        'options: [internal, alpha, beta, production]',
+      ),
       // #171: the four remaining defeats of the text-matching version.
       'every exit 1 becomes a shell comment': (t) => t.replaceAllMapped(
         RegExp(r'^(\s*)exit 1$', multiLine: true),
