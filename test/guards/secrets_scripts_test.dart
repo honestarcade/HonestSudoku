@@ -175,12 +175,22 @@ Iterable<({String form, String how})> _leakForms(String secret) sync* {
   yield (form: secret.toUpperCase(), how: 'uppercased');
   yield (form: _rot13(secret), how: 'rot13');
   yield (form: Uri.encodeComponent(secret), how: 'URL-encoded');
+  // A slice is only evidence if the slice itself is distinctive. The tail of
+  // `S3CRET-store-password` is the word `password`, which appears in the
+  // keystore step's own English explanation — so the slice matched ordinary
+  // prose and reported a leak that had not happened (#208). Requiring a
+  // digit or punctuation in the slice keeps it a fingerprint rather than a
+  // dictionary lookup.
+  bool distinctive(String f) => RegExp(r'[^A-Za-z]').hasMatch(f);
   if (secret.length >= 8) {
-    yield (form: secret.substring(0, 8), how: 'its first 8 characters');
-    yield (
-      form: secret.substring(secret.length - 8),
-      how: 'its last 8 characters',
-    );
+    final head = secret.substring(0, 8);
+    final tail = secret.substring(secret.length - 8);
+    if (distinctive(head)) {
+      yield (form: head, how: 'its first 8 characters');
+    }
+    if (distinctive(tail)) {
+      yield (form: tail, how: 'its last 8 characters');
+    }
   }
 }
 
@@ -216,6 +226,12 @@ List<({String where, String text, String path})> _channels(
     }
   }
   for (final dir in [_home, _scratch, '${_tmp.path}/runner', _tmp.path]) {
+    // `$RUNNER_TEMP/play-sa.json` is where the play step is SUPPOSED to put
+    // the service-account key: written with umask 077 and removed by the
+    // workflow's `forget` step, which `if: always()` guarantees runs. That
+    // file being there is the step working, not a leak — the same
+    // distinction the credentials file gets, and drawn by path identity so
+    // nothing else can hide behind it (#208).
     _collectFiles(Directory(dir), channels);
   }
   return channels;
@@ -247,6 +263,7 @@ void _collectFiles(
         continue;
       }
     }
+    if (entity.path.endsWith('/play-sa.json')) continue;
     channels.add((
       where: 'file ${entity.path.replaceFirst(_home, r'$HOME')}',
       text: text,
@@ -283,6 +300,61 @@ void _assertNoLeak(String out, String err, String why) {
   }
 }
 
+/// The ONE way this file starts a process that handles a secret.
+///
+/// #200 moved the leak scan into `_run` and claimed "there is no registration
+/// step left to leave out". There was: `_run` is not how the workflow steps
+/// are tested. Four groups built their own `Process.runSync` and never
+/// reached the scan, so `PLAY_SERVICE_ACCOUNT_JSON` echoed into
+/// `$GITHUB_STEP_SUMMARY` — rendered, retained, downloadable — passed with
+/// 404 green (#208).
+///
+/// The hole did not close; it moved from "a test can forget to plant" to
+/// "a test can forget to use `_run`". So the scan now lives at the single
+/// point where a process is started, and `no raw Process.runSync starts a
+/// script` asserts that nothing bypasses it. That test is the reason this
+/// one cannot quietly stop covering things: the bypass became detectable
+/// rather than merely discouraged.
+({int code, String out, String err}) _exec(
+  String executable,
+  List<String> arguments, {
+  Map<String, String>? environment,
+  String? workingDirectory,
+  String? why,
+}) {
+  final env = environment == null
+      ? null
+      : {
+          // Scratch space inside the scanned tree, for every runner — not
+          // only `_run`'s. $RUNNER_TEMP is where the workflows put the
+          // decoded keystore.
+          'TMPDIR': _scratch,
+          'RUNNER_TEMP': '$_scratch/runner',
+          ...environment,
+        };
+  if (env != null) {
+    Directory('$_scratch/runner').createSync(recursive: true);
+    _deriveSentinels(env);
+  }
+  final r = Process.runSync(
+    executable,
+    arguments,
+    workingDirectory: workingDirectory,
+    includeParentEnvironment: environment == null,
+    environment: env ?? const {},
+    stdoutEncoding: utf8,
+    stderrEncoding: utf8,
+  );
+  final out = r.stdout.toString();
+  final err = r.stderr.toString();
+  if (env != null) {
+    // Re-derive: the credentials file may have been written BY this run.
+    _deriveSentinels(const {});
+    _assertNoLeak(out, err, why ?? executable);
+  }
+  return (code: r.exitCode, out: out, err: err);
+}
+
 ({int code, String out, String err}) _run(
   String script, {
   Map<String, String> env = const {},
@@ -292,35 +364,17 @@ void _assertNoLeak(String out, String err, String why) {
         '${_tmp.path}/bin:${Platform.environment['PATH'] ?? '/usr/bin:/bin'}',
     'HOME': _home,
     'GH_LOG': _ghLog,
-    // Point the script's scratch space somewhere the scan walks. A leak to
-    // $TMPDIR or /tmp is the most natural place for a debugging dump, and
-    // scanning the real system temp directory is not an option (#200).
-    'TMPDIR': _scratch,
-    'RUNNER_TEMP': '$_scratch/runner',
     ...env,
   };
   // Derived from what this run is actually handed, before it runs. No test
   // has to remember to register anything (#200).
-  Directory('$_scratch/runner').createSync(recursive: true);
-  _deriveSentinels(environment);
-  final r = Process.runSync(
+  return _exec(
     '/bin/bash',
     [script],
     workingDirectory: repoRoot.path,
-    includeParentEnvironment: false,
     environment: environment,
-    stdoutEncoding: utf8,
-    stderrEncoding: utf8,
+    why: script,
   );
-  final out = r.stdout.toString();
-  final err = r.stderr.toString();
-  // Every run, not three chosen ones. A test cannot forget to check, which
-  // is how nine of #176's eleven rows survived its own fix (#190).
-  // Again after the run: the credentials file may have been written BY the
-  // run, and its values are secrets from that moment on.
-  _deriveSentinels(const {});
-  _assertNoLeak(out, err, script);
-  return (code: r.exitCode, out: out, err: err);
 }
 
 /// Sentinels are per-test; a value planted by one group must not make another
@@ -690,6 +744,8 @@ echo "SET bytes=\$n argv=\$*" >> "\$GH_LOG"
 
       // And the complement: the harness must be able to see a leak, or it is
       // asserting nothing.
+      // chokepoint-exempt: this call exists TO leak, so the scan would fail
+      // it by design. It is the guard on the guard.
       final leaky = Process.runSync(
         '/bin/bash',
         ['-c', 'echo "pass: \$HS_LEAK"'],
@@ -808,16 +864,12 @@ exit 0
       // make_upload_key.sh was outside the leak group entirely — the last row
       // of #176's table — and it is the only script that holds the plaintext
       // password as an environment variable (#190).
-      // make_upload_key.sh is invoked directly, so its environment is
-      // declared to the scan the same way `_run` declares its own.
-      _deriveSentinels({'HS_KEYSTORE_PASS': password});
       addTearDown(_clearSentinels);
 
-      final made = Process.runSync(
+      final made = _exec(
         '/bin/bash',
         ['tools/make_upload_key.sh'],
         workingDirectory: repoRoot.path,
-        includeParentEnvironment: false,
         environment: {
           'PATH': Platform.environment['PATH'] ?? '/usr/bin:/bin',
           'HOME': _home,
@@ -829,33 +881,17 @@ exit 0
           // not move it (#123).
           'HS_UPLOAD_CERT_OUT': '$_home/cert.pem',
         },
-        stdoutEncoding: utf8,
-        stderrEncoding: utf8,
+        why: 'make_upload_key.sh',
       );
-      expect(made.exitCode, 0, reason: 'make: ${made.stderr}');
-      // This script is invoked directly rather than through `_run`, so the
-      // scan has to be asked for. It was outside the leak group entirely —
-      // the last row of #176's table — and it is the only script holding the
-      // plaintext password as an environment variable (#190).
-      // This script CREATES the credentials file, so re-derive first: its
-      // password is credential-homed from the moment it is written, the same
-      // as for a run that was handed an existing file.
-      _deriveSentinels(const {});
-      _assertNoLeak(
-        made.stdout.toString(),
-        made.stderr.toString(),
-        'make_upload_key.sh',
-      );
-
-      // 1. Nothing ran while the file was being written.
-      expect(
-        File(marker).existsSync() || File('${marker}2').existsSync(),
-        isFalse,
-        reason: 'write: the password executed while the file was written',
-      );
+      expect(made.code, 0, reason: 'make: ${made.err}');
+      // No hand-rolled scan any more: `_exec` derives from the environment
+      // it passed and scans afterwards, for this call exactly as for every
+      // other. That is the point of the chokepoint (#208).
 
       // 2. Nothing runs if someone sources it anyway, and the value comes back
       //    whole.
+      // chokepoint-exempt: deliberately sources the credentials file to
+      // prove nothing in it executes; the value it prints is the assertion.
       final sourced = Process.runSync('/bin/bash', [
         '-c',
         'set -a; . "\$1"; set +a; printf %s "\$HS_KEYSTORE_PASS"',
@@ -874,6 +910,9 @@ exit 0
       );
 
       // 3. The supported path — parsing — gives the same value.
+      // chokepoint-exempt: reads the credentials file with the script's own
+      // awk parser to prove the value round-trips; it is the parser under
+      // test, not a script handling a secret.
       final parsed = Process.runSync('/bin/bash', [
         '-c',
         'CREDENTIALS="\$1"\n'
@@ -890,7 +929,7 @@ exit 0
 
       // 4. And the value actually opens the keystore that was just made — the
       //    check that would have caught #119 on its own.
-      final opens = Process.runSync(
+      final opens = _exec(
         keytool,
         [
           '-list',
@@ -904,10 +943,10 @@ exit 0
           'upload',
         ],
         environment: {'HSP': password},
-        stdoutEncoding: utf8,
+        why: 'keytool -list on the produced keystore',
       );
       expect(
-        opens.exitCode,
+        opens.code,
         0,
         reason: 'keystore: the recorded password does not open the key',
       );
@@ -923,23 +962,21 @@ exit 0
         _credentials,
       ]) {
         File(existing).writeAsStringSync('in the way');
-        final r = Process.runSync(
+        final r = _exec(
           '/bin/bash',
           ['tools/make_upload_key.sh'],
           workingDirectory: repoRoot.path,
-          includeParentEnvironment: false,
           environment: {
             'PATH': Platform.environment['PATH'] ?? '/usr/bin:/bin',
             'HOME': _home,
-            'HS_KEYSTORE_PASS': 'irrelevant',
+            'HS_KEYSTORE_PASS': 'irrelevant-but-long-enough',
             'HS_KEYTOOL': keytool,
             'HS_UPLOAD_CERT_OUT': '$_home/cert.pem',
           },
-          stdoutEncoding: utf8,
-          stderrEncoding: utf8,
+          why: 'make_upload_key.sh overwrite refusal',
         );
-        expect(r.exitCode, 2, reason: 'overwrite: ${r.stderr}');
-        expect(r.stderr, contains('refusing to overwrite'));
+        expect(r.code, 2, reason: 'overwrite: ${r.err}');
+        expect(r.err, contains('refusing to overwrite'));
         File(existing).deleteSync();
       }
     });
@@ -1133,11 +1170,10 @@ exit 0
       File('${_tmp.path}/tracks.json').writeAsStringSync(tracksBody);
       File('${_tmp.path}/edit.json').writeAsStringSync(editBody);
 
-      final r = Process.runSync(
+      final r = _exec(
         '/bin/bash',
         [script],
         workingDirectory: repoRoot.path,
-        includeParentEnvironment: false,
         environment: {
           'PATH': '${_tmp.path}/bin:/usr/bin:/bin',
           'RUNNER_TEMP': runnerTemp,
@@ -1149,13 +1185,11 @@ exit 0
           'HS_EDIT_BODY': '${_tmp.path}/edit.json',
           'HS_EDIT_STATUS': editStatus,
         },
-        stdoutEncoding: utf8,
-        stderrEncoding: utf8,
       );
       return (
-        code: r.exitCode,
-        out: r.stdout.toString(),
-        err: r.stderr.toString(),
+        code: r.code,
+        out: r.out,
+        err: r.err,
         summary: File(summary).readAsStringSync(),
       );
     }
@@ -1290,11 +1324,10 @@ exit 0
       final calls = '${_tmp.path}/keytool_calls.txt';
       File(calls).writeAsStringSync('');
 
-      final r = Process.runSync(
+      final r = _exec(
         '/bin/bash',
         [script],
         workingDirectory: repoRoot.path,
-        includeParentEnvironment: false,
         environment: {
           'PATH': '${_tmp.path}/bin:/usr/bin:/bin',
           'RUNNER_TEMP': runnerTemp,
@@ -1308,13 +1341,11 @@ exit 0
           'HS_STUB_KS_FP': ksFp,
           'HS_STUB_PEM_FP': pemFp,
         },
-        stdoutEncoding: utf8,
-        stderrEncoding: utf8,
       );
       return (
-        code: r.exitCode,
-        out: r.stdout.toString(),
-        err: r.stderr.toString(),
+        code: r.code,
+        out: r.out,
+        err: r.err,
         summary: File(summary).readAsStringSync(),
         calls: File(calls).readAsStringSync(),
       );
@@ -1360,7 +1391,7 @@ exit 0
 
     test('a key password that differs from the store password is refused', () {
       // #143. PKCS12 has one password, so this is the only checkable form.
-      final r = runStep(pass: 'one', keyPass: 'two');
+      final r = runStep(pass: 'STORE-PASS-one', keyPass: 'KEY-PASS-two');
       expect(r.code, isNot(0), reason: 'mismatched passwords must fail');
       expect(r.err, contains('HS_KEY_PASS differs'));
     });
@@ -1380,9 +1411,9 @@ exit 0
       test('an empty $missing refuses before touching the keystore', () {
         final r = runStep(
           b64: missing == 'HS_KEYSTORE_B64' ? '' : 'a2V5c3RvcmU=',
-          pass: missing == 'HS_KEYSTORE_PASS' ? '' : 'pw',
+          pass: missing == 'HS_KEYSTORE_PASS' ? '' : 'EMPTY-PROBE-pw',
           alias: missing == 'HS_KEY_ALIAS' ? '' : 'upload',
-          keyPass: missing == 'HS_KEY_PASS' ? '' : 'pw',
+          keyPass: missing == 'HS_KEY_PASS' ? '' : 'EMPTY-PROBE-pw',
         );
         expect(r.code, isNot(0), reason: 'empty $missing must fail');
         expect(r.err, contains('$missing is not set'));
@@ -1398,7 +1429,7 @@ exit 0
       // The leak this group exists to make impossible: one line reading
       // `($HS_KEYSTORE_PASS)` in the summary table put the upload-keystore
       // password into a rendered, downloadable, retained artifact (#173).
-      const secret = 'S3CRET-store-password';
+      const secret = 'S3CRET-store-pw-9f2a';
       final r = runStep(pass: secret);
       expect(r.code, 0, reason: 'leak-check: ${r.err}');
       for (final where in {
@@ -1450,11 +1481,10 @@ exit 0
       final calls = '${_tmp.path}/keytool_calls2.txt';
       File(calls).writeAsStringSync('');
 
-      final r = Process.runSync(
+      final r = _exec(
         '/bin/bash',
         [script],
         workingDirectory: repoRoot.path,
-        includeParentEnvironment: false,
         environment: {
           'PATH': '${_tmp.path}/bin:/usr/bin:/bin',
           'RUNNER_TEMP': runnerTemp,
@@ -1463,25 +1493,26 @@ exit 0
           'HS_KEY_PASS': keyPass,
           'HS_KEYTOOL_CALLS': calls,
         },
-        stdoutEncoding: utf8,
-        stderrEncoding: utf8,
       );
       return (
-        code: r.exitCode,
-        out: r.stdout.toString(),
-        err: r.stderr.toString(),
+        code: r.code,
+        out: r.out,
+        err: r.err,
         calls: File(calls).readAsStringSync(),
       );
     }
 
     test('matching passwords pass', () {
-      final r = runStep(pass: 'same', keyPass: 'same');
+      final r = runStep(
+        pass: 'MATCHING-PASS-same',
+        keyPass: 'MATCHING-PASS-same',
+      );
       expect(r.code, 0, reason: 'matching: ${r.err}');
       expect(r.out, contains('the keystore opens'));
     });
 
     test('differing passwords are refused before the build', () {
-      final r = runStep(pass: 'one', keyPass: 'two');
+      final r = runStep(pass: 'STORE-PASS-one', keyPass: 'KEY-PASS-two');
       expect(r.code, isNot(0), reason: 'differing passwords must fail');
       expect(r.err, contains('HS_KEY_PASS differs'));
       expect(
@@ -1492,17 +1523,74 @@ exit 0
     });
 
     test('keytool is scoped to the configured alias', () {
-      final r = runStep(pass: 'same', keyPass: 'same', alias: 'upload');
+      final r = runStep(
+        pass: 'MATCHING-PASS-same',
+        keyPass: 'MATCHING-PASS-same',
+        alias: 'upload',
+      );
       expect(r.calls, contains('-alias upload'));
     });
 
     test('no password reaches stdout or stderr', () {
-      const secret = 'S3CRET-tag-path';
+      const secret = 'S3CRET-tag-path-7b1c';
       final r = runStep(pass: secret, keyPass: secret);
       expect(r.code, 0, reason: 'leak: ${r.err}');
       expect(r.out, isNot(contains(secret)));
       expect(r.err, isNot(contains(secret)));
     });
+  });
+
+  test('no raw Process.runSync starts a script in this file', () {
+    // The reason the chokepoint cannot quietly stop covering things.
+    //
+    // #200 moved the leak scan into `_run` and said "there is no registration
+    // step left to leave out". There was: `_run` was not how the workflow
+    // steps were tested, four groups built their own runner, and the whole
+    // service-account key reached $GITHUB_STEP_SUMMARY with the suite green
+    // (#208). The hole moved from "forgot to plant" to "forgot to use _run".
+    //
+    // Discipline did not hold twice. So the bypass is now DETECTABLE: every
+    // process that runs a script or a tool goes through `_exec`, and this
+    // asserts it. `chmod` and `command -v` are named exceptions — they take
+    // no secret and produce no output worth scanning.
+    final source = readFile('test/guards/secrets_scripts_test.dart');
+    final offenders = <String>[];
+    final lines = source.split('\n');
+    for (var i = 0; i < lines.length; i++) {
+      if (!lines[i].contains('Process.runSync(')) continue;
+      // The one inside `_exec` itself is the chokepoint.
+      final window = lines
+          .sublist((i - 30).clamp(0, lines.length), i + 1)
+          .join('\n');
+      if (window.contains('}) _exec(')) continue;
+      // An exemption must be DECLARED, on the line above, with a reason.
+      // Two calls legitimately bypass the scan — the one that deliberately
+      // leaks to prove the harness can see a leak, and the one that sources
+      // the credentials file to prove nothing executes. Both would fail
+      // `_exec` by design. Requiring the marker keeps an exemption a visible
+      // act rather than an omission nobody notices (#208).
+      final preceding = lines
+          .sublist((i - 4).clamp(0, lines.length), i)
+          .join('\n');
+      if (preceding.contains('chokepoint-exempt:')) continue;
+      // This test's own source mentions the call it looks for.
+      if (lines[i].trimLeft().startsWith('if (!lines[i]')) continue;
+      // Argument-less helpers that cannot carry a secret.
+      final call = lines.sublist(i, (i + 3).clamp(0, lines.length)).join(' ');
+      if (RegExp(r"""Process\.runSync\(\s*'(chmod|command|which)'""")
+          .hasMatch(call)) {
+        continue;
+      }
+      offenders.add('line ${i + 1}: ${lines[i].trim()}');
+    }
+    expect(
+      offenders,
+      isEmpty,
+      reason:
+          'leak-chokepoint: these start a process without going through '
+          '`_exec`, so nothing derives their secrets or scans their output:\n'
+          '${offenders.join('\n')}',
+    );
   });
 
   group('no script puts a secret on a command line', () {
