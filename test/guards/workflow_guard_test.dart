@@ -1898,6 +1898,118 @@ void main() {
       });
     });
 
+    test('a step fails when the command it runs fails', () {
+      // #205's principle, applied. `_swallowsFailure` was a per-line regex
+      // asked to answer a shell-semantics question, and it lost to a `#`
+      // inside a quoted string, a trailing `&`, `|| echo`, `$( || true )`,
+      // `set +o errexit`, and any command outside an eight-item allow-list
+      // (#197, #204). Every one of those is ORDINARY SHELL, and bash decides
+      // shell questions correctly by construction.
+      //
+      // So the question is asked of bash: stub the command the step depends
+      // on so it exits 1, run the step's real `run:` body, and require the
+      // step to exit non-zero. No command list, no swallow-form list, no
+      // per-step enumeration — the loop is over what the file contains.
+      final wf = Workflow.parse(
+        '.github/workflows/release.yml',
+        readFile('.github/workflows/release.yml'),
+      );
+      expect(wf.problem, isNull);
+
+      // The command each step's success depends on. A step whose failure
+      // does not matter is named here with an empty list, so adding a step
+      // is a deliberate decision rather than a silent omission.
+      const dependsOn = <String, List<String>>{
+        'secrets_present': [],
+        'version': ['tools/ci_version.sh'],
+        'deps': ['flutter'],
+        'keystore': ['base64'],
+        'keystore_check': ['keytool'],
+        'build': ['flutter'],
+        'scan': ['tools/check_aab.sh'],
+        'cert': ['tools/verify_upload_cert.sh'],
+        'sidecar': ['sha256sum'],
+        'asset': ['gh'],
+        'summary': [],
+        'name_failure': [],
+        'shred': [],
+      };
+
+      final ship = wf.job('ship')!;
+      expect(
+        ship.steps.where((s) => s.run != null).map((s) => s.id).toSet(),
+        dependsOn.keys.toSet(),
+        reason:
+            'propagation: a step with a `run:` body is not listed in '
+            'dependsOn. Say which command it depends on, or say none',
+      );
+
+      final dir = Directory.systemTemp.createTempSync('hs-propagate');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final bin = Directory('${dir.path}/bin')..createSync(recursive: true);
+
+      for (final step in ship.steps) {
+        final body = step.run;
+        if (body == null) continue;
+        final commands = dependsOn[step.id] ?? const [];
+        for (final command in commands) {
+          // A stub that fails, for the command this step turns on.
+          final name = command.split('/').last;
+          File('${bin.path}/$name')
+            ..writeAsStringSync(
+              '#!/bin/sh\necho "$name: simulated failure" >&2\nexit 1\n',
+            )
+            ..createSync(recursive: false);
+          Process.runSync('chmod', ['+x', '${bin.path}/$name']);
+          // A project script is invoked by path, so shadow it there too.
+          final asPath = File('${dir.path}/$command');
+          if (command.contains('/')) {
+            asPath.parent.createSync(recursive: true);
+            asPath
+              ..writeAsStringSync(
+                '#!/bin/sh\necho "$command: simulated failure" >&2\nexit 1\n',
+              )
+              ..createSync(recursive: false);
+            Process.runSync('chmod', ['+x', asPath.path]);
+          }
+
+          final script = File('${dir.path}/step.sh')..writeAsStringSync(body);
+          final runnerTemp = Directory('${dir.path}/runner')
+            ..createSync(recursive: true);
+          File('${runnerTemp.path}/upload.keystore').writeAsStringSync('x');
+          final r = Process.runSync(
+            '/bin/bash',
+            [script.path],
+            workingDirectory: dir.path,
+            includeParentEnvironment: false,
+            environment: {
+              'PATH': '${bin.path}:/usr/bin:/bin',
+              'RUNNER_TEMP': runnerTemp.path,
+              'GITHUB_OUTPUT': '${dir.path}/out',
+              'GITHUB_STEP_SUMMARY': '${dir.path}/summary',
+              'GITHUB_REF_NAME': 'v1.2.3',
+              'GITHUB_RUN_NUMBER': '7',
+              'GITHUB_RUN_ATTEMPT': '1',
+              'HS_KEYSTORE_B64': 'eA==',
+              'HS_KEYSTORE_PASS': 'PROPAGATE-PASS-1',
+              'HS_KEY_ALIAS': 'upload',
+              'HS_KEY_PASS': 'PROPAGATE-PASS-1',
+            },
+            stdoutEncoding: utf8,
+            stderrEncoding: utf8,
+          );
+          expect(
+            r.exitCode,
+            isNot(0),
+            reason:
+                'propagation: step `${step.id}` reported SUCCESS while '
+                '`$command` exited 1. Its failure does not reach the step, '
+                'so the step guarantees nothing. stdout: ${r.stdout}',
+          );
+        }
+      }
+    });
+
     test('dependabot watches both ecosystems', () {
       final offenders = dependabotOffenders(
         pathExists('.github/dependabot.yml')
