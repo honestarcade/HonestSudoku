@@ -119,11 +119,11 @@ MUTATIONS: list[Mutation] = [
           track: production
           status: completed"""),
              "automation reaches production, and the summary still says internal",
-             'release-shape: exactly one step in the whole file'),
+             'release-shape: exactly one Play upload'),
     Mutation("#169", "continue-on-error on the gate job", ".github/workflows/release.yml",
              sub(r"^  gate:$", "  gate:\n    continue-on-error: true", flags=re.M),
              "`needs: gate` succeeds on a red gate, so a failing build ships",
-             'release-shape: no job may carry `continue-on-error`'),
+             'carries `continue-on-error`'),
     Mutation("#169", "the Play upload becomes conditional", ".github/workflows/release.yml",
              sub(r"(      - id: play\n)", r"\1        if: always()\n"),
              "an earlier failure no longer prevents the upload",
@@ -131,11 +131,11 @@ MUTATIONS: list[Mutation] = [
     Mutation("#169", "the upload action is swapped for a fork", ".github/workflows/release.yml",
              sub(r"r0adkll/upload-google-play@v1", "attacker/upload-google-play@v1"),
              "a fork of the action receives the Play credential",
-             'release-shape: the Play upload must use'),
+             'release-shape: the upload action must be the pinned one'),
     Mutation("#169", "the package name is changed", ".github/workflows/release.yml",
              sub(r"packageName: com\.honestarcade\.sudoku", "packageName: com.attacker.app"),
              "the bundle is uploaded against someone else's listing",
-             'release-shape: the upload must name this package'),
+             'release-shape: the upload must name THIS package'),
 
     # ---- triggers (#170) --------------------------------------------------
     Mutation("#170", "pull_request_target added", ".github/workflows/ci.yml",
