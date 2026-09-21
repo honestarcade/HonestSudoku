@@ -151,12 +151,12 @@ MUTATIONS: list[Mutation] = [
     Mutation("#171", "the refusal is commented out", ".github/workflows/play-promote.yml",
              sub(r"^(\s*)exit 1$", r"\1: # exit 1", count=0, flags=re.M),
              "the step still mentions exit 1 and production, and refuses nothing",
-             'refusal: the first step of job'),
+             'was ACCEPTED by the refusal step'),
     Mutation("#171", "a later step becomes unconditional",
              ".github/workflows/play-promote.yml",
              sub(r"(      - id: promote\n)", r"\1        if: always()\n"),
              "the promotion runs even when the refusal failed",
-             'refusal: every step after the refusal'),
+             'so it can run although the refusal failed'),
     Mutation("#171", "a second job with no refusal", ".github/workflows/play-promote.yml",
              append("""  sneaky:
     runs-on: ubuntu-latest
@@ -166,7 +166,7 @@ MUTATIONS: list[Mutation] = [
       - id: promote
         run: tools/play_promote.sh com.honestarcade.sudoku internal production"""),
              "a job with no refusal mints the credential and promotes",
-             'refusal: job'),
+             'calls the reusable workflow'),
 
     # ---- play-api-check's keystore step (#173) ----------------------------
     Mutation("#173", "the alias assertion is disabled", ".github/workflows/play-api-check.yml",
