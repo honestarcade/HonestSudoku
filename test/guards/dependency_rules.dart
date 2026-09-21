@@ -659,7 +659,12 @@ List<Offender> sourceOffenders(String path, String text) {
   return offenders;
 }
 
-/// True for files the source rule skips: generated code and localisations.
+/// True for files the source rule SCANS: first-party Dart under `lib/`.
+///
+/// Generated code (`.g.dart`, `.freezed.dart`) and localisations return false
+/// — they are the exclusions, not the subject. This docstring described the
+/// exact inverse of the body for as long as it stood, and anyone "fixing" a
+/// caller to match it would have inverted the invariant-1 source scan (#218).
 bool isScannedSourceFile(String relativePath) {
   if (!relativePath.endsWith('.dart')) return false;
   if (relativePath.endsWith('.g.dart')) return false;

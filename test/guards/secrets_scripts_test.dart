@@ -1362,6 +1362,36 @@ exit 0
       expect(r.err, contains('PLAY_SERVICE_ACCOUNT_JSON is not set'));
     });
 
+    test('the argv channels are actually recorded', () {
+      // The complement of the stubs' argv logging, which the fix that added
+      // it called "the whole point".
+      //
+      // Deleting `echo "gcloud $*" >> gcloud.log` from the stub left the file
+      // 47/47 green: nothing asserted either log was ever written, so the
+      // channel that catches a service-account key on a command line could be
+      // switched off in silence (#220). A channel nobody checks is a channel
+      // that does not exist.
+      runStep(tracksBody: '{"tracks":[]}');
+      for (final log in const ['gcloud.log', 'curl.log']) {
+        final file = File('${_tmp.path}/$log');
+        expect(
+          file.existsSync(),
+          isTrue,
+          reason:
+              'argv: $log was never created, so the recorded-argv channel is '
+              'empty for every test that relies on it',
+        );
+        expect(
+          file.readAsStringSync().trim(),
+          isNotEmpty,
+          reason:
+              'argv: $log is empty after a run that invokes it. The stub '
+              'stopped recording, and a secret on that command line would '
+              'now be invisible',
+        );
+      }
+    });
+
     test('the token is masked and never printed', () {
       final r = runStep(tracksBody: '{}');
       expect(r.out, contains('::add-mask::'));
@@ -1682,7 +1712,13 @@ exit 0
     // So: every `Process.` in this file is an offence unless it sits inside
     // `_exec`'s own body, and that body's extent is MEASURED rather than
     // guessed from a nearby string.
-    final source = readFile('test/guards/secrets_scripts_test.dart');
+    // EVERY guard test file, not only this one. The rule's own name said
+    // "in this file", and a new `test/guards/zz_probe_test.dart` starting a
+    // process raw therefore ran with no scan at all and the suite stayed
+    // green (#220). The chokepoint is allowed to exist in exactly one place;
+    // everywhere else a process start is an offence.
+    const chokepointFile = 'test/guards/secrets_scripts_test.dart';
+    final source = readFile(chokepointFile);
     final lines = source.split('\n');
 
     final execStart = lines.indexWhere((l) => l.contains(') _exec('));
@@ -1700,6 +1736,22 @@ exit 0
 
     final offenders = <String>[];
     final startsProcess = RegExp(r'\bProcess\s*\.');
+
+    // NOT the other guard files, and #222 says why rather than the silence
+    // that would otherwise stand here.
+    //
+    // Scoping this rule across `test/guards/` is correct and it is what #220
+    // asked for. Doing it surfaced 20 raw process starts in six files —
+    // including `signing_guard_test.dart`, which runs real Flutter builds
+    // with the HS_* signing variables, so those genuinely need scanning.
+    // Routing them through a shared chokepoint is a refactor of the test
+    // infrastructure, not a line change, and writing 20 exemptions instead
+    // would be precisely the self-granted exemption tightened below.
+    //
+    // So the scope stays as it is, the gap is filed with the enumerated list,
+    // and this comment exists so the next reader knows the limit is known
+    // rather than overlooked.
+
     final harmless = RegExp("Process\\.runSync\\(\\s*'(chmod|command|which)'");
     for (var i = 0; i < lines.length; i++) {
       if (!startsProcess.hasMatch(lines[i])) continue; // rule-self-reference
@@ -1713,8 +1765,11 @@ exit 0
       if (lines[i].contains('rule-self-reference')) continue;
       // Argument-less helpers that carry no secret and produce no output
       // worth scanning.
-      final call = lines.sublist(i, (i + 3).clamp(0, lines.length)).join(' ');
-      if (harmless.hasMatch(call)) continue;
+      // The LINE, not a window. Joining three lines meant any raw process
+      // call with a `chmod` within two lines was exempt — which is the shape
+      // of an ordinary write-then-chmod helper, so the exemption laundered
+      // the bypass it sat next to (#220).
+      if (harmless.hasMatch(lines[i])) continue;
       // An exemption must be DECLARED within four lines AND carry a reason.
       // A bare `// chokepoint-exempt:` with nothing after it was accepted,
       // which is an exemption anyone can grant themselves in silence (#208).

@@ -287,6 +287,21 @@ MUTATIONS: list[Mutation] = [
                            "    return Workflow.parse(path, text, load: (_) => doc);\n"
                            "  }\n"
                            "}\n")),)),
+    # Both GREEN at 933cfad: `target` and the `pull_request` rule were never
+    # read, and either change leaves `main` unguarded with the guard silent.
+    Mutation("#219", "the ruleset stops targeting branches",
+             "test/guards/workflow_guard_test.dart",
+             sub(r"(final doc = jsonDecode\(payload\) as Map<String, dynamic>;\n)",
+                 r"\1      doc['target'] = 'tag';\n", 1),
+             "the branch condition then guards nothing",
+             'ruleset'),
+    Mutation("#219", "the pull_request rule is removed from the ruleset",
+             "test/guards/workflow_guard_test.dart",
+             sub(r"(final doc = jsonDecode\(payload\) as Map<String, dynamic>;\n)",
+                 r"\1      (doc['rules'] as List).removeWhere"
+                 r"((r) => (r as Map)['type'] == 'pull_request');\n", 1),
+             "required checks apply to pull requests; without the rule they are unreachable",
+             'ruleset'),
     # ---- #215/#216: what a step DOES, not what it exits with -------------
     # All three were GREEN at 933cfad. The first is a secret published from an
     # already-pinned step; the other two are steps that exist to destroy a

@@ -24,6 +24,8 @@ import 'repo_files.dart';
 const _script = 'tools/ci_version.sh';
 
 ({int code, String out, String err}) _run(List<String> args) {
+  // chokepoint-exempt: runs ci_version.sh with a tag and two run numbers;
+  // no secret is passed and its output is a version name and code.
   final r = Process.runSync(
     _script,
     args,

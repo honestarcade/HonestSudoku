@@ -2165,6 +2165,31 @@ void main() {
             'not active — nothing it says is enforced',
       );
 
+      // `target` decides what `~DEFAULT_BRANCH` even means. Flipped to `tag`,
+      // every other assertion here still passes while `main` is completely
+      // unguarded — which is a gate that exists and does not bind, the exact
+      // shape of #187 (#219).
+      expect(
+        doc['target'],
+        'branch',
+        reason:
+            'ruleset: the ruleset targets `${doc['target']}`, not branches, '
+            'so its branch condition guards nothing',
+      );
+
+      final ruleTypes = [
+        for (final rule in (doc['rules'] as List? ?? const []))
+          (rule as Map)['type'],
+      ];
+      expect(
+        ruleTypes,
+        contains('pull_request'),
+        reason:
+            'ruleset: no `pull_request` rule, so a push straight to `main` '
+            'never meets a check at all. Required checks apply to pull '
+            'requests; without this rule they are unreachable',
+      );
+
       final refs =
           ((doc['conditions'] as Map<String, dynamic>?)?['ref_name']
                   as Map<String, dynamic>?)?['include']
@@ -2198,10 +2223,24 @@ void main() {
         );
       }
 
-      // `bypass_actors` is the one field anonymous reads redact, so it is
-      // asserted only where a token is present rather than silently not at
-      // all. `null` means redacted; `[]` means genuinely empty.
+      // `bypass_actors` is redacted unless the caller is authenticated with
+      // enough scope to see it: the key is ABSENT from an anonymous read, not
+      // null-valued. Before the token was sent this branch could therefore
+      // never execute, while the comment above it claimed it ran "where a
+      // token is present" — a path that did not exist (#219).
+      //
+      // Now a token is sent when one is available, and with it the field
+      // comes back (`[]` on this repository). Where no token is available the
+      // branch still does not run, which is why the absence is reported
+      // rather than passed over in silence.
       final bypass = doc['bypass_actors'];
+      if (bypass == null) {
+        printOnFailure(
+          'ruleset: bypass_actors was not returned, so nobody checked whether '
+          'an actor can push past the gate. Set GITHUB_TOKEN to a token that '
+          'can read repository administration to cover it.',
+        );
+      }
       if (bypass != null) {
         expect(
           bypass,
