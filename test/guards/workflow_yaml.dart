@@ -68,15 +68,22 @@ class WorkflowJob {
   const WorkflowJob({
     required this.name,
     required this.steps,
+    this.line = 0,
     this.uses,
     this.needs = const [],
     this.ifExpression,
     this.secretsInherit = false,
     this.defaultShell,
+    this.continueOnError = false,
+    this.runsOn,
+    this.environment,
   });
 
   final String name;
   final List<WorkflowStep> steps;
+
+  /// 1-based line of the job's key, for naming it in a failure.
+  final int line;
 
   /// The reusable workflow this job calls, for a `uses:` job.
   final String? uses;
@@ -86,6 +93,20 @@ class WorkflowJob {
 
   /// `defaults.run.shell` for this job, if it sets one.
   final String? defaultShell;
+
+  /// `continue-on-error:` on the JOB. GitHub treats such a job's failure as
+  /// non-blocking for everything that `needs:` it, so a gate carrying this
+  /// still lets its dependants run — the same hole an `if:` on the dependant
+  /// opens, one level up, and invisible to any assertion about the dependant
+  /// (#169).
+  final bool continueOnError;
+
+  final String? runsOn;
+
+  /// `environment:`, as a name. A deployment environment can carry required
+  /// reviewers and its own secrets, so adding or changing one changes who can
+  /// release and with what.
+  final String? environment;
 
   WorkflowStep? stepById(String id) {
     for (final step in steps) {
@@ -253,11 +274,15 @@ class Workflow {
           WorkflowJob(
             name: jobName,
             steps: steps,
+            line: jobMap.span.start.line + 1,
             uses: _stringOr(jobMap, 'uses'),
             needs: needs,
             ifExpression: _rawOr(jobMap, 'if'),
             secretsInherit: '${_lookup(jobMap, 'secrets')}' == 'inherit',
             defaultShell: _defaultShell(jobMap),
+            continueOnError: _lookup(jobMap, 'continue-on-error') == true,
+            runsOn: _stringOr(jobMap, 'runs-on'),
+            environment: _environment(jobMap),
           ),
         );
       }
@@ -284,6 +309,18 @@ dynamic _lookup(YamlMap map, String key) {
   if (key == 'on') {
     final asBool = map.nodes[true];
     if (asBool != null) return asBool.value;
+  }
+  return null;
+}
+
+/// `environment:` as a name, whether written as a bare string or as a map
+/// with `name:`.
+String? _environment(YamlMap map) {
+  final value = _lookup(map, 'environment');
+  if (value is String) return value;
+  if (value is YamlMap) {
+    final name = value.nodes['name']?.value;
+    return name is String ? name : null;
   }
   return null;
 }

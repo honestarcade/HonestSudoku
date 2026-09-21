@@ -93,6 +93,17 @@ void _expectRunsExactly(WorkflowStep? step, String command, String why) {
   );
 }
 
+/// A step that hands the service-account key to a Play upload action.
+/// Matched on the action's repository path rather than a substring of the
+/// whole `uses:`, so a lookalike under another owner is not this (#169).
+bool _isPlayUpload(WorkflowStep step) {
+  final uses = step.uses;
+  if (uses == null) return false;
+  final path = uses.split('@').first;
+  return path.endsWith('/upload-google-play') ||
+      step.with_.containsKey('serviceAccountJsonPlainText');
+}
+
 void _assertReleaseShape(Workflow wf) {
   expect(wf.problem, isNull);
 
@@ -138,19 +149,65 @@ void _assertReleaseShape(Workflow wf) {
     reason: 'release-shape: the secrets assertion runs before any build',
   );
 
-  // Exactly one step may talk to Play, and everything that proves the
-  // bundle must run before it — unconditionally.
-  final playSteps = ship.steps
-      .where((s) => (s.uses ?? '').contains('upload-google-play'))
-      .toList();
-  expect(playSteps, hasLength(1), reason: 'release-shape: one Play upload');
-  final play = playSteps.single;
+  // No job may be non-blocking. GitHub treats a `continue-on-error` job as
+  // succeeded for everything that `needs:` it, so `continue-on-error: true`
+  // on `gate` lets `ship` upload on a red gate — and every assertion about
+  // `ship` above still passes (#169).
+  for (final job in wf.jobs) {
+    expect(
+      job.continueOnError,
+      isFalse,
+      reason:
+          'release-shape: job `${job.name}` (line ${job.line}) carries '
+          '`continue-on-error`, which makes its failure non-blocking for '
+          'everything that needs it',
+    );
+  }
+
+  // Exactly one step in the WHOLE FILE may talk to Play, and everything that
+  // proves the bundle must run before it — unconditionally. Scoping this to
+  // `ship` let a second job upload to production untouched (#169).
+  final playSteps = <({WorkflowJob job, WorkflowStep step})>[
+    for (final job in wf.jobs)
+      for (final step in job.steps)
+        if (_isPlayUpload(step)) (job: job, step: step),
+  ];
+  expect(
+    playSteps.map((p) => '${p.job.name}.${p.step.id ?? p.step.index}').toList(),
+    ['ship.play'],
+    reason:
+        'release-shape: exactly one Play upload, in `ship` — a second one '
+        'anywhere in the file can name any track it likes',
+  );
+  final play = playSteps.single.step;
+
+  // The exact pin, not `contains`. `attacker/upload-google-play@v1` contains
+  // the same substring and would be handed the service-account key (#169).
+  expect(
+    play.uses,
+    'r0adkll/upload-google-play@v1',
+    reason: 'release-shape: the upload action must be the pinned one',
+  );
   expect(
     play.with_['track'],
     'internal',
     reason: 'release-shape: automation never touches production',
   );
   expect(play.with_['status'], 'completed');
+  // Never asserted before: the upload could name another app entirely, or a
+  // file the gate never scanned (#169).
+  expect(
+    play.with_['packageName'],
+    'com.honestarcade.sudoku',
+    reason: 'release-shape: the upload must name THIS package',
+  );
+  expect(
+    play.with_['releaseFiles'],
+    'build/app/outputs/bundle/release/app-release.aab',
+    reason:
+        'release-shape: the upload must ship the bundle the scan and the '
+        'certificate check actually ran against',
+  );
   expect(
     play.isUnconditional,
     isTrue,
@@ -388,6 +445,37 @@ void main() {
           ),
           'keystore_check loses -alias': (t) =>
               t.replaceFirst(' \\\n            -alias "\$HS_KEY_ALIAS"', ''),
+          // #169: all four of these were green when the assertions were
+          // scoped to the `ship` job and matched the action by substring.
+          'a second job uploads to production': (t) =>
+              '$t'
+              '  publish_prod:\n'
+              '    needs: ship\n'
+              '    runs-on: ubuntu-latest\n'
+              '    steps:\n'
+              '      - id: play2\n'
+              '        uses: r0adkll/upload-google-play@v1\n'
+              '        with:\n'
+              '          packageName: com.honestarcade.sudoku\n'
+              '          releaseFiles: app.aab\n'
+              '          track: production\n'
+              '          status: completed\n',
+          'continue-on-error on the gate job': (t) => t.replaceFirst(
+            '  gate:\n',
+            '  gate:\n    continue-on-error: true\n',
+          ),
+          'the upload action is swapped for a fork': (t) => t.replaceFirst(
+            'uses: r0adkll/upload-google-play@v1',
+            'uses: attacker/upload-google-play@v1',
+          ),
+          'the upload names another package': (t) => t.replaceFirst(
+            'packageName: com.honestarcade.sudoku',
+            'packageName: com.attacker.sudoku',
+          ),
+          'the upload ships an unscanned file': (t) => t.replaceFirst(
+            'releaseFiles: build/app/outputs/bundle/release/app-release.aab',
+            'releaseFiles: /tmp/other.aab',
+          ),
           'shred step deleted': (t) => t.replaceFirst(
             RegExp(
               r'      - id: shred\n'
