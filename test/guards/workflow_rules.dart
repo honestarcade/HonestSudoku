@@ -342,20 +342,62 @@ List<WorkflowOffender> shellTraceOffenders(String path, String text) {
   // holding all five secrets with the suite green (#168).
   void checkShell(String? shell, int line, String where) {
     if (shell == null) return;
-    for (final word in shell.trim().split(RegExp(r'\s+')).skip(1)) {
+    final words = shell.trim().split(RegExp(r'\s+')).skip(1).toList();
+    for (var i = 0; i < words.length; i++) {
+      final word = words[i];
       if (RegExp(r'^-[A-Za-z]*[xv][A-Za-z]*$').hasMatch(word) ||
           word == '--verbose' ||
           word == '--xtrace') {
         flag(line, '`$where: ${shell.trim()}`');
         return;
       }
+      // The LONG form, `-o xtrace`, which is two words. checkShell matched
+      // only the clustered flags, so `shell: bash -o xtrace` was green at
+      // workflow, job and step level — while this same function already
+      // handled `set -o xtrace` and `sh -o xtrace` inside a `run:` body. The
+      // long form was simply not carried across (#168, #189).
+      if (word == '-o' && i + 1 < words.length) {
+        final opt = words[i + 1].replaceAll(RegExp(r'''["']'''), '');
+        if (opt == 'xtrace' || opt == 'verbose') {
+          flag(line, '`$where: ${shell.trim()}`');
+          return;
+        }
+      }
+    }
+  }
+
+  /// `SHELLOPTS`/`BASHOPTS` set in an `env:` block.
+  ///
+  /// bash reads `SHELLOPTS` from the environment at startup and enables every
+  /// option named in it, so `env: SHELLOPTS: xtrace` traces every step of the
+  /// job — and the release job holds all five secrets. #168's Fix line called
+  /// for this scan and it was never written; `env:` was not in the model at
+  /// all (#189).
+  void checkEnv(Map<String, String> env, int line, String where) {
+    for (final entry in env.entries) {
+      final name = entry.key.toUpperCase();
+      if (name != 'SHELLOPTS' && name != 'BASHOPTS') continue;
+      final value = entry.value.toLowerCase();
+      if (value.contains('xtrace') || value.contains('verbose')) {
+        flag(line, '`$where: ${entry.key}: ${entry.value}`');
+      }
     }
   }
 
   checkShell(workflow.defaultShell, 1, 'defaults.run.shell');
+  checkEnv(workflow.env, 1, 'env');
   for (final job in workflow.jobs) {
-    checkShell(job.defaultShell, 1, 'defaults.run.shell in job `${job.name}`');
+    // job.line, not 1: the offender pointed at the top of the file for a
+    // job-level shell, contradicting the `path:line:` contract this file
+    // makes a point of (#189).
+    checkShell(
+      job.defaultShell,
+      job.line,
+      'defaults.run.shell in job `${job.name}`',
+    );
+    checkEnv(job.env, job.line, 'env in job `${job.name}`');
     for (final step in job.steps) {
+      checkEnv(step.env, step.line, 'env on step ${step.id ?? step.index}');
       final shell = step.shell;
       if (shell == null) continue;
       checkShell(shell, step.line, 'shell');

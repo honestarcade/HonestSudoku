@@ -39,6 +39,7 @@ class WorkflowStep {
     this.shell,
     this.continueOnError = false,
     this.with_ = const {},
+    this.env = const {},
   });
 
   final int index;
@@ -59,6 +60,9 @@ class WorkflowStep {
   /// actually told to do (`track`, `status`, `retention-days`).
   final Map<String, String> with_;
 
+  /// `env:` on the step. See [WorkflowJob.env].
+  final Map<String, String> env;
+
   /// A step that always runs when reached: no `if:`, no `continue-on-error`.
   bool get isUnconditional => ifExpression == null && !continueOnError;
 }
@@ -78,6 +82,7 @@ class WorkflowJob {
     this.runsOn,
     this.environment,
     this.permissionsScalar,
+    this.env = const {},
   });
 
   final String name;
@@ -112,6 +117,14 @@ class WorkflowJob {
   /// `permissions:` on the job, as a scalar. See [Workflow.permissionsScalar].
   final String? permissionsScalar;
 
+  /// `env:` on the job, flattened to strings.
+  ///
+  /// Unmodelled until now, at every level. #168's Fix line said to "add
+  /// SHELLOPTS to the environment scan" and there was no environment scan:
+  /// `env: SHELLOPTS: xtrace` on the job holding all five secrets turned
+  /// tracing on for every one of its steps, with the suite green (#189).
+  final Map<String, String> env;
+
   WorkflowStep? stepById(String id) {
     for (final step in steps) {
       if (step.id == id) return step;
@@ -138,6 +151,7 @@ class Workflow {
     this.permissionsScalar,
     this.hasConcurrency = false,
     this.dispatchInputs = const {},
+    this.env = const {},
   });
 
   final String path;
@@ -172,6 +186,9 @@ class Workflow {
   final String? permissionsScalar;
 
   final bool hasConcurrency;
+
+  /// Workflow-level `env:`. See [WorkflowJob.env].
+  final Map<String, String> env;
 
   /// `on.workflow_dispatch.inputs`, by name: the declared `type` and, for a
   /// `choice`, its `options`. Nothing modelled these, so reverting an input
@@ -319,6 +336,7 @@ class Workflow {
                   _lookup(stepNode, 'continue-on-error'),
                 ),
                 with_: _stringMap(stepNode, 'with'),
+                env: _stringMap(stepNode, 'env'),
               ),
             );
             if (run != null) {
@@ -348,6 +366,7 @@ class Workflow {
             runsOn: _stringOr(jobMap, 'runs-on'),
             environment: _environment(jobMap),
             permissionsScalar: _permissionsScalar(jobMap),
+            env: _stringMap(jobMap, 'env'),
           ),
         );
       }
@@ -396,6 +415,7 @@ class Workflow {
       permissionsScalar: _permissionsScalar(doc),
       hasConcurrency: _lookup(doc, 'concurrency') != null,
       dispatchInputs: _dispatchInputs(doc),
+      env: _stringMap(doc, 'env'),
     );
   }
 }

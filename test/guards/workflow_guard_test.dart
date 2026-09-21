@@ -121,6 +121,20 @@ void _assertCiShape(Workflow ci) {
     'ci-shape: the mutation battery must actually run',
   );
   for (final job in ci.jobs) {
+    // `if: false` on the gate JOB disabled the entire merge gate with the
+    // suite green — and `gate` is the repository's one required status
+    // check, which a skipped job does not block. Every criterion below is
+    // about the steps of a job nothing required to run. _assertReleaseShape
+    // already asserted this for `ship`, so the right form was in the same
+    // file and the weaker one was used (#189).
+    expect(
+      job.ifExpression,
+      isNull,
+      reason:
+          'ci-shape: job `${job.name}` carries `if: ${job.ifExpression}`. A '
+          'skipped job reports as skipped, and a skipped required check does '
+          'not block a merge',
+    );
     expect(
       job.continueOnError,
       isFalse,
@@ -187,6 +201,34 @@ void _assertCiShape(Workflow ci) {
   expect(artifact.with_['retention-days'], '7');
   expect(artifact.with_['if-no-files-found'], 'error');
 }
+
+/// Lines that end a command's exit status rather than letting it fail.
+///
+/// `|| true` appended to a step's last command makes the step green whatever
+/// the command did. #167 converted six assertions to equality, which catches
+/// this for single-command steps; a multi-line body needs a different check,
+/// and `keystore_check` and `build` had none at all (#189).
+///
+/// A trailing `|| true` on a cleanup line inside a longer script is often
+/// deliberate, so this looks only at lines running a project tool or keytool
+/// — the commands whose failure is the point of the step.
+List<String> _swallowsFailure(String body) => body
+    // Join backslash continuations FIRST. Without this the scan has the
+    // defect it is checking for: `keytool ... \` on one line and
+    // `-alias ... || true` on the next are different lines, so a
+    // line-by-line regex sees neither the command nor the swallow together.
+    // That is #183's bug, and I wrote it again here on the first attempt
+    // (#189).
+    .replaceAll(RegExp(r'\\\n\s*'), ' ')
+    .split('\n')
+    .map((l) => l.trim())
+    .where(
+      (l) =>
+          RegExp(r'(^|\s)(tools/\S+|keytool|flutter|base64|sha256sum)\b')
+              .hasMatch(l) &&
+          RegExp(r'(\|\|\s*true|\|\|\s*:)\s*$').hasMatch(l),
+    )
+    .toList();
 
 /// A step that hands the service-account key to a Play upload action.
 /// Matched on the action's repository path rather than a substring of the
@@ -356,11 +398,32 @@ void _assertReleaseShape(Workflow wf) {
     'tools/verify_upload_cert.sh',
     'release-shape: `cert` must run the certificate check',
   );
+  // `contains`, and `|| true` keeps the substring — so #167's literal title
+  // ("every `run:` assertion is a substring") was still true of this one
+  // line after #167 closed. The executing tests stub keytool with exit 0, so
+  // they never exercise it failing either (#189).
+  final keystoreCheck = ship.stepById('keystore_check')!.run!;
   expect(
-    ship.stepById('keystore_check')!.run,
+    keystoreCheck,
     contains(r'-alias "$HS_KEY_ALIAS"'),
     reason: 'release-shape: without -alias the check passes a wrong alias',
   );
+  for (final step in const ['keystore_check', 'build', 'sidecar', 'asset']) {
+    final body = ship.stepById(step)?.run;
+    expect(
+      body,
+      isNotNull,
+      reason: 'release-shape: `$step` has no `run:` body',
+    );
+    expect(
+      _swallowsFailure(body!),
+      isEmpty,
+      reason:
+          'release-shape: `$step` discards the exit status of '
+          '${_swallowsFailure(body)} — the step then reports success '
+          'whatever happened inside it',
+    );
+  }
   expect(
     ship.stepById('shred'),
     isNotNull,
