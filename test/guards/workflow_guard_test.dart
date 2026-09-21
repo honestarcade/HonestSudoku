@@ -635,6 +635,13 @@ void _assertReleaseShape(Workflow wf) {
     (s) => (s.uses ?? '').contains('upload-artifact'),
   );
   expect(artifact.with_['retention-days'], '30');
+  // Named by AC3 and asserted by nothing — renaming it to `bundle` was green
+  // (#198). The tag in the name is how a run's artifact is identified later.
+  expect(
+    artifact.with_['name'],
+    'honest-sudoku-signed-\${{ github.ref_name }}',
+    reason: 'release-shape: the artifact name must carry the tag',
+  );
 }
 
 void main() {
