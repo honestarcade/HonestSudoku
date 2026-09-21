@@ -111,8 +111,13 @@ void _deriveSentinels(Map<String, String> env) {
   }
   final creds = File(_credentials);
   if (creds.existsSync()) {
+    // Four spellings, not one. The previous pattern required a double quote
+    // immediately before end-of-line, so a single-quoted value, an unquoted
+    // value and a value followed by a trailing comment all derived NOTHING —
+    // and the three tests written for those spellings scanned an empty
+    // sentinel set and passed by asserting about nothing (#208).
     for (final m in RegExp(
-      r'''^export\s+(\w+)="(.*)"$''',
+      r'''^\s*export\s+(\w+)=(?:"([^"]*)"|'([^']*)'|([^\s#]+))''',
       multiLine: true,
     ).allMatches(creds.readAsStringSync())) {
       // By NAME, like the environment above. The file also carries
@@ -120,9 +125,10 @@ void _deriveSentinels(Map<String, String> env) {
       // messages on purpose — treating every exported value as a secret made
       // "the keystore named here is not readable: /nonexistent" a leak.
       if (!_looksSecret(m.group(1)!)) continue;
-      _addSentinel(m.group(2)!, 'credentials file');
+      final value = m.group(2) ?? m.group(3) ?? m.group(4) ?? '';
+      _addSentinel(value, 'credentials file');
       if (_credentialHomed.contains(m.group(1)!.toUpperCase())) {
-        _credentialSentinels.add(m.group(2)!.trim());
+        _credentialSentinels.add(value.trim());
       }
     }
   }
@@ -162,6 +168,14 @@ void _addSentinel(String value, String where) {
 /// comment claiming the property is general.
 Iterable<({String form, String how})> _leakForms(String secret) sync* {
   yield (form: secret, how: 'verbatim');
+  // Transformed forms only for values long enough that a match means
+  // something. A four-character password is searched verbatim, but its
+  // LOWERCASED form is four ordinary letters: `Pass` lowercased matched
+  // `-storepass:env` in recorded keytool argv and failed eight tests that
+  // had nothing to do with a leak. Lowering the floor from six to four made
+  // that strictly more likely, and the guard broke on a real short password
+  // rather than on a real leak (#208).
+  if (secret.length < 8) return;
   yield (form: base64.encode(utf8.encode(secret)), how: 'base64');
   yield (form: secret.split('').reversed.join(), how: 'reversed');
   yield (
@@ -215,7 +229,7 @@ List<({String where, String text, String path})> _channels(
     (where: 'stdout', text: out, path: ''),
     (where: 'stderr', text: err, path: ''),
   ];
-  for (final log in const ['gh.log', 'keytool.log', 'gcloud.log']) {
+  for (final log in const ['gh.log', 'keytool.log', 'gcloud.log', 'curl.log']) {
     final f = File('${_tmp.path}/$log');
     if (f.existsSync()) {
       channels.add((
@@ -225,6 +239,14 @@ List<({String where, String text, String path})> _channels(
       ));
     }
   }
+  // The repository root is the scripts' WORKING DIRECTORY — `_exec` passes it
+  // — and it was not scanned, though this list's own comment cited "the
+  // scripts cd to the repository root" as a reason for the list. A password
+  // written to `$PWD` was invisible, and on CI that directory is
+  // $GITHUB_WORKSPACE, which upload-artifact and actions/cache sweep (#208).
+  //
+  // Only files the run CREATED are read: the repository is full of committed
+  // text, and reading all of it would be slow and would match on prose.
   for (final dir in [_home, _scratch, '${_tmp.path}/runner', _tmp.path]) {
     // `$RUNNER_TEMP/play-sa.json` is where the play step is SUPPOSED to put
     // the service-account key: written with umask 077 and removed by the
@@ -234,8 +256,61 @@ List<({String where, String text, String path})> _channels(
     // nothing else can hide behind it (#208).
     _collectFiles(Directory(dir), channels);
   }
+  _collectWorkspaceLeaks(channels);
   return channels;
 }
+
+/// Files a run left in the repository root, which is its working directory.
+///
+/// `_exec` passes `workingDirectory: repoRoot.path`, and that directory was
+/// not scanned though `_channels`'s own comment cited "the scripts cd to the
+/// repository root" as a reason for its list. A password written to `$PWD`
+/// was invisible, and on CI that directory is $GITHUB_WORKSPACE, which
+/// upload-artifact and actions/cache sweep (#208).
+///
+/// Only the TOP LEVEL, and only files git does not already track: the
+/// repository is full of committed text that would match on prose, and
+/// `build/` alone is tens of megabytes. A script that writes a secret into
+/// the workspace writes it where it is standing.
+void _collectWorkspaceLeaks(
+  List<({String where, String text, String path})> channels,
+) {
+  for (final entity in repoRoot.listSync()) {
+    if (entity is! File) continue;
+    final name = entity.path.substring(repoRoot.path.length + 1);
+    if (_trackedAtRoot.contains(name)) continue;
+    String text;
+    try {
+      text = entity.readAsStringSync();
+    } catch (_) {
+      continue;
+    }
+    channels.add((
+      where: 'file \$GITHUB_WORKSPACE/$name',
+      text: text,
+      path: entity.path,
+    ));
+  }
+}
+
+/// Top-level files git tracks, so an untracked one is something a run made.
+final Set<String> _trackedAtRoot = () {
+  // chokepoint-exempt: reads the git index to tell a committed file from one
+  // a script created; handles no secret and its output is a list of names.
+  final r = Process.runSync(
+    'git',
+    // `--cached` ONLY. Adding `--others` would list untracked files too,
+    // and an untracked top-level file is precisely what a leaking script
+    // leaves behind — it would have put the leak in the skip set.
+    ['ls-files', '--cached'],
+    workingDirectory: repoRoot.path,
+    stdoutEncoding: utf8,
+  );
+  return {
+    for (final line in r.stdout.toString().split('\n'))
+      if (!line.contains('/') && line.isNotEmpty) line,
+  };
+}();
 
 void _collectFiles(
   Directory dir,
@@ -248,7 +323,11 @@ void _collectFiles(
     // file writes, and a stub that echoes a value it was given is the test
     // working, not a script leaking.
     if (entity.path.startsWith('${_tmp.path}/bin/')) continue;
-    if (entity.path.endsWith('.sh')) continue;
+    // The blanket `.sh` exemption this replaces was an unbounded suffix rule
+    // justified as "the harness's own fixtures": a secret written to
+    // `$RUNNER_TEMP/dump.sh` anywhere in the tree was exempt (#208). Scope it
+    // to the directory the fixtures are actually in.
+    if (entity.path.startsWith('${_tmp.path}/fixtures/')) continue;
     String text;
     try {
       text = entity.readAsStringSync();
@@ -263,7 +342,11 @@ void _collectFiles(
         continue;
       }
     }
-    if (entity.path.endsWith('/play-sa.json')) continue;
+    // PATH IDENTITY, which is what the comment above already claimed. The
+    // suffix form exempted `$RUNNER_TEMP/keep/play-sa.json` too — a copy the
+    // workflow's `forget` step does not remove, so it survives the job (#208).
+    if (entity.path == '${_tmp.path}/runner/play-sa.json') continue;
+    if (entity.path == '$_scratch/runner/play-sa.json') continue;
     channels.add((
       where: 'file ${entity.path.replaceFirst(_home, r'$HOME')}',
       text: text,
@@ -332,10 +415,8 @@ void _assertNoLeak(String out, String err, String why) {
           'RUNNER_TEMP': '$_scratch/runner',
           ...environment,
         };
-  if (env != null) {
-    Directory('$_scratch/runner').createSync(recursive: true);
-    _deriveSentinels(env);
-  }
+  Directory('$_scratch/runner').createSync(recursive: true);
+  _deriveSentinels(env ?? const {});
   final r = Process.runSync(
     executable,
     arguments,
@@ -347,11 +428,17 @@ void _assertNoLeak(String out, String err, String why) {
   );
   final out = r.stdout.toString();
   final err = r.stderr.toString();
-  if (env != null) {
-    // Re-derive: the credentials file may have been written BY this run.
-    _deriveSentinels(const {});
-    _assertNoLeak(out, err, why ?? executable);
-  }
+  // ALWAYS. The scan used to be conditional on `environment` being passed,
+  // so `_exec(...)` with the argument omitted went THROUGH the chokepoint
+  // and silently derived nothing and scanned nothing — a bypass no amount of
+  // strengthening the source rule could have caught, because it was in the
+  // chokepoint's own signature (#208). A call that handles no secret loses
+  // nothing by being scanned; a call that handles one must not be able to
+  // opt out by leaving an argument off.
+  //
+  // Re-derive first: the credentials file may have been written BY this run.
+  _deriveSentinels(const {});
+  _assertNoLeak(out, err, why ?? executable);
   return (code: r.exitCode, out: out, err: err);
 }
 
@@ -1126,7 +1213,16 @@ exit 1
       stepScript = play!.run!;
 
       // gcloud: activate and mint a token, printing nothing sensitive.
+      //
+      // It RECORDS ITS ARGV, and that is the whole point. The `gcloud.log`
+      // channel existed but was never populated for the one step that holds
+      // the service-account key, so putting the entire key on gcloud's
+      // command line — where it is the process table, readable by any later
+      // step or `ps` — passed all 47 tests (#208). A stub that does not log
+      // argv makes the argv channel decorative.
+      File('${_tmp.path}/gcloud.log').writeAsStringSync('');
       _writeExecutable('${_tmp.path}/bin/gcloud', '''#!/bin/sh
+echo "gcloud \$*" >> "${_tmp.path}/gcloud.log"
 case "\$1 \$2" in
   "auth activate-service-account") exit 0 ;;
   "auth print-access-token") echo "ya29.FAKE-TOKEN"; exit 0 ;;
@@ -1135,8 +1231,13 @@ exit 0
 ''');
       // curl: answers from files the test plants, so each HTTP status and body
       // is the scenario's choice.
-      _writeExecutable('${_tmp.path}/bin/curl', r'''#!/bin/sh
-out=""; kind="edits"
+      File('${_tmp.path}/curl.log').writeAsStringSync('');
+      _writeExecutable(
+        '${_tmp.path}/bin/curl',
+        '''#!/bin/sh
+echo "curl \$*" >> "${_tmp.path}/curl.log"
+'''
+            r'''out=""; kind="edits"
 while [ $# -gt 0 ]; do
   case "$1" in
     -o) out="$2"; shift ;;
@@ -1151,7 +1252,8 @@ case "$kind" in
   delete) : ;;
 esac
 exit 0
-''');
+''',
+      );
     });
 
     ({int code, String out, String err, String summary}) runStep({
@@ -1540,7 +1642,7 @@ exit 0
     });
   });
 
-  test('no raw Process.runSync starts a script in this file', () {
+  test('nothing in this file starts a process except the chokepoint', () {
     // The reason the chokepoint cannot quietly stop covering things.
     //
     // #200 moved the leak scan into `_run` and said "there is no registration
@@ -1549,38 +1651,59 @@ exit 0
     // service-account key reached $GITHUB_STEP_SUMMARY with the suite green
     // (#208). The hole moved from "forgot to plant" to "forgot to use _run".
     //
-    // Discipline did not hold twice. So the bypass is now DETECTABLE: every
-    // process that runs a script or a tool goes through `_exec`, and this
-    // asserts it. `chmod` and `command -v` are named exceptions — they take
-    // no secret and produce no output worth scanning.
+    // Round eight then walked past this rule six ways out of seven. It
+    // matched the literal `Process.runSync(` on one line, so `Process.start`,
+    // `Process.run`, a tear-off (`const runner = Process.runSync;`) and a
+    // bare marker with no reason all escaped — and so did an ordinary call
+    // merely PRECEDED, within thirty lines, by a comment containing the text
+    // for the end of `_exec`'s signature, which is how the old "am I inside
+    // _exec" test decided.
+    //
+    // So: every `Process.` in this file is an offence unless it sits inside
+    // `_exec`'s own body, and that body's extent is MEASURED rather than
+    // guessed from a nearby string.
     final source = readFile('test/guards/secrets_scripts_test.dart');
-    final offenders = <String>[];
     final lines = source.split('\n');
+
+    final execStart = lines.indexWhere((l) => l.contains(') _exec('));
+    expect(
+      execStart,
+      isNot(-1),
+      reason: 'leak-chokepoint: `_exec` is gone; this rule guards nothing',
+    );
+    final execEnd = lines.indexWhere((l) => l == '}', execStart);
+    expect(
+      execEnd,
+      isNot(-1),
+      reason: 'leak-chokepoint: could not find the end of `_exec`',
+    );
+
+    final offenders = <String>[];
+    final startsProcess = RegExp(r'\bProcess\s*\.');
+    final harmless = RegExp("Process\\.runSync\\(\\s*'(chmod|command|which)'");
     for (var i = 0; i < lines.length; i++) {
-      if (!lines[i].contains('Process.runSync(')) continue;
-      // The one inside `_exec` itself is the chokepoint.
-      final window = lines
-          .sublist((i - 30).clamp(0, lines.length), i + 1)
-          .join('\n');
-      if (window.contains('}) _exec(')) continue;
-      // An exemption must be DECLARED, on the line above, with a reason.
-      // Two calls legitimately bypass the scan — the one that deliberately
-      // leaks to prove the harness can see a leak, and the one that sources
-      // the credentials file to prove nothing executes. Both would fail
-      // `_exec` by design. Requiring the marker keeps an exemption a visible
-      // act rather than an omission nobody notices (#208).
+      if (!startsProcess.hasMatch(lines[i])) continue; // rule-self-reference
+      // Prose. A comment cannot start a process, and this file discusses
+      // `Process.runSync` at length in the comments explaining why it is
+      // funnelled through one place.
+      if (lines[i].trimLeft().startsWith('//')) continue;
+      // The chokepoint itself.
+      if (i >= execStart && i <= execEnd) continue;
+      // This rule's own source.
+      if (lines[i].contains('rule-self-reference')) continue;
+      // Argument-less helpers that carry no secret and produce no output
+      // worth scanning.
+      final call = lines.sublist(i, (i + 3).clamp(0, lines.length)).join(' ');
+      if (harmless.hasMatch(call)) continue;
+      // An exemption must be DECLARED within four lines AND carry a reason.
+      // A bare `// chokepoint-exempt:` with nothing after it was accepted,
+      // which is an exemption anyone can grant themselves in silence (#208).
       final preceding = lines
           .sublist((i - 4).clamp(0, lines.length), i)
           .join('\n');
-      if (preceding.contains('chokepoint-exempt:')) continue;
-      // This test's own source mentions the call it looks for.
-      if (lines[i].trimLeft().startsWith('if (!lines[i]')) continue;
-      // Argument-less helpers that cannot carry a secret.
-      final call = lines.sublist(i, (i + 3).clamp(0, lines.length)).join(' ');
-      if (RegExp(r"""Process\.runSync\(\s*'(chmod|command|which)'""")
-          .hasMatch(call)) {
-        continue;
-      }
+      final marker = RegExp(r'chokepoint-exempt:\s*(\S.*)')
+          .firstMatch(preceding);
+      if (marker != null && marker.group(1)!.trim().length >= 20) continue;
       offenders.add('line ${i + 1}: ${lines[i].trim()}');
     }
     expect(
@@ -1588,7 +1711,9 @@ exit 0
       isEmpty,
       reason:
           'leak-chokepoint: these start a process without going through '
-          '`_exec`, so nothing derives their secrets or scans their output:\n'
+          '`_exec`, so nothing derives their secrets or scans their output. '
+          'An exemption is a `// chokepoint-exempt: <reason>` comment within '
+          'four lines, and the reason must say something:\n'
           '${offenders.join('\n')}',
     );
   });

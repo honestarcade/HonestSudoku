@@ -188,6 +188,34 @@ MUTATIONS: list[Mutation] = [
              sub(r'(chmod 600 "\$KEYSTORE"\n)', r'\1echo "pw: $HS_KEYSTORE_PASS"\n'),
              "the only script holding the plaintext password was outside the leak group",
              'reached stdout'),
+    # ---- #208: the channels and the chokepoint ---------------------------
+    # All four were GREEN at round eight.
+    Mutation("#208", "the service-account key goes on gcloud's command line",
+             ".github/workflows/play-api-check.yml",
+             sub(r'(gcloud auth activate-service-account --key-file "\$key" --quiet)',
+                 r'\1 --debug-sa "$PLAY_SERVICE_ACCOUNT_JSON"', 1),
+             "the whole key lands in the process table, readable by any later step",
+             'gcloud.log'),
+    Mutation("#208", "a password is written into the workspace",
+             "tools/set_ci_secrets.sh",
+             sub(r"(\nset -euo pipefail\n)",
+                 r'\1printf "%s" "${HS_KEYSTORE_PASS:-}" > "$PWD/hs-leak-probe.txt"\n', 1),
+             "on CI the workspace is $GITHUB_WORKSPACE, which upload-artifact sweeps",
+             'GITHUB_WORKSPACE'),
+    Mutation("#208", "the key is copied beside the one path forget removes",
+             ".github/workflows/play-api-check.yml",
+             sub(r'(\n(\s*)gcloud auth activate-service-account)',
+                 r'\n\2mkdir -p "$RUNNER_TEMP/keep"\n\2cp "$key" "$RUNNER_TEMP/keep/play-sa.json"\1', 1),
+             "the suffix exemption covered any path ending in that name",
+             'leak:'),
+    Mutation("#208", "a process is started outside the chokepoint",
+             "test/guards/secrets_scripts_test.dart",
+             sub(r"(\nvoid main\(\) \{)",
+                 r'\nvoid _bypass() async {\n'
+                 r'  await Process.start("/bin/bash", ["x.sh"]);\n'
+                 r'}\1', 1),
+             "Process.start, Process.run and tear-offs all walked past the old rule",
+             'leak-chokepoint'),
     # ---- #206: the key link, proven by running the step ------------------
     # All three were GREEN at round eight, against `tools/play_promote.sh` --
     # the one key link no other guard covered -- because the test asked
