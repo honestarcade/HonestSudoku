@@ -37,6 +37,7 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SUITE = ["flutter", "test", "--no-pub", "--tags", "guard"]
+IN_FLIGHT = ROOT / ".mutation_check_in_flight"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -47,6 +48,7 @@ class Mutation:
     apply: object  # str -> str
     why: str
     expect: str = ""
+    also: tuple = ()
     """A substring of the reason the RIGHT assertion prints when it fires.
 
     Without this the battery measures "the suite went red", which is not the
@@ -54,6 +56,13 @@ class Mutation:
     two mutations as caught when what had actually failed was an unrelated
     test that happens to read the same file. That is the mistake the battery
     exists to find, made by the battery.
+
+    `also` carries further `(path, apply)` edits. Some defects are not
+    expressible in one file: #203 is "a second parse path is added AND the
+    rules are repointed at it", and the one-file version -- repoint the rules
+    at a method that does not exist -- only breaks the compile. That reported
+    WRONG-REASON, correctly, for two rounds. A mutation that cannot be written
+    truthfully is not a mutation.
     """
 
 
@@ -72,6 +81,23 @@ def sub(pattern: str, replacement: str, count: int = 1, flags: int = 0):
 
 def append(block: str):
     return lambda text: text.rstrip("\n") + "\n" + block
+
+
+def chain(*steps):
+    """Several substitutions on one file, in order.
+
+    A defect that MOVES something is two edits, and writing it as one -- a
+    delete without the matching insert -- tests a different defect than its
+    name claims (#207: the deletion left every refusal working, so the
+    ordering assertion correctly stayed silent).
+    """
+
+    def go(text: str) -> str:
+        for step in steps:
+            text = step(text)
+        return text
+
+    return go
 
 
 MUTATIONS: list[Mutation] = [
@@ -163,12 +189,28 @@ MUTATIONS: list[Mutation] = [
              "the only script holding the plaintext password was outside the leak group",
              'reached stdout'),
     # ---- #203/#207: the call site, and the ordering ----------------------
-    Mutation("#203", "the rules use a second parse path", "test/guards/workflow_rules.dart",
+    # The defect as it would really arrive: the second entry point is ADDED,
+    # and then the rules are repointed at it. Both halves, or the mutation is
+    # a compile error wearing the name of a guard failure.
+    Mutation("#203", "a second parse path is added and the rules repointed at it",
+             "test/guards/workflow_rules.dart",
              sub(r"Workflow\.parse\(", "Workflow.parseFast(", 0),
              "the StackOverflowError handler becomes unreachable from every rule",
-             'parse-path'),
+             'parse-path',
+             also=(("test/guards/workflow_yaml.dart",
+                    sub(r"(  static Workflow parse\(\n)",
+                        "  static Workflow parseFast(String path, String text) =>\n"
+                        "      parse(path, text);\n\n"
+                        r"\1")),)),
+    # A MOVE, not a delete: deleting the token check leaves every refusal
+    # working, so the ordering assertion is right to stay silent (#207).
     Mutation("#207", "the token check moves above the argument checks", "tools/play_promote.sh",
-             sub(r'\[ -n "\$\{PLAY_TOKEN:-\}" \] \|\| die_args "PLAY_TOKEN is not set"\n', ""),
+             chain(
+                 sub(r'\n# ---- credential -+\n\n\[ -n "\$\{PLAY_TOKEN:-\}" \] \|\| '
+                     r'die_args "PLAY_TOKEN is not set"\n', "\n"),
+                 sub(r"(# ---- arguments, before anything else -+\n\n)",
+                     '\\1[ -n "${PLAY_TOKEN:-}" ] || die_args "PLAY_TOKEN is not set"\n\n'),
+             ),
              "a bad track is no longer refused before the token is demanded",
              'order:'),
     # ---- #204: the shell questions, asked of bash ------------------------
@@ -213,10 +255,10 @@ MUTATIONS: list[Mutation] = [
              ".github/workflows/play-promote.yml",
              sub(r"^      - id: promote$",
                  '      - id: note\n'
-                 '        run: echo "Promoted on Play: versionCode []"\n'
+                 '        run: echo ok\n'
                  '      - id: promote',
                  1, re.M),
-             "#130's literal string on every failure path, from outside the guarded step",
+             "an inserted step runs with whatever the job holds — here a live Play token",
              'step-set'),
     Mutation("#209", "the summary reports a hardcoded outcome",
              ".github/workflows/play-promote.yml",
@@ -497,6 +539,23 @@ def parses_as_yaml(path: pathlib.Path) -> bool:
     return probe.returncode == 0
 
 
+def compiles_as_dart(paths: list[pathlib.Path]) -> bool:
+    """The Dart half of the rule `parses_as_yaml` states for YAML (#203).
+
+    A mutation that does not compile fails every test in the file at once,
+    which is a red suite for a reason that has nothing to do with the guard
+    being measured. YAML had this check from #172; Dart did not, and #203's
+    mutation -- a call to a method that was never added -- spent two rounds
+    reported as WRONG-REASON when the truth was that the battery could not
+    apply it.
+    """
+    dart = [p for p in paths if p.suffix == ".dart"]
+    if not dart:
+        return True
+    probe = run(["dart", "analyze", "--no-fatal-warnings", *[str(p) for p in dart]])
+    return probe.returncode == 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--list", action="store_true")
@@ -512,6 +571,22 @@ def main() -> int:
         print(f"\n{len(selected)} mutations")
         return 0
 
+    # A run that dies between "write the mutation" and "restore the file"
+    # leaves a DEFECT in the working tree, and the next `git commit -a` sweeps
+    # it into history. That happened: an owner-role grant on the CI service
+    # account rode into a docs commit, and the working tree's later correction
+    # hid it from the gate, because the gate reads the tree and not the commit.
+    #
+    # `finally` cannot cover a kill. A marker can: it outlives the process, so
+    # an interrupted run is detectable by the next one instead of silent.
+    if IN_FLIGHT.exists():
+        print("mutation_check: a previous run did not restore these files:",
+              file=sys.stderr)
+        print(IN_FLIGHT.read_text().strip(), file=sys.stderr)
+        print(f"Check them against HEAD (`git diff HEAD`) before committing "
+              f"anything, then delete {IN_FLIGHT}", file=sys.stderr)
+        return 2
+
     dirty = run(["git", "status", "--porcelain"]).stdout.strip()
     if dirty:
         print("mutation_check: refusing to run with uncommitted changes:", file=sys.stderr)
@@ -524,25 +599,36 @@ def main() -> int:
     broken: list[tuple[Mutation, str]] = []
 
     for i, m in enumerate(selected, 1):
-        target = ROOT / m.path
-        original = target.read_text()
+        edits = [(m.path, m.apply), *m.also]
+        targets = [ROOT / path for path, _ in edits]
+        originals = [target.read_text() for target in targets]
         label = f"[{i}/{len(selected)}] {m.issue} {m.name}"
         try:
-            mutated = m.apply(original)
+            mutated = [apply(text) for (_, apply), text in zip(edits, originals)]
         except LookupError as exc:
             broken.append((m, str(exc)))
             print(f"  BROKEN  {label}\n          {exc}")
             continue
-        if mutated == original:
+        if mutated == originals:
             broken.append((m, "changed nothing"))
             print(f"  BROKEN  {label}\n          changed nothing")
             continue
 
-        target.write_text(mutated)
+        IN_FLIGHT.write_text(
+            f"{m.issue} {m.name}\n"
+            + "".join(f"  {path}\n" for path, _ in edits)
+        )
+        for target, text in zip(targets, mutated):
+            target.write_text(text)
         try:
-            if not parses_as_yaml(target):
+            unparseable = [t for t in targets if not parses_as_yaml(t)]
+            if unparseable:
                 broken.append((m, "left the file unparseable — it would fail for the wrong reason"))
                 print(f"  BROKEN  {label}\n          unparseable after mutation")
+                continue
+            if not compiles_as_dart(targets):
+                broken.append((m, "left the Dart unanalyzable — it would fail for the wrong reason"))
+                print(f"  BROKEN  {label}\n          does not compile after mutation")
                 continue
             result = run(SUITE)
             output = result.stdout + result.stderr
@@ -580,7 +666,9 @@ def main() -> int:
             else:
                 print(f"  caught  {label}")
         finally:
-            target.write_text(original)
+            for target, text in zip(targets, originals):
+                target.write_text(text)
+            IN_FLIGHT.unlink(missing_ok=True)
 
     print()
     if broken:
