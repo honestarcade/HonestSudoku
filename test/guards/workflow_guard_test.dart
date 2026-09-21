@@ -2684,103 +2684,129 @@ void main() {
       });
     });
 
-    test('every rule reports a document it cannot read, and never throws', () {
-      // #203, answered by running the rules instead of reading them.
-      //
-      // The chain is five long: #177 the error handling was missing; #191 no
-      // test reached it; #194 the test reached it through a bypassable seam;
-      // #203 the call sites could route around it; and at round eight the
-      // text assertion written for #203 was itself defeated three ways —
-      // repoint five of six call sites and leave one `Workflow.parse(` and
-      // the set equality is satisfied; put the required spelling in a
-      // COMMENT and no real call site is needed at all; or reach a second
-      // parse path through an extension, a helper in a third file, or a
-      // tear-off, none of which spell `Workflow.`.
-      //
-      // Every one of those defeats a rule ABOUT the source, and none of them
-      // survives running the rules: the property is a runtime one. Whatever
-      // a rule calls internally, a document it cannot read must come back as
-      // an offender rather than as an exception that takes the suite with it.
-      //
-      // Honest limit, because this is the fifth attempt at this property and
-      // an overstated claim is what made the previous four look finished:
-      // this covers the errors a loader RETURNS on bad input. It does not
-      // reproduce a stack overflow — the depth needed to overflow the
-      // recursive loader also destabilises whatever test file runs beside it
-      // (#177, #191), so `Workflow.parse` keeps its own injected-loader test
-      // for that one. What changed is that the OTHER paths are no longer
-      // unguarded.
-      const rules = <String, List<WorkflowOffender> Function(String, String)>{
-        'unpinnedUses': unpinnedUses,
-        'permissionOffenders': permissionOffenders,
-        'concurrencyOffenders': concurrencyOffenders,
-        'secretsInRunOffenders': secretsInRunOffenders,
-        'untrustedInRunOffenders': untrustedInRunOffenders,
-        'shellTraceOffenders': shellTraceOffenders,
-      };
+    test(
+      'every rule reports a document it cannot read, and never throws',
+      // Tagged `slow` because the overflow document costs ~5s per rule, and
+      // the mutation battery runs this suite once per mutation — 93 times.
+      // Paying 45s each time turns a 20-minute CI job into an hour and a
+      // half, so the battery excludes this tag except for the one mutation
+      // that needs it, which declares so (#217).
+      tags: 'slow',
+      () {
+        // #203, answered by running the rules instead of reading them.
+        //
+        // The chain is five long: #177 the error handling was missing; #191 no
+        // test reached it; #194 the test reached it through a bypassable seam;
+        // #203 the call sites could route around it; and at round eight the
+        // text assertion written for #203 was itself defeated three ways —
+        // repoint five of six call sites and leave one `Workflow.parse(` and
+        // the set equality is satisfied; put the required spelling in a
+        // COMMENT and no real call site is needed at all; or reach a second
+        // parse path through an extension, a helper in a third file, or a
+        // tear-off, none of which spell `Workflow.`.
+        //
+        // Every one of those defeats a rule ABOUT the source, and none of them
+        // survives running the rules: the property is a runtime one. Whatever
+        // a rule calls internally, a document it cannot read must come back as
+        // an offender rather than as an exception that takes the suite with it.
+        //
+        // Honest limit, because this is the fifth attempt at this property and
+        // an overstated claim is what made the previous four look finished:
+        // this covers the errors a loader RETURNS on bad input. It does not
+        // reproduce a stack overflow — the depth needed to overflow the
+        // recursive loader also destabilises whatever test file runs beside it
+        // (#177, #191), so `Workflow.parse` keeps its own injected-loader test
+        // for that one. What changed is that the OTHER paths are no longer
+        // unguarded.
+        const rules = <String, List<WorkflowOffender> Function(String, String)>{
+          'unpinnedUses': unpinnedUses,
+          'permissionOffenders': permissionOffenders,
+          'concurrencyOffenders': concurrencyOffenders,
+          'secretsInRunOffenders': secretsInRunOffenders,
+          'untrustedInRunOffenders': untrustedInRunOffenders,
+          'shellTraceOffenders': shellTraceOffenders,
+        };
 
-      // The row that matters, and the one the eighth pass left out.
-      //
-      // Every other document here raises a `YamlException`, so a second parse
-      // path that catches YamlException and nothing else satisfies this test
-      // completely — and #177's crash is reachable through it. That bypass
-      // passed the whole gate AND all 86 mutations at 933cfad (#217).
-      //
-      // `Error` is not `Exception` in Dart, which is the entire five-issue
-      // lineage in one sentence. So one document must raise an Error, and a
-      // stack overflow in the recursive loader is the one that does.
-      //
-      // The eighth pass recorded that this was impractical, citing a
-      // measurement: 20000 levels parse fine in 2.8s. The measurement was
-      // right and the generalisation was wrong. Measured properly:
-      //
-      //   20000 -> parses (a YamlList), 4.2s
-      //   32000 -> `unparseable: nesting too deep to load`, 10.3s
-      //   64000 -> same, 39s
-      //
-      // 32000 is used because it is the first depth that reliably overflows.
-      // It costs this test a few seconds per rule, which is the price of the
-      // property the last five attempts did not buy.
-      final deepEnoughToOverflow = 'jobs: ${'[' * 32000}${']' * 32000}\n';
+        // The row that matters, and the one the eighth pass left out.
+        //
+        // Every other document here raises a `YamlException`, so a second parse
+        // path that catches YamlException and nothing else satisfies this test
+        // completely — and #177's crash is reachable through it. That bypass
+        // passed the whole gate AND all 86 mutations at 933cfad (#217).
+        //
+        // `Error` is not `Exception` in Dart, which is the entire five-issue
+        // lineage in one sentence. So one document must raise an Error, and a
+        // stack overflow in the recursive loader is the one that does.
+        //
+        // The eighth pass recorded that this was impractical, citing a
+        // measurement: 20000 levels parse fine in 2.8s. The measurement was
+        // right and the generalisation was wrong. Measured properly:
+        //
+        //   20000 -> parses (a YamlList), 4.2s
+        //   32000 -> `unparseable: nesting too deep to load`, 10.3s
+        //   64000 -> same, 39s
+        //
+        // 32000 is used because it is the first depth that reliably overflows.
+        // It costs this test a few seconds per rule, which is the price of the
+        // property the last five attempts did not buy.
+        final deepEnoughToOverflow = 'jobs: ${'[' * 32000}${']' * 32000}\n';
 
-      final unreadable = <String, String>{
-        'a nesting depth that overflows the loader': deepEnoughToOverflow,
-        'unclosed flow sequence': 'jobs: [a, b',
-        'a tab where YAML forbids one': 'jobs:\n\tbuild: {}',
-        'duplicate mapping key': 'on: push\non: pull_request\n',
-        'not a mapping at all': '- just\n- a\n- list\n',
-        'a bare scalar': 'nonsense',
-        'an alias to nothing': 'jobs: *missing\n',
-      };
-      // Two of these — `not a mapping at all` and `a bare scalar` — are VALID
-      // YAML. They exercise the `doc is! YamlMap` branch, which is ordinary
-      // control flow, not error handling. Said plainly because the test's name
-      // covers them and its purpose does not (#217).
+        // The depth is MACHINE-DEPENDENT, so the test asserts that it really
+        // overflowed rather than trusting it. Measured here, every depth from
+        // 22000 to 30000 parses cleanly and comes back as `is a YamlList, not a
+        // mapping` — an offender, so the loop below would be satisfied while
+        // exercising ordinary control flow instead of the Error path. On a
+        // runner with a deeper stack this row would quietly stop testing what
+        // it is for: the vacuity #204 was about, in a new place.
+        expect(
+          Workflow.parse('deep.yml', deepEnoughToOverflow).problem,
+          contains('too deep'),
+          reason:
+              'parse-path: 32000 levels no longer overflow this runner, so the '
+              'row below exercises the not-a-mapping branch and proves nothing '
+              'about an Error. Raise the depth until it overflows again — do '
+              'not delete the row',
+        );
 
-      for (final rule in rules.entries) {
-        unreadable.forEach((what, text) {
-          late final List<WorkflowOffender> offenders;
-          expect(
-            () => offenders = rule.value('.github/workflows/bad.yml', text),
-            returnsNormally,
-            reason:
-                'parse-path: rule `${rule.key}` THREW on $what instead of '
-                'reporting it. A workflow nobody can parse is a workflow '
-                'nobody is checking, and the exception takes the whole suite '
-                'with it — #177, reachable again through whatever parse path '
-                'this rule uses',
-          );
-          expect(
-            offenders,
-            isNotEmpty,
-            reason:
-                'parse-path: rule `${rule.key}` returned NO offender for $what. '
-                'Silence and "this file is fine" are the same answer to the '
-                'caller, which is how an unparseable workflow passes a gate',
-          );
-        });
-      }
-    });
+        final unreadable = <String, String>{
+          'a nesting depth that overflows the loader': deepEnoughToOverflow,
+          'unclosed flow sequence': 'jobs: [a, b',
+          'a tab where YAML forbids one': 'jobs:\n\tbuild: {}',
+          'duplicate mapping key': 'on: push\non: pull_request\n',
+          'not a mapping at all': '- just\n- a\n- list\n',
+          'a bare scalar': 'nonsense',
+          'an alias to nothing': 'jobs: *missing\n',
+        };
+        // Two of these — `not a mapping at all` and `a bare scalar` — are VALID
+        // YAML. They exercise the `doc is! YamlMap` branch, which is ordinary
+        // control flow, not error handling. Said plainly because the test's name
+        // covers them and its purpose does not (#217).
+
+        for (final rule in rules.entries) {
+          unreadable.forEach((what, text) {
+            late final List<WorkflowOffender> offenders;
+            expect(
+              () => offenders = rule.value('.github/workflows/bad.yml', text),
+              returnsNormally,
+              reason:
+                  'parse-path: rule `${rule.key}` THREW on $what instead of '
+                  'reporting it. A workflow nobody can parse is a workflow '
+                  'nobody is checking, and the exception takes the whole suite '
+                  'with it — #177, reachable again through whatever parse path '
+                  'this rule uses',
+            );
+            expect(
+              offenders,
+              isNotEmpty,
+              reason:
+                  'parse-path: rule `${rule.key}` returned NO offender for $what. '
+                  'Silence and "this file is fine" are the same answer to the '
+                  'caller, which is how an unparseable workflow passes a gate',
+            );
+          });
+        }
+      },
+    );
 
     test('the rules parse through Workflow.parse and nothing else', () {
       // #203: `parse` and `parseWithLoader` were collapsed into one body so

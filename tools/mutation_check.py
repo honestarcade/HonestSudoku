@@ -36,7 +36,15 @@ import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-SUITE = ["flutter", "test", "--no-pub", "--tags", "guard"]
+# The guard suite, MINUS the `slow` tag by default.
+#
+# One tagged test builds a 64000-character document to overflow the YAML
+# loader, which costs ~45s. Run once per mutation that is 70 minutes of CI for
+# a property one mutation tests. Mutations that need it set `slow=True` and
+# get the full suite; everything else runs in a third of the time (#217).
+SUITE = ["flutter", "test", "--no-pub", "--tags", "guard",
+         "--exclude-tags", "slow"]
+SUITE_SLOW = ["flutter", "test", "--no-pub", "--tags", "guard"]
 IN_FLIGHT = ROOT / ".mutation_check_in_flight"
 
 
@@ -49,6 +57,7 @@ class Mutation:
     why: str
     expect: str = ""
     also: tuple = ()
+    slow: bool = False
     """A substring of the reason the RIGHT assertion prints when it fires.
 
     Without this the battery measures "the suite went red", which is not the
@@ -275,6 +284,9 @@ MUTATIONS: list[Mutation] = [
              sub(r"Workflow\.parse\(", "WorkflowQuick.of(", 5),
              "StackOverflowError escapes as a crash from five of the six rules",
              'parse-path',
+             # The one mutation that needs the overflow document, so the one
+             # that pays for it.
+             slow=True,
              also=(("test/guards/workflow_yaml.dart",
                     append("extension WorkflowQuick on Workflow {\n"
                            "  static Workflow of(String path, String text) {\n"
@@ -824,7 +836,8 @@ def main() -> int:
                 broken.append((m, "left the Dart unanalyzable — it would fail for the wrong reason"))
                 print(f"  BROKEN  {label}\n          does not compile after mutation")
                 continue
-            result = run(SUITE)
+            suite = SUITE_SLOW if m.slow else SUITE
+            result = run(suite)
             output = result.stdout + result.stderr
             if result.returncode == 0:
                 # Re-run before reporting a survivor. A SURVIVED verdict is
@@ -832,7 +845,7 @@ def main() -> int:
                 # flaky green would announce a hole that is not there, or
                 # worse, be dismissed as flake when it is real. A second
                 # green costs one suite run on the rare path only (#192).
-                confirm = run(SUITE)
+                confirm = run(suite)
                 if confirm.returncode != 0:
                     output = confirm.stdout + confirm.stderr
                     print(f"  (first run of {label} was green, second was not "

@@ -4,3 +4,8 @@
 tags:
   guard:
     description: Invariant and project-identity guards that read repository files.
+  slow:
+    description: >-
+      Guards whose input is expensive to produce — the parse-path test builds
+      a 64000-character document to overflow the YAML loader. The mutation
+      battery excludes this tag except for mutations that target it.
