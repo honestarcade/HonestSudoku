@@ -294,7 +294,7 @@ class Workflow {
                 uses: _stringOr(stepNode, 'uses'),
                 run: run,
                 shell: _stringOr(stepNode, 'shell'),
-                continueOnError: _lookup(stepNode, 'continue-on-error') == true,
+                continueOnError: _isTruthy(_lookup(stepNode, 'continue-on-error')),
                 with_: _stringMap(stepNode, 'with'),
               ),
             );
@@ -321,7 +321,7 @@ class Workflow {
             ifExpression: _rawOr(jobMap, 'if'),
             secretsInherit: '${_lookup(jobMap, 'secrets')}' == 'inherit',
             defaultShell: _defaultShell(jobMap),
-            continueOnError: _lookup(jobMap, 'continue-on-error') == true,
+            continueOnError: _isTruthy(_lookup(jobMap, 'continue-on-error')),
             runsOn: _stringOr(jobMap, 'runs-on'),
             environment: _environment(jobMap),
             permissionsScalar: _permissionsScalar(jobMap),
@@ -343,6 +343,23 @@ class Workflow {
       hasConcurrency: _lookup(doc, 'concurrency') != null,
     );
   }
+}
+
+/// GitHub honours `continue-on-error: "true"` — the quoted string — exactly
+/// as it honours the bare boolean, and an `${{ }}` expression that evaluates
+/// to true as well. Comparing to Dart's `true` matched only the unquoted YAML
+/// boolean, so the quoted spelling parsed as false and the guard passed
+/// (#171).
+bool _isTruthy(dynamic value) {
+  if (value is bool) return value;
+  if (value is String) {
+    final v = value.trim().toLowerCase();
+    // An expression cannot be evaluated here, so it is treated as possibly
+    // true: a step whose skipping depends on a runtime expression is not a
+    // step this guard can vouch for.
+    return v == 'true' || v.startsWith(r'${{');
+  }
+  return false;
 }
 
 dynamic _lookup(YamlMap map, String key) {

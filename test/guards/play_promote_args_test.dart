@@ -58,30 +58,104 @@ const _unreachableApi = 'http://127.0.0.1:1';
 
 /// The refusal must be reached, unconditionally, before anything that could
 /// mint a credential — in every job of the file, not just the first.
+/// Runs a refusal step's `run:` body under bash with the dispatch inputs set,
+/// and returns its exit code. The body is pure shell — no external command —
+/// so this needs no stubs and no network.
+int _runRefusal(String script, String fromTrack, String toTrack) {
+  final dir = Directory.systemTemp.createTempSync('hs-refusal');
+  try {
+    final file = File('${dir.path}/refuse.sh')..writeAsStringSync(script);
+    final r = Process.runSync(
+      '/bin/bash',
+      [file.path],
+      includeParentEnvironment: false,
+      environment: {
+        'PATH': '/usr/bin:/bin',
+        'FROM_TRACK': fromTrack,
+        'TO_TRACK': toTrack,
+      },
+      stdoutEncoding: utf8,
+      stderrEncoding: utf8,
+    );
+    return r.exitCode;
+  } finally {
+    dir.deleteSync(recursive: true);
+  }
+}
+
 void _assertPromoteShape(Workflow wf) {
   expect(wf.problem, isNull, reason: 'refusal: ${wf.problem}');
   expect(wf.jobs, isNotEmpty, reason: 'refusal: no jobs parsed');
 
   for (final job in wf.jobs) {
-    if (job.steps.isEmpty) continue;
-    final refusals = job.steps
-        .where((s) => (s.run ?? '').contains('exit 1'))
-        .toList();
+    // A job with no steps used to `continue`, so a reusable-workflow job was
+    // invisible to every check below — and `secrets: inherit` hands it the
+    // service-account key. That is precisely what the failure message one
+    // line down warns about, so skipping it was the hole (#171).
     expect(
-      refusals,
+      job.uses,
+      isNull,
+      reason:
+          'refusal: job `${job.name}` calls the reusable workflow '
+          '`${job.uses}`, whose steps are not in this file and cannot be '
+          'checked. A job without a refusal can mint the credential and '
+          'promote unchecked',
+    );
+    expect(
+      job.steps,
       isNotEmpty,
-      reason:
-          'refusal: job `${job.name}` has no step that refuses. A job '
-          'without one can mint the credential and promote unchecked',
+      reason: 'refusal: job `${job.name}` has no steps',
     );
-    final refuse = job.steps.first;
     expect(
-      refuse.run ?? '',
-      contains('exit 1'),
+      job.continueOnError,
+      isFalse,
       reason:
-          'refusal: the first step of job `${job.name}` must be the '
-          'refusal; found `${refuse.id ?? refuse.name}`',
+          'refusal: job `${job.name}` carries `continue-on-error`, so its '
+          'refusal failing would not stop what depends on it',
     );
+
+    final refuse = job.steps.first;
+
+    // Behaviour, not text. `refuse.run.contains('exit 1')` was satisfied by
+    // any `exit 1` that never executes: inside a shell comment, inside an
+    // uncalled function, inside `if false; then … fi`. All three were green
+    // while the workflow promoted whatever the script allowed (#171). So the
+    // step is RUN, with the dispatch inputs set, and judged by its exit code.
+    expect(
+      refuse.run,
+      isNotNull,
+      reason:
+          'refusal: the first step of `${job.name}` is '
+          '`${refuse.uses ?? refuse.id}`, not a refusal that runs',
+    );
+    for (final probe in const [
+      (from: 'internal', to: 'production', shouldPass: false),
+      (from: 'production', to: 'alpha', shouldPass: false),
+      (from: 'internal', to: 'nonsense', shouldPass: false),
+      (from: 'alpha', to: 'alpha', shouldPass: false),
+      (from: 'internal', to: 'alpha', shouldPass: true),
+    ]) {
+      final code = _runRefusal(refuse.run!, probe.from, probe.to);
+      if (probe.shouldPass) {
+        expect(
+          code,
+          0,
+          reason:
+              'refusal: `${probe.from} -> ${probe.to}` is a legitimate '
+              'promotion and was refused — a refusal that blocks everything '
+              'is not a working guard',
+        );
+      } else {
+        expect(
+          code,
+          isNot(0),
+          reason:
+              'refusal: `${probe.from} -> ${probe.to}` was ACCEPTED by the '
+              'refusal step in `${job.name}`',
+        );
+      }
+    }
+
     expect(
       refuse.isUnconditional,
       isTrue,
@@ -90,13 +164,34 @@ void _assertPromoteShape(Workflow wf) {
           '(if: ${refuse.ifExpression}, continue-on-error: '
           '${refuse.continueOnError}) — it would be skipped or ignored',
     );
-    expect(
-      refuse.run,
-      contains('production'),
-      reason:
-          'refusal: the first step of `${job.name}` does not mention the '
-          'track it exists to refuse',
-    );
+
+    // Every step that ACTS must be unconditional. Only the first step was
+    // checked, so `if: always()` on `promote` was green and the "a failed
+    // refusal stops the run" guarantee was gone (#171). The reporting and
+    // cleanup steps are the deliberate exceptions: they exist to run on the
+    // refusal path, and they are named rather than pattern-matched.
+    const mayAlwaysRun = {'summary', 'forget'};
+    for (final step in job.steps) {
+      if (mayAlwaysRun.contains(step.id)) {
+        expect(
+          step.ifExpression,
+          'always()',
+          reason:
+              'refusal: `${step.id}` is allowed to run after a refusal only '
+              'as `if: always()`',
+        );
+        continue;
+      }
+      expect(
+        step.isUnconditional,
+        isTrue,
+        reason:
+            'refusal: step `${step.id ?? step.index}` of `${job.name}` is '
+            'conditional (if: ${step.ifExpression}, continue-on-error: '
+            '${step.continueOnError}), so it can run although the refusal '
+            'failed',
+      );
+    }
   }
 }
 
@@ -227,6 +322,36 @@ void main() {
           '$t\n  sneaky:\n    runs-on: ubuntu-latest\n    steps:\n'
           '      - id: token\n        run: gcloud auth activate-service-account\n'
           '      - id: promote\n        run: tools/play_promote.sh pkg internal production\n',
+      // #171: the four remaining defeats of the text-matching version.
+      'every exit 1 becomes a shell comment': (t) => t.replaceAll(
+        RegExp(r'^(\s*)exit 1$', multiLine: true),
+        r': # exit 1',
+      ),
+      'exit 1 survives only inside an uncalled function': (t) => t
+          .replaceAll(RegExp(r'^(\s*)exit 1$', multiLine: true), r':')
+          .replaceFirst(
+            '          set -euo pipefail\n',
+            '          set -euo pipefail\n'
+                '          never_called() { exit 1; }\n',
+          ),
+      'exit 1 survives only inside if false': (t) => t
+          .replaceAll(RegExp(r'^(\s*)exit 1$', multiLine: true), r':')
+          .replaceFirst(
+            '          set -euo pipefail\n',
+            '          set -euo pipefail\n'
+                '          if false; then exit 1; fi\n',
+          ),
+      'if: always() on the promote step': (t) => t.replaceFirst(
+        '      - id: promote\n',
+        '      - id: promote\n        if: always()\n',
+      ),
+      'continue-on-error as a quoted string': (t) => t.replaceFirst(
+        '      - id: refuse\n',
+        '      - id: refuse\n        continue-on-error: "true"\n',
+      ),
+      'a reusable-workflow job with no steps': (t) =>
+          '$t\n  sneaky:\n    uses: ./.github/workflows/evil.yml\n'
+          '    secrets: inherit\n',
       'the refusal stops refusing': (t) => t.replaceFirst(
         RegExp(r'^(\s*)exit 1$', multiLine: true),
         r'$1: # exit 1',
