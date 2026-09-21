@@ -151,7 +151,7 @@ List<WorkflowOffender> concurrencyOffenders(String path, String text) {
 /// body is obtained by parsing (see workflow_yaml.dart), which is what makes
 /// a flow mapping, a quoted key, an anchor, an alias and a multi-line quoted
 /// scalar visible; the line scan this replaced missed all five (#154, #156).
-Iterable<({String expression, RunScript script})> _runExpressions(
+Iterable<({String expression, RunScript script, int line})> _runExpressions(
   String text,
 ) sync* {
   for (final script in Workflow.parse('', text).runScripts) {
@@ -159,7 +159,15 @@ Iterable<({String expression, RunScript script})> _runExpressions(
       r'\$\{\{(.*?)\}\}',
       dotAll: true,
     ).allMatches(script.body)) {
-      yield (expression: m.group(1)!, script: script);
+      // The offending line within the body, not the line the `run:` value
+      // starts on. The contract is `path:line: message`, and pointing at
+      // the top of a 60-line script makes the reader hunt (#180).
+      final before = script.body.substring(0, m.start);
+      yield (
+        expression: m.group(1)!,
+        script: script,
+        line: script.line + '\n'.allMatches(before).length,
+      );
     }
   }
 }
@@ -199,14 +207,13 @@ List<WorkflowOffender> secretsInRunOffenders(String path, String text) {
     r'\bsecrets\s*(\.\s*[A-Za-z_*]|\[)|\bto_?json\s*\(\s*secrets\s*\)',
     caseSensitive: false,
   );
-  for (final (expression: expression, script: script) in _runExpressions(
-    text,
-  )) {
+  for (final (expression: expression, script: script, line: line)
+      in _runExpressions(text)) {
     if (secret.hasMatch(expression)) {
       offenders.add(
         WorkflowOffender(
           path,
-          script.line,
+          line,
           'a secret reaches a `run:` script as text (`\${{$expression}}` in job '
           '`${script.jobName}`). GitHub substitutes it before the shell runs, '
           'so the log mask is the only thing between it and the output. Pass it '
@@ -236,15 +243,14 @@ List<WorkflowOffender> untrustedInRunOffenders(String path, String text) {
     r'|\bto_?json\s*\(\s*(github|inputs|needs|matrix|env)\s*\)',
     caseSensitive: false,
   );
-  for (final (expression: expression, script: script) in _runExpressions(
-    text,
-  )) {
+  for (final (expression: expression, script: script, line: line)
+      in _runExpressions(text)) {
     final match = untrusted.firstMatch(expression);
     if (match != null) {
       offenders.add(
         WorkflowOffender(
           path,
-          script.line,
+          line,
           '`${match.group(1)}` reaches a `run:` script as text '
           '(`\${{$expression}}` in job `${script.jobName}`); a tag name or '
           'dispatch input containing `\$(...)` would execute. Pass it as '
@@ -280,9 +286,14 @@ List<WorkflowOffender> shellTraceOffenders(String path, String text) {
 
   for (final script in workflow.runScripts) {
     final lines = script.body.split('\n');
-    for (final raw in lines) {
+    for (var i = 0; i < lines.length; i++) {
+      final raw = lines[i];
       if (raw.trimLeft().startsWith('#')) continue;
       final line = _stripComment(raw);
+      // The contract is `path:line: message`, and every offender reported
+      // the line where the `run:` VALUE starts — so a trace on line 40 of a
+      // 60-line script pointed at line 12, and the reader hunted (#180).
+      final lineNo = script.line + i;
       var flagged = false;
 
       for (final set in RegExp(
@@ -292,7 +303,7 @@ List<WorkflowOffender> shellTraceOffenders(String path, String text) {
         for (final long in RegExp(
           r'''-o\s+["']?(xtrace|verbose)["']?''',
         ).allMatches(args)) {
-          flag(script.line, '`set -o ${long.group(1)}`');
+          flag(lineNo, '`set -o ${long.group(1)}`');
           flagged = true;
         }
         if (flagged) break;
@@ -300,7 +311,7 @@ List<WorkflowOffender> shellTraceOffenders(String path, String text) {
           final flags = cluster.group(1)!;
           if (flags == 'o') continue;
           if (flags.contains('x') || flags.contains('v')) {
-            flag(script.line, '`set ${cluster.group(0)}`');
+            flag(lineNo, '`set ${cluster.group(0)}`');
             flagged = true;
             break;
           }
@@ -314,12 +325,12 @@ List<WorkflowOffender> shellTraceOffenders(String path, String text) {
       if (RegExp(
         r'''(^|[;&|(]|\s|["'])(/\S*/)?(ba|z|k|da|)sh\s+((-[A-Za-z]*[xv][A-Za-z]*|--verbose|--xtrace|-o\s+(xtrace|verbose))(\s|$))''',
       ).hasMatch(line)) {
-        flag(script.line, 'invoking a shell with a trace flag');
+        flag(lineNo, 'invoking a shell with a trace flag');
         continue;
       }
 
       if (RegExp(r'SHELLOPTS\s*[:=].*\b(xtrace|verbose)\b').hasMatch(line)) {
-        flag(script.line, '`SHELLOPTS` carrying a trace option');
+        flag(lineNo, '`SHELLOPTS` carrying a trace option');
       }
     }
   }

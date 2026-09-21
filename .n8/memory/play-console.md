@@ -28,8 +28,11 @@ tell a later session which Console and which login this project lives under,
 and neither is recoverable from the repository.
 
 The package id is typed on the **Create app** screen and is permanent from that
-moment — not from the first upload. It is asserted against the build and against
-the privacy policy by `test/guards/docs_consistency_test.dart`.
+moment — not from the first upload. `test/guards/docs_consistency_test.dart`
+asserts it across the build, `docs/privacy.md`, `README.md`, `.n8/config.yml`,
+`docs/index.md`, `docs/_config.yml` and `LICENSE`. It does **not** read this
+file, so the copy above is unguarded — changing it here alone leaves the suite
+green (#180).
 
 ## Setup status (2026-09-20)
 
@@ -83,8 +86,11 @@ Names only:
 - `HS_KEYSTORE_B64`, `HS_KEYSTORE_PASS`, `HS_KEY_ALIAS`, `HS_KEY_PASS` — set by
   `tools/set_ci_secrets.sh`
 
-`.github/workflows/play-api-check.yml` exercises them on demand, without
-changing anything on Play.
+`.github/workflows/play-api-check.yml` checks them on demand, without changing
+anything on Play. "Exercises" overclaimed for one of the five: `HS_KEY_PASS` is
+compared to `HS_KEYSTORE_PASS` for equality and never used to open anything,
+because a PKCS12 keystore has one password and keytool ignores a separate
+`-keypass`. The other four are genuinely used (#164, #180).
 
 ## What a personal developer account means for launch
 

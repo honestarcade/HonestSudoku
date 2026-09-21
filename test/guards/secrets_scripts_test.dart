@@ -933,7 +933,23 @@ exit 0
 printf '%s\n' "$*" >> "$HS_KEYTOOL_CALLS"
 case "$1" in
   -list)
-    printf 'Alias name: %s\n' "$HS_STUB_ALIAS"
+    # Faithful to keytool: with -alias it exits 1 when the keystore holds
+    # no such entry, and otherwise echoes back the REQUESTED spelling
+    # rather than the stored one. That is why the step needs no explicit
+    # alias comparison — and why one was dead code (#180).
+    want=""
+    prev=""
+    for a in "$@"; do
+      if [ "$prev" = "-alias" ]; then want="$a"; fi
+      prev="$a"
+    done
+    lc_want=$(printf '%s' "$want" | tr '[:upper:]' '[:lower:]')
+    lc_have=$(printf '%s' "$HS_STUB_ALIAS" | tr '[:upper:]' '[:lower:]')
+    if [ -n "$want" ] && [ "$lc_want" != "$lc_have" ]; then
+      printf 'keytool error: java.lang.Exception: Alias <%s> does not exist\n' "$want" >&2
+      exit 1
+    fi
+    printf 'Alias name: %s\n' "$want"
     printf 'SHA256: %s\n' "$HS_STUB_KS_FP"
     ;;
   -printcert)
@@ -1000,10 +1016,14 @@ exit 0
     });
 
     test('an alias that is not the configured one is refused', () {
-      // `if false` in place of this comparison was green (#127, #173).
+      // keytool itself refuses: `-alias` makes it exit 1 for an absent
+      // entry, and `set -euo pipefail` ends the step there. What this
+      // asserts is that the step lets that failure through — the explicit
+      // comparison that used to follow could never fire, because with
+      // `-alias` keytool echoes back the requested spelling (#173, #180).
       final r = runStep(alias: 'upload', stubAlias: 'someone-else');
       expect(r.code, isNot(0), reason: 'wrong alias must fail');
-      expect(r.err, contains('HS_KEY_ALIAS'));
+      expect(r.err, contains('does not exist'));
     });
 
     test('the alias comparison ignores case, as keytool lowercases', () {

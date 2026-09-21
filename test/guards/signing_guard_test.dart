@@ -77,9 +77,14 @@ const _keystorePath = 'HS_KEYSTORE_PATH';
 /// It has to exist: since #91 the gate refuses to promise the upload key for a
 /// keystore it cannot read, so a fixture pointing at a path that is not there
 /// would exercise that branch instead of the one it means to.
-final File _fakeKeystore = File(
-  '${Directory.systemTemp.createTempSync('hs-signing').path}/upload.p12',
-)..writeAsStringSync('not a real keystore');
+/// Created once and registered for removal, rather than leaked: a top-level
+/// `createTempSync` with no teardown left one directory behind per
+/// `flutter test` run (#180).
+final Directory _fakeKeystoreDir = Directory.systemTemp.createTempSync(
+  'hs-signing',
+);
+final File _fakeKeystore = File('${_fakeKeystoreDir.path}/upload.p12')
+  ..writeAsStringSync('not a real keystore');
 
 Map<String, String> get _allFour => {
   'HS_KEYSTORE_PATH': _fakeKeystore.path,
@@ -441,9 +446,13 @@ void _signingModeTests() {
   });
 
   test('the credentials file quotes its values', () {
-    // It documents itself as sourceable. An unquoted value containing a space
-    // breaks `. this-file`, and one containing a shell metacharacter executes
-    // on it (#108).
+    // The file is explicitly NOT sourceable — make_upload_key.sh says "Do
+    // NOT source this file" and set_ci_secrets.sh parses it — so the reason
+    // this test gave for quoting stopped being true (#119, #180). Quoting
+    // still matters: the parser reads to the matching quote, so an unquoted
+    // value containing a space is truncated, and anyone who sources the file
+    // by hand despite the warning executes whatever a metacharacter in the
+    // password expands to (#108).
     final script = readFile('tools/make_upload_key.sh');
     for (final name in _signingVars) {
       expect(
@@ -666,6 +675,14 @@ void _hardFailTests() {
 }
 
 void main() {
+  // One directory per `flutter test` run was left behind: the fixture was
+  // created in a top-level `final` with no teardown (#180).
+  tearDownAll(() {
+    if (_fakeKeystoreDir.existsSync()) {
+      _fakeKeystoreDir.deleteSync(recursive: true);
+    }
+  });
+
   group('gate.sh signing mode', _signingModeTests);
   group('hard failure produces nothing', _hardFailTests);
 

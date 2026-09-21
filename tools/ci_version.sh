@@ -51,6 +51,20 @@ attempt="$3"
 printf '%s' "$ref" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$' ||
   die "ref '$ref' is not v<major>.<minor>.<patch>[-prerelease]"
 
+# The prerelease, to semver's own rules. The pattern above accepts any run of
+# alphanumerics, dots and hyphens, so `v1.2.3-rc.01`, `v1.2.3-00` and
+# `v1.2.3-rc.1.` all passed — a numeric identifier may not carry a leading
+# zero, and an identifier may not be empty. The leading-zero guard below
+# covers only the core triple (#180).
+case "$ref" in
+*-*)
+  pre="${ref#*-}"
+  printf '%s' "$pre" |
+    grep -qE '^(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*$' ||
+    die "ref '$ref' has an invalid prerelease '$pre': identifiers must be non-empty, and a numeric one may not have a leading zero"
+  ;;
+esac
+
 # No leading zeros: `v01.2.3` is not semver, and it would ship as name 01.2.3.
 printf '%s' "$ref" | grep -qE '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-|$)' ||
   die "ref '$ref' has a leading zero in a version component"
@@ -67,9 +81,12 @@ has_newline "$attempt" && die "run attempt contains a newline"
 printf '%s' "$run" | grep -qE '^[1-9][0-9]*$' ||
   die "run number '$run' is not a positive integer"
 
-# Android refuses a versionCode above 2100000000, and the arithmetic below
-# overflows to a negative number long before that with a large enough run
-# number. Bounded here so the failure is a message rather than a bad code.
+# Android refuses a versionCode above 2100000000. The bound that does the
+# work is this one: eight digits caps the code at 1000 + 99999999*10 + 9 =
+# 1000000999, which is under half Android's maximum, so the check after the
+# arithmetic can never fire. It is kept as a backstop against a future change
+# to the formula, and it is documented as one rather than described as
+# working with this bound (#180).
 [ "${#run}" -le 8 ] ||
   die "run number '$run' is implausibly large; the version code would overflow"
 
@@ -79,6 +96,8 @@ printf '%s' "$attempt" | grep -qE '^[1-9]$' ||
 name="${ref#v}"
 code=$((1000 + run * 10 + attempt))
 
+# Unreachable with the eight-digit bound above, deliberately: a backstop for
+# a change to the formula, not a check that fires today (#180).
 [ "$code" -gt 0 ] && [ "$code" -le 2100000000 ] ||
   die "computed version code $code is outside Android's 1..2100000000"
 

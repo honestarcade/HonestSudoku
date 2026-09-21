@@ -1282,6 +1282,31 @@ void main() {
         isEmpty,
       );
     });
+    test('no composite action exists that the rules cannot read', () {
+      // The rules parse `jobs:` — a composite action's steps live under
+      // `runs.steps`, so `.github/actions/**/action.yml` is scanned by
+      // nothing: not for pins, not for secrets in run:, not for tracing.
+      // None exist today, so this is a tripwire rather than a scan: adding
+      // one fails here, and whoever adds it extends the rules first (#180).
+      final dir = Directory('${repoRoot.path}/.github/actions');
+      final found = dir.existsSync()
+          ? dir
+                .listSync(recursive: true)
+                .whereType<File>()
+                .where((f) => RegExp(r'action\.ya?ml$').hasMatch(f.path))
+                .map((f) => f.path.replaceFirst('${repoRoot.path}/', ''))
+                .toList()
+          : <String>[];
+      expect(
+        found,
+        isEmpty,
+        reason:
+            'composite actions are not covered by unpinnedUses, '
+            'secretsInRunOffenders or shellTraceOffenders, which read '
+            '`jobs:` and not `runs.steps`. Extend them before adding $found',
+      );
+    });
+
     test('dependabot watches both ecosystems', () {
       final offenders = dependabotOffenders(
         pathExists('.github/dependabot.yml')

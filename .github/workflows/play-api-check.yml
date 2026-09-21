@@ -143,18 +143,16 @@ jobs:
           alias_seen="$(sed -n 's/^Alias name: //p' "$listing" | head -1)"
           bundle_fp="$(grep -m1 -oE 'SHA256: [0-9A-F:]+' "$listing" | sed 's/^SHA256: //')"
 
-          # Asserted, not just printed. This used to be reported in the summary
-          # and compared to nothing, so a keystore whose alias was not the
-          # configured one passed the check that exists to catch exactly that
-          # (#127). keytool lowercases alias names, so the comparison does too.
-          alias_want="$(printf '%s' "$HS_KEY_ALIAS" | tr '[:upper:]' '[:lower:]')"
-          alias_got="$(printf '%s' "$alias_seen" | tr '[:upper:]' '[:lower:]')"
-          if [ "$alias_got" != "$alias_want" ]; then
-            echo "the keystore's alias is '$alias_seen', but HS_KEY_ALIAS says '$HS_KEY_ALIAS'" >&2
-            echo "  The release build signs by alias, so it would fail with this pair." >&2
-            rm -f "$ks"
-            exit 1
-          fi
+          # The wrong-alias case is caught by keytool itself: `-alias` above
+          # makes it exit 1 when the keystore has no such entry, and
+          # `set -euo pipefail` ends the step there. An explicit comparison
+          # after it cannot fail — with `-alias`, keytool echoes back the
+          # REQUESTED spelling, so alias_seen always equals HS_KEY_ALIAS.
+          # The comparison, its lowercasing and its tailored message were
+          # all unreachable, and the comment above them still described the
+          # case they were written for (#165 added -alias, #180 found the
+          # dead code it created). alias_seen is kept because the summary
+          # reports it.
 
           # This does NOT prove the key password, and used to claim it did.
           # keytool prints "Different store and key passwords not supported

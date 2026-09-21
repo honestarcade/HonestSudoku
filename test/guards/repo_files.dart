@@ -1,9 +1,16 @@
 // Shared helpers for the guard tests in this directory.
 //
-// Guards read the repository's own files as text and assert facts about them.
-// They add no dependencies: a guard that needed a YAML or XML package could be
-// satisfied by a build that removed the package, which is the opposite of the
-// point. Comment stripping is therefore hand-rolled and deliberately simple.
+// Guards read the repository's own files and assert facts about them.
+//
+// This header used to say guards add no dependencies, on the reasoning that a
+// guard needing a YAML package could be satisfied by a build that removed the
+// package. #154 reversed that for workflows and the reversal won: a line scan
+// cannot assert STRUCTURE, and every bypass it missed — a flow mapping, a
+// quoted scalar, a value on the next line — was a real hole rather than a
+// theoretical one. `package:yaml` is a dev dependency, so it is not in the
+// shipped bundle, and a test asserts that. The argument is set out in full in
+// workflow_yaml.dart's header; this file's hand-rolled helpers remain for the
+// formats that have no parser here (#154, #180).
 import 'dart:convert';
 import 'dart:io';
 
