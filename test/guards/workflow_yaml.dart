@@ -20,8 +20,16 @@ class RunScript {
   /// The script text as the shell will receive it, aliases resolved.
   final String body;
 
-  /// 1-based line in the source file where the value begins.
+  /// 1-based line in the source file of the `run:` KEY.
+  ///
+  /// The body's first line is `line + 1`: for a block scalar the value's
+  /// span starts at the `|`, which sits on the key's line. Offenders add the
+  /// body index to [bodyLine], not to this, which is why every trace
+  /// offender pointed one line short (#180, #188).
   final int line;
+
+  /// 1-based line in the source file where the body's first line sits.
+  int get bodyLine => line + 1;
   final String jobName;
   final String? stepId;
 }
@@ -39,6 +47,7 @@ class WorkflowStep {
     this.shell,
     this.continueOnError = false,
     this.with_ = const {},
+    this.env = const {},
   });
 
   final int index;
@@ -59,6 +68,9 @@ class WorkflowStep {
   /// actually told to do (`track`, `status`, `retention-days`).
   final Map<String, String> with_;
 
+  /// `env:` on the step. See [WorkflowJob.env].
+  final Map<String, String> env;
+
   /// A step that always runs when reached: no `if:`, no `continue-on-error`.
   bool get isUnconditional => ifExpression == null && !continueOnError;
 }
@@ -78,6 +90,7 @@ class WorkflowJob {
     this.runsOn,
     this.environment,
     this.permissionsScalar,
+    this.env = const {},
   });
 
   final String name;
@@ -112,6 +125,14 @@ class WorkflowJob {
   /// `permissions:` on the job, as a scalar. See [Workflow.permissionsScalar].
   final String? permissionsScalar;
 
+  /// `env:` on the job, flattened to strings.
+  ///
+  /// Unmodelled until now, at every level. #168's Fix line said to "add
+  /// SHELLOPTS to the environment scan" and there was no environment scan:
+  /// `env: SHELLOPTS: xtrace` on the job holding all five secrets turned
+  /// tracing on for every one of its steps, with the suite green (#189).
+  final Map<String, String> env;
+
   WorkflowStep? stepById(String id) {
     for (final step in steps) {
       if (step.id == id) return step;
@@ -138,6 +159,7 @@ class Workflow {
     this.permissionsScalar,
     this.hasConcurrency = false,
     this.dispatchInputs = const {},
+    this.env = const {},
   });
 
   final String path;
@@ -172,6 +194,9 @@ class Workflow {
   final String? permissionsScalar;
 
   final bool hasConcurrency;
+
+  /// Workflow-level `env:`. See [WorkflowJob.env].
+  final Map<String, String> env;
 
   /// `on.workflow_dispatch.inputs`, by name: the declared `type` and, for a
   /// `choice`, its `options`. Nothing modelled these, so reverting an input
@@ -208,10 +233,23 @@ class Workflow {
     return null;
   }
 
-  static Workflow parse(String path, String text) {
+  static Workflow parse(String path, String text) =>
+      parseWithLoader(path, text, loadYaml);
+
+  /// [parse], with the loader injected.
+  ///
+  /// Only so the StackOverflowError branch can be exercised: a depth that
+  /// reliably overflows under `flutter test` also destabilises whatever file
+  /// runs beside it, which is why the depth was lowered and the test went
+  /// vacuous (#177, #191).
+  static Workflow parseWithLoader(
+    String path,
+    String text,
+    dynamic Function(String) load,
+  ) {
     dynamic doc;
     try {
-      doc = loadYaml(text);
+      doc = load(text);
     } on StackOverflowError {
       // Deep nesting overflows the recursive loader. StackOverflowError is
       // an Error, not an Exception, so `on YamlException` did not catch it
@@ -252,6 +290,7 @@ class Workflow {
       );
     }
 
+    final badJobs = <String>[];
     final triggers = <String>[];
     final pushTags = <String>[];
     final pushBranches = <String>[];
@@ -285,7 +324,14 @@ class Workflow {
       for (final entry in jobsNode.nodes.entries) {
         final jobName = '${entry.key}';
         final jobMap = entry.value;
-        if (jobMap is! YamlMap) continue;
+        if (jobMap is! YamlMap) {
+          // Recorded, not skipped. A job whose value is not a mapping was
+          // dropped silently with `problem == null`, so every rule returned
+          // zero offenders for a file holding one — the class #177 names,
+          // still open in this spelling (#188).
+          badJobs.add(jobName);
+          continue;
+        }
 
         final needs = <String>[];
         final needsNode = _lookup(jobMap, 'needs');
@@ -319,6 +365,7 @@ class Workflow {
                   _lookup(stepNode, 'continue-on-error'),
                 ),
                 with_: _stringMap(stepNode, 'with'),
+                env: _stringMap(stepNode, 'env'),
               ),
             );
             if (run != null) {
@@ -348,12 +395,17 @@ class Workflow {
             runsOn: _stringOr(jobMap, 'runs-on'),
             environment: _environment(jobMap),
             permissionsScalar: _permissionsScalar(jobMap),
+            env: _stringMap(jobMap, 'env'),
           ),
         );
       }
     }
     String? unusable;
-    if (jobsNode == null) {
+    if (badJobs.isNotEmpty) {
+      unusable =
+          'job(s) ${badJobs.join(', ')} are not mappings, so their steps '
+          'cannot be read';
+    } else if (jobsNode == null) {
       unusable = 'no `jobs:` key — this is not a workflow';
     } else if (jobsNode is! YamlMap) {
       unusable =
@@ -396,6 +448,7 @@ class Workflow {
       permissionsScalar: _permissionsScalar(doc),
       hasConcurrency: _lookup(doc, 'concurrency') != null,
       dispatchInputs: _dispatchInputs(doc),
+      env: _stringMap(doc, 'env'),
     );
   }
 }

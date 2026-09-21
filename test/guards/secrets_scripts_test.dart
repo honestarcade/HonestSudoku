@@ -37,6 +37,112 @@ void _writeExecutable(String path, String body) {
   Process.runSync('chmod', ['+x', path]);
 }
 
+/// Values that must never appear anywhere a script can write.
+///
+/// A test registers what it planted; `_run` then checks **every** channel on
+/// **every** invocation. #155's test searched stdout and stderr for three
+/// literals on three chosen code paths, and #176 listed nine shapes it
+/// missed — appended leaks on unasserted paths, a secret written to a file, a
+/// private key copied to a file, argv (two channels), a partial value, and
+/// base64/hex/reversed transforms. #176 was closed without closing any of
+/// them (#190).
+///
+/// Registered rather than hard-coded, because the values differ per test and
+/// a fixed list is how the three-literals version stayed stuck.
+final Set<String> _sentinels = {};
+
+void _plant(Iterable<String> values) {
+  for (final v in values) {
+    if (v.trim().length >= 6) _sentinels.add(v);
+  }
+}
+
+/// Every form of [secret] a script could emit instead of the literal.
+///
+/// A leak does not have to be faithful to be a leak: eight characters of a
+/// password narrows a search enormously, and `| base64` defeats a literal
+/// scan completely while remaining trivially reversible.
+Iterable<String> _leakForms(String secret) sync* {
+  yield secret;
+  yield base64.encode(utf8.encode(secret));
+  yield secret.split('').reversed.join();
+  yield utf8
+      .encode(secret)
+      .map((b) => b.toRadixString(16).padLeft(2, '0'))
+      .join();
+  if (secret.length >= 8) yield secret.substring(0, 8);
+}
+
+/// Everything a script wrote that a human or another process could read.
+///
+/// Files under the fake `$HOME` are included because a script that writes a
+/// secret to disk has leaked it just as surely as one that prints it, and
+/// that row of #176's table survived the fix. Recorded argv is included
+/// because `set_ci_secrets.sh:130` asserts `-storepass:env` "keeps the
+/// password off the command line and out of the process table" — a property
+/// nothing tested, while changing it to `-storepass "$PASS"` stayed green.
+List<({String where, String text})> _channels(String out, String err) {
+  final channels = <({String where, String text})>[
+    (where: 'stdout', text: out),
+    (where: 'stderr', text: err),
+  ];
+  for (final log in const ['gh.log', 'keytool.log', 'gcloud.log']) {
+    final f = File('${_tmp.path}/$log');
+    if (f.existsSync()) {
+      channels.add((where: '$log (recorded argv)', text: f.readAsStringSync()));
+    }
+  }
+  final home = Directory(_home);
+  if (home.existsSync()) {
+    for (final entity in home.listSync(recursive: true)) {
+      if (entity is! File) continue;
+      // The credentials file is written by make_upload_key.sh on purpose and
+      // is the one place a secret is meant to land; every other file under
+      // $HOME is a leak.
+      if (entity.path == _credentials) continue;
+      String text;
+      try {
+        text = entity.readAsStringSync();
+      } catch (_) {
+        // A binary file the scripts produced — a PKCS12 keystore throws
+        // FileSystemException, not FormatException, when decoded as UTF-8.
+        // Scanning its bytes for a sentinel would be a different check; a
+        // keystore is supposed to contain the key.
+        continue;
+      }
+      channels.add((
+        where: 'file ${entity.path.replaceFirst(_home, r'$HOME')}',
+        text: text,
+      ));
+    }
+  }
+  return channels;
+}
+
+/// Fails if any planted value, in any of its forms, reached any channel.
+void _assertNoLeak(String out, String err, String why) {
+  for (final secret in _sentinels) {
+    for (final form in _leakForms(secret)) {
+      for (final channel in _channels(out, err)) {
+        expect(
+          channel.text,
+          isNot(contains(form)),
+          reason:
+              'leak: $why — a planted secret reached ${channel.where}'
+              '${form == secret ? '' : ' (as ${_describeForm(secret, form)})'}',
+        );
+      }
+    }
+  }
+}
+
+String _describeForm(String secret, String form) {
+  if (form == base64.encode(utf8.encode(secret))) return 'base64';
+  if (form == secret.split('').reversed.join()) return 'reversed';
+  if (form.length == 8) return 'its first 8 characters';
+  return 'hex';
+}
+
 ({int code, String out, String err}) _run(
   String script, {
   Map<String, String> env = const {},
@@ -56,8 +162,17 @@ void _writeExecutable(String path, String body) {
     stdoutEncoding: utf8,
     stderrEncoding: utf8,
   );
-  return (code: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString());
+  final out = r.stdout.toString();
+  final err = r.stderr.toString();
+  // Every run, not three chosen ones. A test cannot forget to check, which
+  // is how nine of #176's eleven rows survived its own fix (#190).
+  _assertNoLeak(out, err, script);
+  return (code: r.exitCode, out: out, err: err);
 }
+
+/// Sentinels are per-test; a value planted by one group must not make another
+/// group's unrelated output look like a leak.
+void _clearSentinels() => _sentinels.clear();
 
 void _writeCredentials(String text) {
   File(_credentials)
@@ -173,9 +288,16 @@ echo "SET bytes=\$n argv=\$*" >> "\$GH_LOG"
       // dropping -R survived (#160).
       final keystore = '${_tmp.path}/fake.keystore';
       File(keystore).writeAsStringSync('not a real keystore');
+      // Records argv. The stub logged nothing, so the argv channel could
+      // not be searched even though #176's Fix line named it — and
+      // set_ci_secrets.sh:130 asserts `-storepass:env` keeps the password
+      // "off the command line and out of the process table" (#190).
       _writeExecutable(
         '${_tmp.path}/bin/keytool',
-        '#!/bin/sh\necho "Key and Certificate Management"\nexit 0\n',
+        '#!/bin/sh\n'
+            'printf "%s\\n" "\$*" >> "${_tmp.path}/keytool.log"\n'
+            'echo "Key and Certificate Management"\n'
+            'exit 0\n',
       );
       _writeCredentials(
         'export HS_KEYSTORE_PATH="$keystore"\n'
@@ -353,19 +475,17 @@ echo "SET bytes=\$n argv=\$*" >> "\$GH_LOG"
     const alias = 'S3CRET-ALIAS-qrstuvwx';
     const keyBody = 'S3CRET-PRIVATE-KEY-yz0123456789';
 
+    // Registered, not searched here: `_run` scans every channel on every
+    // invocation, so a path this group never thought to list is covered
+    // anyway. That is the difference between #155's three chosen cases and
+    // what #176 asked for (#190).
+    setUp(() => _plant(const [password, alias, keyBody]));
+    tearDown(_clearSentinels);
+
     void expectNoLeak(({int code, String out, String err}) r, String why) {
-      for (final secret in const [password, alias, keyBody]) {
-        expect(
-          r.out,
-          isNot(contains(secret)),
-          reason: 'leak: $why printed a secret value on stdout',
-        );
-        expect(
-          r.err,
-          isNot(contains(secret)),
-          reason: 'leak: $why printed a secret value on stderr',
-        );
-      }
+      // `_run` already asserted. Kept as a named call so the tests below
+      // still read as leak tests rather than as exit-code tests.
+      _assertNoLeak(r.out, r.err, why);
     }
 
     test('set_ci_secrets.sh prints names, never values', () {
@@ -520,6 +640,11 @@ exit 0
       // single quote and a space — every character that has bitten this file.
       final password =
           'p4ss\$(touch $marker)w`touch ${marker}2`d "q" \\b \'s\' end';
+      // make_upload_key.sh was outside the leak group entirely — the last row
+      // of #176's table — and it is the only script that holds the plaintext
+      // password as an environment variable (#190).
+      _plant([password]);
+      addTearDown(_clearSentinels);
 
       final made = Process.runSync(
         '/bin/bash',
@@ -541,6 +666,15 @@ exit 0
         stderrEncoding: utf8,
       );
       expect(made.exitCode, 0, reason: 'make: ${made.stderr}');
+      // This script is invoked directly rather than through `_run`, so the
+      // scan has to be asked for. It was outside the leak group entirely —
+      // the last row of #176's table — and it is the only script holding the
+      // plaintext password as an environment variable (#190).
+      _assertNoLeak(
+        made.stdout.toString(),
+        made.stderr.toString(),
+        'make_upload_key.sh',
+      );
 
       // 1. Nothing ran while the file was being written.
       expect(
@@ -1197,6 +1331,79 @@ exit 0
       expect(r.code, 0, reason: 'leak: ${r.err}');
       expect(r.out, isNot(contains(secret)));
       expect(r.err, isNot(contains(secret)));
+    });
+  });
+
+  group('no script puts a secret on a command line', () {
+    // `set_ci_secrets.sh:130` states this as fact — "`-storepass:env` keeps
+    // the password off the command line and out of the process table" — and
+    // nothing tested it. Changing it to `-storepass "$KEYSTORE_PASS"` left
+    // the whole suite green (#176, #190).
+    //
+    // A source rule rather than a stub check, because the pre-flight resolves
+    // the REAL keytool by its pinned path, so a stub never sees that argv.
+    // The property is about what the script writes, and that is readable.
+    final scripts = Directory('${repoRoot.path}/tools')
+        .listSync()
+        .whereType<File>()
+        .where((f) => f.path.endsWith('.sh'))
+        .toList();
+
+    test('the tools directory was found', () {
+      expect(
+        scripts,
+        isNotEmpty,
+        reason:
+            'sanity: no scripts scanned, so the rule below asserts '
+            'nothing',
+      );
+    });
+
+    test('keytool passwords are passed by env, never as an argument', () {
+      final offenders = <String>[];
+      for (final f in scripts) {
+        final joined = f
+            .readAsStringSync()
+            .replaceAll(RegExp(r'\\\n\s*'), ' ')
+            .split('\n');
+        for (var i = 0; i < joined.length; i++) {
+          final line = joined[i];
+          if (line.trimLeft().startsWith('#')) continue;
+          // `-storepass:env NAME` and `-keypass:env NAME` are the safe forms.
+          // Anything else after -storepass/-keypass is a value on argv.
+          for (final m in RegExp(
+            r'-(storepass|keypass)(:env)?\s+(\S+)',
+          ).allMatches(line)) {
+            if (m.group(2) == ':env') continue;
+            offenders.add(
+              '${f.path.split('/').last}: `${m.group(0)}` puts a password on '
+              'the command line, where any process can read it from the '
+              'process table. Use -${m.group(1)}:env NAME',
+            );
+          }
+        }
+      }
+      expect(offenders, isEmpty, reason: offenders.join('\n'));
+    });
+
+    test('no secret file is expanded into an argument', () {
+      // `gh secret set --body "$(cat "$KEY_PATH")"` puts the whole
+      // service-account private key on the command line. The scripts pipe on
+      // stdin instead; this is what keeps it that way (#176).
+      final offenders = <String>[];
+      for (final f in scripts) {
+        final text = f.readAsStringSync().replaceAll(RegExp(r'\\\n\s*'), ' ');
+        for (final line in text.split('\n')) {
+          if (line.trimLeft().startsWith('#')) continue;
+          if (RegExp(r'--body\s+"?\$\(\s*cat\b').hasMatch(line)) {
+            offenders.add(
+              '${f.path.split('/').last}: `--body "\$(cat …)"` expands a '
+              'secret file into argv. Pipe it on stdin',
+            );
+          }
+        }
+      }
+      expect(offenders, isEmpty, reason: offenders.join('\n'));
     });
   });
 }

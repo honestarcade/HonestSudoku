@@ -1198,4 +1198,30 @@ dev_dependencies:
       reason: 'dart-io-boundary: `_Socket` must still be caught',
     );
   });
+
+  test('yaml is a dev dependency and does not ship', () {
+    // repo_files.dart's header says `package:yaml` "is not in the shipped
+    // bundle, and a test asserts that". No test did: moving it to
+    // `dependencies:` left all 388 green. The whole justification for
+    // adopting it under invariant 3 was that it does not ship, so the
+    // sentence is worth making true rather than deleting (#185).
+    final pubspec = normaliseText(readFile('pubspec.yaml'));
+    final dev = sectionNames(pubspec, 'dev_dependencies');
+    final runtime = sectionNames(pubspec, 'dependencies');
+    expect(
+      dev,
+      contains('yaml'),
+      reason:
+          'yaml-placement: `yaml` is not under dev_dependencies. It is a '
+          'guard-only parser and invariant 1 is why it was adopted',
+    );
+    expect(
+      runtime,
+      isNot(contains('yaml')),
+      reason:
+          'yaml-placement: `yaml` is a runtime dependency, so it ships in '
+          'the bundle — which is exactly what its `# why:` line says it '
+          'does not do',
+    );
+  });
 }

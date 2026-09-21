@@ -93,6 +93,31 @@ void _expectRunsExactly(WorkflowStep? step, String command, String why) {
   );
 }
 
+/// Every Play upload in a workflow, as `job.step`.
+///
+/// The "exactly one upload in the whole file" rule lived only in
+/// _assertReleaseShape, so the class #169 closed was open one file over:
+/// release.yml's gate job is `uses: ./.github/workflows/ci.yml` with
+/// `secrets: inherit`, which puts PLAY_SERVICE_ACCOUNT_JSON in scope inside
+/// ci.yml on a tag push — and an upload step added there was green (#182).
+List<String> _playUploads(Workflow wf) => [
+  for (final job in wf.jobs)
+    for (final step in job.steps)
+      if (_isPlayUpload(step)) '${job.name}.${step.id ?? step.index}',
+];
+
+/// No workflow but release.yml may talk to Play at all.
+void _expectNoPlayUpload(Workflow wf) {
+  expect(
+    _playUploads(wf),
+    isEmpty,
+    reason:
+        'upload-scope: ${wf.path} contains a Play upload step. Only '
+        'release.yml may upload, and only from `ship`. This file runs with '
+        'the same secrets — ci.yml through `secrets: inherit` on a tag push',
+  );
+}
+
 /// Everything #18's criteria depend on in ci.yml. A function, not an
 /// inline test, so the negative battery below can run it against a
 /// mutated file — the release side had that and this did not (#170).
@@ -120,7 +145,49 @@ void _assertCiShape(Workflow ci) {
     'tools/mutation_check.py',
     'ci-shape: the mutation battery must actually run',
   );
+  _expectNoPlayUpload(ci);
+
+  // The step SET, not just three ids and two indexes. An added
+  // `run: curl -sSL … | bash` in the gate job was invisible, and so was a
+  // full Play upload (#182).
+  expect(
+    ci.job('gate')!.steps.map((s) => s.id).toList(),
+    [
+      'checkout',
+      'shellcheck',
+      'java',
+      'flutter',
+      'deps',
+      'guards',
+      'gate',
+      'artifact',
+    ],
+    reason:
+        'ci-shape: exactly these steps in this order — an added step in the '
+        'gate job runs with whatever secrets the caller inherited',
+  );
+  expect(ci.job('mutations')!.steps.map((s) => s.id).toList(), [
+    'checkout',
+    'java',
+    'flutter',
+    'deps',
+    'mutations',
+  ], reason: 'ci-shape: exactly these steps in the mutations job');
   for (final job in ci.jobs) {
+    // `if: false` on the gate JOB disabled the entire merge gate with the
+    // suite green — and `gate` is the repository's one required status
+    // check, which a skipped job does not block. Every criterion below is
+    // about the steps of a job nothing required to run. _assertReleaseShape
+    // already asserted this for `ship`, so the right form was in the same
+    // file and the weaker one was used (#189).
+    expect(
+      job.ifExpression,
+      isNull,
+      reason:
+          'ci-shape: job `${job.name}` carries `if: ${job.ifExpression}`. A '
+          'skipped job reports as skipped, and a skipped required check does '
+          'not block a merge',
+    );
     expect(
       job.continueOnError,
       isFalse,
@@ -187,6 +254,34 @@ void _assertCiShape(Workflow ci) {
   expect(artifact.with_['retention-days'], '7');
   expect(artifact.with_['if-no-files-found'], 'error');
 }
+
+/// Lines that end a command's exit status rather than letting it fail.
+///
+/// `|| true` appended to a step's last command makes the step green whatever
+/// the command did. #167 converted six assertions to equality, which catches
+/// this for single-command steps; a multi-line body needs a different check,
+/// and `keystore_check` and `build` had none at all (#189).
+///
+/// A trailing `|| true` on a cleanup line inside a longer script is often
+/// deliberate, so this looks only at lines running a project tool or keytool
+/// — the commands whose failure is the point of the step.
+List<String> _swallowsFailure(String body) => body
+    // Join backslash continuations FIRST. Without this the scan has the
+    // defect it is checking for: `keytool ... \` on one line and
+    // `-alias ... || true` on the next are different lines, so a
+    // line-by-line regex sees neither the command nor the swallow together.
+    // That is #183's bug, and I wrote it again here on the first attempt
+    // (#189).
+    .replaceAll(RegExp(r'\\\n\s*'), ' ')
+    .split('\n')
+    .map((l) => l.trim())
+    .where(
+      (l) =>
+          RegExp(r'(^|\s)(tools/\S+|keytool|flutter|base64|sha256sum)\b')
+              .hasMatch(l) &&
+          RegExp(r'(\|\|\s*true|\|\|\s*:)\s*$').hasMatch(l),
+    )
+    .toList();
 
 /// A step that hands the service-account key to a Play upload action.
 /// Matched on the action's repository path rather than a substring of the
@@ -344,6 +439,56 @@ void _assertReleaseShape(Workflow wf) {
   }
   expect(ship.indexOfId('summary'), greaterThan(playIndex));
 
+  // The step SET. Only `summary`'s index was bounded, so a step inserted
+  // between `play` and `summary` that curls the bundle out was green — a
+  // defect written out verbatim in #169's own body and closed without being
+  // fixed (#182).
+  expect(
+    ship.steps.map((s) => s.id).toList(),
+    [
+      'checkout',
+      'secrets_present',
+      'version',
+      'java',
+      'flutter',
+      'deps',
+      'keystore',
+      'keystore_check',
+      'build',
+      'scan',
+      'cert',
+      'sidecar',
+      'artifact',
+      'asset',
+      'play',
+      'summary',
+      'name_failure',
+      'shred',
+    ],
+    reason:
+        'release-shape: exactly these steps in this order. Anything else in '
+        '`ship` runs with all five secrets and the built bundle on disk',
+  );
+
+  // Modelled by #169's Fix line and read by nothing until now (#182).
+  for (final job in wf.jobs) {
+    if (job.uses != null) continue;
+    expect(
+      job.runsOn,
+      'ubuntu-latest',
+      reason:
+          'release-shape: job `${job.name}` runs on `${job.runsOn}`. A '
+          'self-hosted runner would see every secret this workflow holds',
+    );
+    expect(
+      job.environment,
+      isNull,
+      reason:
+          'release-shape: job `${job.name}` declares environment '
+          '`${job.environment}`, which carries its own secrets and reviewers',
+    );
+  }
+
   // The steps that enforce invariant 1 and the signing identity must
   // actually run their scripts.
   _expectRunsExactly(
@@ -356,11 +501,32 @@ void _assertReleaseShape(Workflow wf) {
     'tools/verify_upload_cert.sh',
     'release-shape: `cert` must run the certificate check',
   );
+  // `contains`, and `|| true` keeps the substring — so #167's literal title
+  // ("every `run:` assertion is a substring") was still true of this one
+  // line after #167 closed. The executing tests stub keytool with exit 0, so
+  // they never exercise it failing either (#189).
+  final keystoreCheck = ship.stepById('keystore_check')!.run!;
   expect(
-    ship.stepById('keystore_check')!.run,
+    keystoreCheck,
     contains(r'-alias "$HS_KEY_ALIAS"'),
     reason: 'release-shape: without -alias the check passes a wrong alias',
   );
+  for (final step in const ['keystore_check', 'build', 'sidecar', 'asset']) {
+    final body = ship.stepById(step)?.run;
+    expect(
+      body,
+      isNotNull,
+      reason: 'release-shape: `$step` has no `run:` body',
+    );
+    expect(
+      _swallowsFailure(body!),
+      isEmpty,
+      reason:
+          'release-shape: `$step` discards the exit status of '
+          '${_swallowsFailure(body)} — the step then reports success '
+          'whatever happened inside it',
+    );
+  }
   expect(
     ship.stepById('shred'),
     isNotNull,
@@ -1006,17 +1172,50 @@ void main() {
       });
     });
 
-    test('nesting too deep to load is an offender, not a crash', () {
-      // StackOverflowError is an Error, not an Exception, so `on
-      // YamlException` did not catch it and it escaped parse() as a crash
-      // (#177).
-      // 6000 is the measured threshold on this SDK — 3000 raises a
-      // YamlException, 6000 overflows. Deeper works too, but 60000 put
-      // enough stack pressure on the runner to fail an unrelated test file
-      // running concurrently, which is a worse guard than none.
-      final deep = 'a:\n    ${'[' * 6000}';
-      final wf = Workflow.parse('x.yml', deep);
-      expect(wf.problem, isNotNull);
+    test('an Error escaping the loader is an offender, not a crash', () {
+      // The handler exists because StackOverflowError is an Error, not an
+      // Exception, so `on YamlException` misses it and it escapes parse().
+      //
+      // The test that guarded it asserted nothing. It nested 6000 deep, and
+      // I had measured that depth with `dart run` — `flutter test` has a
+      // different stack size, so under the real runner 6000 raises a
+      // YamlException and the test passed through the wrong branch.
+      // Deleting the handler left the suite green (#191).
+      //
+      // Raising the depth is not the fix: it was lowered from 60000 because
+      // that much stack pressure failed an unrelated file running
+      // concurrently. So the handler is exercised directly instead, by
+      // throwing the Error from inside the load.
+      expect(
+        () => Workflow.parseWithLoader(
+          'x.yml',
+          'a: b\n',
+          (_) => throw StackOverflowError(),
+        ),
+        returnsNormally,
+        reason:
+            'parse-error: a StackOverflowError from the loader escaped as a '
+            'crash. It is an Error, not an Exception, so `on YamlException` '
+            'does not catch it',
+      );
+      final wf = Workflow.parseWithLoader(
+        'x.yml',
+        'a: b\n',
+        (_) => throw StackOverflowError(),
+      );
+      expect(
+        wf.problem,
+        contains('too deep'),
+        reason: 'parse-error: the offender must name what went wrong',
+      );
+
+      // And the real thing still behaves, at whatever depth this runner
+      // overflows or refuses — either outcome is an offender, which is the
+      // property that matters.
+      expect(
+        Workflow.parse('x.yml', 'a:\n    ${'[' * 6000}').problem,
+        isNotNull,
+      );
     });
 
     test('a workflow that cannot be parsed is refused, not skipped', () {
@@ -1309,6 +1508,121 @@ void main() {
             'secretsInRunOffenders or shellTraceOffenders, which read '
             '`jobs:` and not `runs.steps`. Extend them before adding $found',
       );
+    });
+
+    test('only release.yml may upload to Play', () {
+      // The rule applied to every workflow, not only the one it was written
+      // for. ci.yml is `workflow_call`ed by release.yml with
+      // `secrets: inherit`, so an upload step added there runs with
+      // PLAY_SERVICE_ACCOUNT_JSON on a tag push (#182).
+      for (final path in _workflowFiles()) {
+        final wf = Workflow.parse(path, readFile(path));
+        expect(wf.problem, isNull, reason: '$path: ${wf.problem}');
+        if (path.endsWith('release.yml')) {
+          expect(_playUploads(wf), [
+            'ship.play',
+          ], reason: 'upload-scope: release.yml must upload once, from ship');
+        } else {
+          _expectNoPlayUpload(wf);
+        }
+      }
+    });
+
+    test('an offender names the line the offence is on', () {
+      // The contract is `path:line: message`, and every trace offender
+      // reported the line of the `run:` KEY — one short for a block scalar,
+      // which is all of them. Nothing asserted a line number, so it could
+      // not be caught either (#180, #188).
+      const doc =
+          'name: X\n' // 1
+          'on: push\n' // 2
+          'permissions:\n' // 3
+          '  contents: read\n' // 4
+          'concurrency: x\n' // 5
+          'jobs:\n' // 6
+          '  a:\n' // 7
+          '    steps:\n' // 8
+          '      - run: |\n' // 9
+          '          echo one\n' // 10
+          '          echo two\n' // 11
+          '          set -x\n' // 12
+          '          echo three\n'; // 13
+      final offenders = shellTraceOffenders('x.yml', doc);
+      expect(offenders, hasLength(1));
+      expect(
+        offenders.single.line,
+        12,
+        reason:
+            'offender-line: `set -x` is on line 12 and the offender says '
+            '${offenders.single.line}',
+      );
+
+      // And a secret in a run: body, same contract.
+      const secretDoc =
+          'name: X\n'
+          'on: push\n'
+          'permissions:\n'
+          '  contents: read\n'
+          'concurrency: x\n'
+          'jobs:\n'
+          '  a:\n'
+          '    steps:\n'
+          '      - run: |\n'
+          '          echo one\n'
+          r'          echo "${{ secrets.HS_KEY_PASS }}"'
+          '\n';
+      final secretOffenders = secretsInRunOffenders('x.yml', secretDoc);
+      expect(secretOffenders, hasLength(1));
+      expect(
+        secretOffenders.single.line,
+        11,
+        reason:
+            'offender-line: the secret is on line 11 and the offender says '
+            '${secretOffenders.single.line}',
+      );
+    });
+
+    test('a job that is not a mapping is refused, not skipped', () {
+      // `if (jobMap is! YamlMap) continue;` dropped it silently with
+      // problem == null, so all three rules returned zero offenders for a
+      // file holding one — #177's class in one more spelling (#188).
+      const doc =
+          'name: X\non: push\npermissions:\n  contents: read\n'
+          'concurrency: x\n'
+          'jobs:\n'
+          '  a: nope\n'
+          '  b:\n    steps:\n      - run: echo hi\n';
+      final wf = Workflow.parse('x.yml', doc);
+      expect(wf.problem, isNotNull, reason: 'a scalar job scanned as clean');
+      expect(wf.problem, contains('not mappings'));
+      for (final rule in <List<WorkflowOffender> Function(String, String)>[
+        unpinnedUses,
+        permissionOffenders,
+        concurrencyOffenders,
+      ]) {
+        expect(rule('x.yml', doc), isNotEmpty);
+      }
+    });
+
+    test('write-all is refused whatever its case', () {
+      // Compared case-sensitively where the rest of this file is
+      // deliberately case-insensitive (#188).
+      for (final spelling in const [
+        'write-all',
+        'WRITE-ALL',
+        'Write-All',
+        "'write-all'",
+      ]) {
+        final doc =
+            'name: X\non: push\nconcurrency: x\n'
+            'permissions: $spelling\n'
+            "jobs:\n  a:\n    steps:\n      - run: 'true'\n";
+        expect(
+          permissionOffenders('x.yml', doc),
+          isNotEmpty,
+          reason: 'write-all-case: `$spelling` was accepted',
+        );
+      }
     });
 
     test('dependabot watches both ecosystems', () {
