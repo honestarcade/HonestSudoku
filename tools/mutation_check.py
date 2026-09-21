@@ -58,6 +58,7 @@ class Mutation:
     expect: str = ""
     also: tuple = ()
     slow: bool = False
+    creates: tuple = ()
     """A substring of the reason the RIGHT assertion prints when it fires.
 
     Without this the battery measures "the suite went red", which is not the
@@ -65,6 +66,13 @@ class Mutation:
     two mutations as caught when what had actually failed was an unrelated
     test that happens to read the same file. That is the mistake the battery
     exists to find, made by the battery.
+
+    `creates` names paths the mutated code WRITES while the suite runs, so
+    they can be removed afterwards. Restoring the mutated file is not enough:
+    the workspace mutation makes a script drop a password into the repository
+    root, that file outlived the run, and it was then swept into a commit by
+    `git add -A` -- twice. Being tracked, it went into the leak scan's skip
+    set and blinded the very guard the mutation exists to exercise (#213).
 
     `also` carries further `(path, apply)` edits. Some defects are not
     expressible in one file: #203 is "a second parse path is added AND the
@@ -215,7 +223,8 @@ MUTATIONS: list[Mutation] = [
              sub(r'(KEY_PASS="\$\(read_credential HS_KEY_PASS\)"\n)',
                  r'\1printf "%s" "$KEYSTORE_PASS" > "$PWD/hs-workspace-leak.txt"\n', 1),
              "on CI the workspace is $GITHUB_WORKSPACE, which upload-artifact sweeps",
-             'GITHUB_WORKSPACE'),
+             'GITHUB_WORKSPACE',
+             creates=("hs-workspace-leak.txt",)),
     Mutation("#208", "the key is copied beside the one path forget removes",
              ".github/workflows/play-api-check.yml",
              sub(r'(\n(\s*)gcloud auth activate-service-account)',
@@ -882,6 +891,8 @@ def main() -> int:
         finally:
             for target, text in zip(targets, originals):
                 target.write_text(text)
+            for made in m.creates:
+                (ROOT / made).unlink(missing_ok=True)
             IN_FLIGHT.unlink(missing_ok=True)
 
     print()
