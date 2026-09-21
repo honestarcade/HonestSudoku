@@ -93,6 +93,31 @@ void _expectRunsExactly(WorkflowStep? step, String command, String why) {
   );
 }
 
+/// Every Play upload in a workflow, as `job.step`.
+///
+/// The "exactly one upload in the whole file" rule lived only in
+/// _assertReleaseShape, so the class #169 closed was open one file over:
+/// release.yml's gate job is `uses: ./.github/workflows/ci.yml` with
+/// `secrets: inherit`, which puts PLAY_SERVICE_ACCOUNT_JSON in scope inside
+/// ci.yml on a tag push — and an upload step added there was green (#182).
+List<String> _playUploads(Workflow wf) => [
+  for (final job in wf.jobs)
+    for (final step in job.steps)
+      if (_isPlayUpload(step)) '${job.name}.${step.id ?? step.index}',
+];
+
+/// No workflow but release.yml may talk to Play at all.
+void _expectNoPlayUpload(Workflow wf) {
+  expect(
+    _playUploads(wf),
+    isEmpty,
+    reason:
+        'upload-scope: ${wf.path} contains a Play upload step. Only '
+        'release.yml may upload, and only from `ship`. This file runs with '
+        'the same secrets — ci.yml through `secrets: inherit` on a tag push',
+  );
+}
+
 /// Everything #18's criteria depend on in ci.yml. A function, not an
 /// inline test, so the negative battery below can run it against a
 /// mutated file — the release side had that and this did not (#170).
@@ -120,6 +145,34 @@ void _assertCiShape(Workflow ci) {
     'tools/mutation_check.py',
     'ci-shape: the mutation battery must actually run',
   );
+  _expectNoPlayUpload(ci);
+
+  // The step SET, not just three ids and two indexes. An added
+  // `run: curl -sSL … | bash` in the gate job was invisible, and so was a
+  // full Play upload (#182).
+  expect(
+    ci.job('gate')!.steps.map((s) => s.id).toList(),
+    [
+      'checkout',
+      'shellcheck',
+      'java',
+      'flutter',
+      'deps',
+      'guards',
+      'gate',
+      'artifact',
+    ],
+    reason:
+        'ci-shape: exactly these steps in this order — an added step in the '
+        'gate job runs with whatever secrets the caller inherited',
+  );
+  expect(ci.job('mutations')!.steps.map((s) => s.id).toList(), [
+    'checkout',
+    'java',
+    'flutter',
+    'deps',
+    'mutations',
+  ], reason: 'ci-shape: exactly these steps in the mutations job');
   for (final job in ci.jobs) {
     // `if: false` on the gate JOB disabled the entire merge gate with the
     // suite green — and `gate` is the repository's one required status
@@ -385,6 +438,56 @@ void _assertReleaseShape(Workflow wf) {
     );
   }
   expect(ship.indexOfId('summary'), greaterThan(playIndex));
+
+  // The step SET. Only `summary`'s index was bounded, so a step inserted
+  // between `play` and `summary` that curls the bundle out was green — a
+  // defect written out verbatim in #169's own body and closed without being
+  // fixed (#182).
+  expect(
+    ship.steps.map((s) => s.id).toList(),
+    [
+      'checkout',
+      'secrets_present',
+      'version',
+      'java',
+      'flutter',
+      'deps',
+      'keystore',
+      'keystore_check',
+      'build',
+      'scan',
+      'cert',
+      'sidecar',
+      'artifact',
+      'asset',
+      'play',
+      'summary',
+      'name_failure',
+      'shred',
+    ],
+    reason:
+        'release-shape: exactly these steps in this order. Anything else in '
+        '`ship` runs with all five secrets and the built bundle on disk',
+  );
+
+  // Modelled by #169's Fix line and read by nothing until now (#182).
+  for (final job in wf.jobs) {
+    if (job.uses != null) continue;
+    expect(
+      job.runsOn,
+      'ubuntu-latest',
+      reason:
+          'release-shape: job `${job.name}` runs on `${job.runsOn}`. A '
+          'self-hosted runner would see every secret this workflow holds',
+    );
+    expect(
+      job.environment,
+      isNull,
+      reason:
+          'release-shape: job `${job.name}` declares environment '
+          '`${job.environment}`, which carries its own secrets and reviewers',
+    );
+  }
 
   // The steps that enforce invariant 1 and the signing identity must
   // actually run their scripts.
@@ -1372,6 +1475,24 @@ void main() {
             'secretsInRunOffenders or shellTraceOffenders, which read '
             '`jobs:` and not `runs.steps`. Extend them before adding $found',
       );
+    });
+
+    test('only release.yml may upload to Play', () {
+      // The rule applied to every workflow, not only the one it was written
+      // for. ci.yml is `workflow_call`ed by release.yml with
+      // `secrets: inherit`, so an upload step added there runs with
+      // PLAY_SERVICE_ACCOUNT_JSON on a tag push (#182).
+      for (final path in _workflowFiles()) {
+        final wf = Workflow.parse(path, readFile(path));
+        expect(wf.problem, isNull, reason: '$path: ${wf.problem}');
+        if (path.endsWith('release.yml')) {
+          expect(_playUploads(wf), [
+            'ship.play',
+          ], reason: 'upload-scope: release.yml must upload once, from ship');
+        } else {
+          _expectNoPlayUpload(wf);
+        }
+      }
     });
 
     test('dependabot watches both ecosystems', () {

