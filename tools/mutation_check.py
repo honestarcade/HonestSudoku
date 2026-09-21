@@ -169,10 +169,21 @@ MUTATIONS: list[Mutation] = [
              'is a legitimate promotion and was refused'),
 
     # ---- play-api-check's keystore step (#173) ----------------------------
-    Mutation("#173", "the alias assertion is disabled", ".github/workflows/play-api-check.yml",
-             sub(r'if \[ "\$alias_got" != "\$alias_want" \]; then', "if false; then"),
-             "a keystore whose alias is wrong passes the check meant to catch it",
-             'an alias that is not the configured one is refused'),
+    # Was "the alias assertion is disabled", replacing `if [ "$alias_got" !=
+    # "$alias_want" ]` with `if false`. #180 deleted that block as dead code:
+    # with `-alias`, keytool echoes back the REQUESTED spelling, so the
+    # comparison could never fire. The battery reported BROKEN rather than
+    # passing over the missing pattern, which is the verdict it exists for.
+    #
+    # The defect the old entry stood for is still real, and this is the
+    # spelling of it that survives: without `-alias`, keytool lists the whole
+    # keystore, the step reads the FIRST entry, and a multi-entry keystore
+    # whose first alias is not the configured one passes here and fails in
+    # release.yml (#165).
+    Mutation("#173", "keytool -list loses its -alias", ".github/workflows/play-api-check.yml",
+             sub(r' -alias "\$HS_KEY_ALIAS" > "\$listing"', ' > "$listing"'),
+             "the alias check asks about the whole keystore, not the configured entry",
+             'keytool -list is asked for the configured alias'),
     Mutation("#173", "the fingerprint comparison is dropped",
              ".github/workflows/play-api-check.yml",
              sub(r'if \[ "\$bundle_fp" != "\$pem_fp" \]; then', "if false; then"),
