@@ -235,6 +235,14 @@ MUTATIONS: list[Mutation] = [
              sub(r"tools/play_promote\.sh", "tools/play_promote.sh.disabled", 1),
              "the workflow called a missing file while the guard reported the link wired",
              'vacuity'),
+    # GREEN at round eight: only PROMOTE_OUTCOME was pinned, so a real
+    # internal->alpha promotion could publish "internal -> production".
+    Mutation("#209", "the summary step's TO_TRACK is a literal production",
+             ".github/workflows/play-promote.yml",
+             sub(r"(PROMOTE_OUTCOME:[^\n]*\n(?:[^\n]*\n)*?\s*)TO_TRACK: \$\{\{ inputs\.to_track \}\}",
+                 r"\1TO_TRACK: production", 1),
+             "a forged production claim in the run summary — #142's threat model",
+             'refusal'),
     # ---- #203: the parse path, decided by running the rules --------------
     # The mutation the TEXT assertion cannot see. Repointing five of six call
     # sites satisfies its set equality, because one surviving `Workflow.parse(`

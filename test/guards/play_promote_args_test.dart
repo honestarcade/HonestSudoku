@@ -250,17 +250,38 @@ void _assertPromoteShape(Workflow wf) {
     // that feeds it: hardcoding `PROMOTE_OUTCOME: success` made a failed run
     // report "the promote step ended as `success`" — a false claim in the
     // honesty line itself — with the suite green (#184, #209).
+    //
+    // ALL THREE keys, not just the outcome. #209 pinned `PROMOTE_OUTCOME`
+    // and left the two that name the tracks, so changing the summary step's
+    // `TO_TRACK` to a literal `production` was green — and a genuinely
+    // successful internal→alpha promotion would then publish
+    // "Promoted on Play: versionCode [101], internal -> production", a
+    // forged production claim in the run summary. That is #142's threat
+    // model, restated in the comment block directly above the env block
+    // nothing was checking (round eight).
+    //
+    // Not `if (summary != null)`: a null step would skip every assertion
+    // silently. The step set pins the id, so its absence is caught there,
+    // but a guard that evaporates when its subject does is how this file
+    // has been fooled before.
     final summary = job.stepById('summary');
-    if (summary != null) {
+    expect(summary, isNotNull, reason: 'refusal: the summary step has gone');
+    const summaryEnv = {
+      'PROMOTE_OUTCOME': '\${{ steps.promote.outcome }}',
+      'FROM_TRACK': '\${{ inputs.from_track }}',
+      'TO_TRACK': '\${{ inputs.to_track }}',
+    };
+    summaryEnv.forEach((key, expected) {
       expect(
-        summary.env['PROMOTE_OUTCOME'],
-        '\${{ steps.promote.outcome }}',
+        summary!.env[key],
+        expected,
         reason:
-            'refusal: the summary step\'s PROMOTE_OUTCOME is '
-            '`${summary.env['PROMOTE_OUTCOME']}`, not the promote step\'s '
-            'outcome. It would report an outcome that did not happen',
+            'refusal: the summary step\'s $key is `${summary.env[key]}`, not '
+            '`$expected`. The extracted-body test injects its own env, so it '
+            'is structurally blind to this wiring — the summary would report '
+            'something that did not happen',
       );
-    }
+    });
 
     // Every step that ACTS must be unconditional. Only the first step was
     // checked, so `if: always()` on `promote` was green and the "a failed
