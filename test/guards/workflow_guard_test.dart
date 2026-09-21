@@ -93,6 +93,32 @@ void _expectRunsExactly(WorkflowStep? step, String command, String why) {
   );
 }
 
+/// No job anywhere runs on someone else's machine, or in a deployment
+/// environment carrying its own secrets and reviewers.
+///
+/// Asserted in `_assertReleaseShape` only, so `runs-on: attacker-self-hosted`
+/// on ci.yml's gate job was green — and ci.yml is `workflow_call`ed with
+/// `secrets: inherit` (#197).
+void _assertRunnerAndEnvironment(Workflow wf) {
+  for (final job in wf.jobs) {
+    if (job.uses != null) continue;
+    expect(
+      job.runsOn,
+      'ubuntu-latest',
+      reason:
+          '${wf.path}: job `${job.name}` runs on `${job.runsOn}`. A '
+          'self-hosted runner would see every secret this workflow holds',
+    );
+    expect(
+      job.environment,
+      isNull,
+      reason:
+          '${wf.path}: job `${job.name}` declares environment '
+          '`${job.environment}`, which carries its own secrets and reviewers',
+    );
+  }
+}
+
 /// Every Play upload in a workflow, as `job.step`.
 ///
 /// The "exactly one upload in the whole file" rule lived only in
@@ -146,6 +172,37 @@ void _assertCiShape(Workflow ci) {
     'ci-shape: the mutation battery must actually run',
   );
   _expectNoPlayUpload(ci);
+  _assertRunnerAndEnvironment(ci);
+
+  // Same inversion as release.yml, and the same reason: `continue-on-error`
+  // on `shellcheck` was green because only three steps were checked (#197).
+  // `artifact` is the one legitimate exception: it uploads the PR bundle and
+  // must NOT run when release.yml calls this workflow on a tag. Named, so a
+  // second exception is a deliberate edit rather than a silence.
+  const ciMayBeConditional = {'artifact'};
+  for (final job in ci.jobs) {
+    for (final step in job.steps) {
+      if (ciMayBeConditional.contains(step.id)) {
+        expect(
+          step.ifExpression,
+          "github.event_name == 'pull_request'",
+          reason:
+              'ci-shape: `${step.id}` may be conditional only on being a '
+              'pull request — that is why it is exempt',
+        );
+        expect(step.continueOnError, isFalse);
+        continue;
+      }
+      expect(
+        step.isUnconditional,
+        isTrue,
+        reason:
+            'ci-shape: step `${step.id ?? step.index}` of `${job.name}` is '
+            'conditional (if: ${step.ifExpression}, continue-on-error: '
+            '${step.continueOnError}) — nothing in the gate may be skippable',
+      );
+    }
+  }
 
   // The step SET, not just three ids and two indexes. An added
   // `run: curl -sSL … | bash` in the gate job was invisible, and so was a
@@ -265,23 +322,44 @@ void _assertCiShape(Workflow ci) {
 /// A trailing `|| true` on a cleanup line inside a longer script is often
 /// deliberate, so this looks only at lines running a project tool or keytool
 /// — the commands whose failure is the point of the step.
-List<String> _swallowsFailure(String body) => body
-    // Join backslash continuations FIRST. Without this the scan has the
-    // defect it is checking for: `keytool ... \` on one line and
-    // `-alias ... || true` on the next are different lines, so a
-    // line-by-line regex sees neither the command nor the swallow together.
-    // That is #183's bug, and I wrote it again here on the first attempt
-    // (#189).
-    .replaceAll(RegExp(r'\\\n\s*'), ' ')
-    .split('\n')
-    .map((l) => l.trim())
-    .where(
-      (l) =>
-          RegExp(r'(^|\s)(tools/\S+|keytool|flutter|base64|sha256sum)\b')
-              .hasMatch(l) &&
-          RegExp(r'(\|\|\s*true|\|\|\s*:)\s*$').hasMatch(l),
-    )
-    .toList();
+List<String> _swallowsFailure(String body) {
+  // Join backslash continuations FIRST. Without this the scan has the defect
+  // it is checking for: `keytool ... \` on one line and `-alias ... || true`
+  // on the next are different lines (#183, #189).
+  final joined = body.replaceAll(RegExp(r'\\\n\s*'), ' ');
+  final offenders = <String>[];
+  for (final raw in joined.split('\n')) {
+    // Comments stripped. `|| true # tolerate a wrong alias` reinstated the
+    // defect outright, because this helper never stripped them — while the
+    // sibling rule twenty lines away has had `_stripComment` all along
+    // (#197).
+    final line = raw.split('#').first.trim();
+    if (line.isEmpty) continue;
+
+    // `set +e` disarms the whole body, so it is its own offence rather than
+    // something to look for at the end of a line (#197).
+    if (RegExp(r'(^|[;&|(]\s*)set\s+\+[a-z]*e').hasMatch(line)) {
+      offenders.add(line);
+      continue;
+    }
+
+    // `gh` was missing, and `gh release upload` is the entire point of the
+    // `asset` step — the step #138's fix exists for (#197).
+    final runsSomething = RegExp(
+      r'(^|\s)(tools/\S+|keytool|flutter|gh|base64|sha256sum|curl|unzip)\b',
+    ).hasMatch(line);
+    if (!runsSomething) continue;
+
+    // Every spelling of "and do not fail", not one. `|| true` was the only
+    // form matched, so `|| :`, `|| /bin/true`, `|| exit 0` and a trailing
+    // semicolon all walked past (#197).
+    if (RegExp(r'\|\|\s*(true|:|/bin/true|/usr/bin/true|exit\s+0)\s*;?\s*$')
+        .hasMatch(line)) {
+      offenders.add(line);
+    }
+  }
+  return offenders;
+}
 
 /// A step that hands the service-account key to a Play upload action.
 /// Matched on the action's repository path rather than a substring of the
@@ -471,6 +549,7 @@ void _assertReleaseShape(Workflow wf) {
   );
 
   // Modelled by #169's Fix line and read by nothing until now (#182).
+  _assertRunnerAndEnvironment(wf);
   for (final job in wf.jobs) {
     if (job.uses != null) continue;
     expect(
@@ -511,20 +590,38 @@ void _assertReleaseShape(Workflow wf) {
     contains(r'-alias "$HS_KEY_ALIAS"'),
     reason: 'release-shape: without -alias the check passes a wrong alias',
   );
-  for (final step in const ['keystore_check', 'build', 'sidecar', 'asset']) {
-    final body = ship.stepById(step)?.run;
+  // EVERY step with a body, not four named ones. `version`'s `|| true` made
+  // a malformed tag stop failing the build, and it was outside the scanned
+  // set (#197).
+  for (final step in ship.steps) {
+    final body = step.run;
+    if (body == null) continue;
+    final swallowed = _swallowsFailure(body);
     expect(
-      body,
-      isNotNull,
-      reason: 'release-shape: `$step` has no `run:` body',
-    );
-    expect(
-      _swallowsFailure(body!),
+      swallowed,
       isEmpty,
       reason:
-          'release-shape: `$step` discards the exit status of '
-          '${_swallowsFailure(body)} — the step then reports success '
-          'whatever happened inside it',
+          'release-shape: `${step.id ?? step.index}` discards the exit '
+          'status of $swallowed — the step then reports success whatever '
+          'happened inside it',
+    );
+  }
+
+  // The INVERSE of the old shape. Seven steps were required to be
+  // unconditional and the other nineteen could carry anything; now every
+  // step must be unconditional except a named few, so a new step is safe by
+  // default rather than unguarded by default (#197).
+  const mayBeConditional = {'summary', 'name_failure', 'shred'};
+  for (final step in ship.steps) {
+    if (mayBeConditional.contains(step.id)) continue;
+    expect(
+      step.isUnconditional,
+      isTrue,
+      reason:
+          'release-shape: step `${step.id ?? step.index}` is conditional '
+          '(if: ${step.ifExpression}, continue-on-error: '
+          '${step.continueOnError}). Only ${mayBeConditional.join(', ')} may '
+          'be, and they must be reached on the failure path on purpose',
     );
   }
   expect(
@@ -1525,6 +1622,7 @@ void main() {
         } else {
           _expectNoPlayUpload(wf);
         }
+        _assertRunnerAndEnvironment(wf);
       }
     });
 

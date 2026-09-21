@@ -162,6 +162,27 @@ MUTATIONS: list[Mutation] = [
              sub(r'(chmod 600 "\$KEYSTORE"\n)', r'\1echo "pw: $HS_KEYSTORE_PASS"\n'),
              "the only script holding the plaintext password was outside the leak group",
              'reached stdout'),
+    # ---- #197: the swallow forms, and the classes closed in one file ------
+    Mutation("#197", "|| true hidden behind a shell comment", ".github/workflows/release.yml",
+             sub(r'(-alias "\$HS_KEY_ALIAS" > /dev/null)\n', r'\1 || true # tolerate a wrong alias\n'),
+             "the helper never stripped comments, so one character reinstated #189",
+             'discards the exit status'),
+    Mutation("#197", "set +e disarms the body", ".github/workflows/release.yml",
+             sub(r"(          set -euo pipefail\n)(          # A PKCS12)", r"\1          set +e\n\2"),
+             "every command after it can fail without failing the step",
+             'discards the exit status'),
+    Mutation("#197", "|| true on the gh upload", ".github/workflows/release.yml",
+             sub(r"(gh release upload[^\n]*)", r"\1 || true"),
+             "gh was missing from the command list, in the step gh IS",
+             'discards the exit status'),
+    Mutation("#197", "continue-on-error on ci's shellcheck step", ".github/workflows/ci.yml",
+             sub(r"(      - id: shellcheck\n)", r"\1        continue-on-error: true\n"),
+             "only three ci steps were required to be unconditional",
+             'is conditional'),
+    Mutation("#197", "ci's gate job moves to a self-hosted runner", ".github/workflows/ci.yml",
+             sub(r"^  gate:\n    runs-on: ubuntu-latest$", "  gate:\n    runs-on: attacker-self-hosted", 1, re.M),
+             "runsOn was asserted in release.yml only, and ci.yml inherits secrets",
+             'runs on `attacker-self-hosted`'),
     # ---- #200: the rows #190 left open, and #186's own reproduction -------
     # The five #190 entries below this block all covered rows that ALREADY
     # passed before #190's fix. A battery entry for a case that was never
