@@ -421,6 +421,19 @@ Set<String> _propagationCommands(String workflow) => {
     for (final commands in steps.values) ...commands,
 };
 
+/// True for the 403 GitHub returns when a caller has run out of requests.
+///
+/// A predicate rather than an inline condition because the branch it guards
+/// is hard to reach on demand — the limit resets hourly — and an untested
+/// branch is exactly what #219 is about. Its own test feeds it a recorded
+/// response body, so the string match is falsifiable without waiting for a
+/// real 403.
+bool _isRateLimited(String status, String payload) {
+  if (status != '403') return false;
+  final body = payload.toLowerCase();
+  return body.contains('rate limit') || body.contains('secondary rate');
+}
+
 /// Runs a workflow step's `run:` body the way the runner would.
 ///
 /// Every command in [ambient] is stubbed; the one named by [failing] exits 1
@@ -1549,12 +1562,24 @@ void main() {
         reason: 'parse-error: the offender must name what went wrong',
       );
 
-      // And the real thing still behaves, at whatever depth this runner
-      // overflows or refuses — either outcome is an offender, which is the
-      // property that matters.
+      // And the real thing still behaves — on a document that genuinely
+      // OVERFLOWS, not merely one that fails to scan.
+      //
+      // This line used to be `'a:\n    ${'[' * 6000}'`, an UNCLOSED sequence.
+      // Measured at 1000, 3000, 6000, 12000 and 20000 it raises
+      // `YamlException: Expected node content` at every depth and never
+      // overflows, because an unclosed sequence fails in the scanner before
+      // recursion. It exercised the YamlException branch under a name about
+      // overflow — vacuous with respect to its own purpose (#217).
+      //
+      // Balanced brackets at 32000 do overflow; that is measured in the
+      // execution test's comment.
       expect(
-        Workflow.parse('x.yml', 'a:\n    ${'[' * 6000}').problem,
-        isNotNull,
+        Workflow.parse('x.yml', 'jobs: ${'[' * 32000}${']' * 32000}\n').problem,
+        contains('too deep'),
+        reason:
+            'parse-error: a genuine overflow must be reported as an offender, '
+            'not merely any unparseable document',
       );
     });
 
@@ -1978,6 +2003,28 @@ void main() {
       }
     });
 
+    test('a rate-limited read is told apart from a real refusal', () {
+      // The recorded shape of GitHub's answer when an anonymous caller has
+      // spent its 60 requests. Kept as a fixture so the branch that skips on
+      // it is exercised without waiting an hour for a real one (#219).
+      const rateLimited =
+          '{"message":"API rate limit exceeded for 1.2.3.4. (But here is the '
+          'good news: Authenticated requests get a higher rate limit.)",'
+          '"documentation_url":"https://docs.github.com/rest"}';
+      expect(_isRateLimited('403', rateLimited), isTrue);
+
+      // And the complement: a 403 that is NOT rate limiting must not be
+      // waved through as a skip, or a genuinely refused read reads as
+      // "nothing to see here".
+      expect(
+        _isRateLimited('403', '{"message":"Resource not accessible"}'),
+        isFalse,
+        reason: 'a permissions 403 is a failure, not a skip',
+      );
+      expect(_isRateLimited('200', rateLimited), isFalse);
+      expect(_isRateLimited('404', rateLimited), isFalse);
+    });
+
     test('the required checks are still bound, and are the check-run names', () {
       // The one part of the merge gate with no guard on it: the ruleset
       // lives in GitHub config, so #187 is real today and silently
@@ -1994,6 +2041,20 @@ void main() {
       // token at all (#202).
       const rulesetUrl =
           'https://api.github.com/repos/honestarcade/HonestSudoku/rulesets/23682733';
+      // Authenticated WHEN A TOKEN IS AVAILABLE, anonymous otherwise.
+      //
+      // The anonymous limit is 60 requests per hour per IP, and the battery
+      // runs this suite once per mutation — 88 calls from one address. That
+      // was filed as a latent risk and then happened, locally, inside this
+      // session: `ruleset: unexpected HTTP 403`. A token raises the limit to
+      // 5000/hr, and `github.token` is available to every CI job (#219).
+      //
+      // The anonymous path stays as the fallback, because it is what makes
+      // this guard work for a contributor with no token at all.
+      final token =
+          Platform.environment['GITHUB_TOKEN'] ??
+          Platform.environment['GH_TOKEN'] ??
+          '';
       late final ProcessResult probe;
       try {
         probe = Process.runSync(
@@ -2006,6 +2067,7 @@ void main() {
             '\n%{http_code}',
             '-H',
             'Accept: application/vnd.github+json',
+            if (token.isNotEmpty) ...['-H', 'Authorization: Bearer $token'],
             rulesetUrl,
           ],
           stdoutEncoding: utf8,
@@ -2026,6 +2088,17 @@ void main() {
 
       if (probe.exitCode != 0) {
         markTestSkipped('no network: ${probe.stderr}');
+        return;
+      }
+      if (_isRateLimited(status, payload)) {
+        // Rate limiting says nothing about the ruleset, so it must not be
+        // reported as though the gate were unguarded. Skipping is honest;
+        // failing here would be the same false red the ProcessException
+        // branch was written to avoid (#219).
+        markTestSkipped(
+          'GitHub rate-limited this read. Set GITHUB_TOKEN to raise the '
+          'limit from 60/hr to 5000/hr.',
+        );
         return;
       }
       if (status == '404') {
@@ -2420,7 +2493,32 @@ void main() {
         'shellTraceOffenders': shellTraceOffenders,
       };
 
-      const unreadable = <String, String>{
+      // The row that matters, and the one the eighth pass left out.
+      //
+      // Every other document here raises a `YamlException`, so a second parse
+      // path that catches YamlException and nothing else satisfies this test
+      // completely — and #177's crash is reachable through it. That bypass
+      // passed the whole gate AND all 86 mutations at 933cfad (#217).
+      //
+      // `Error` is not `Exception` in Dart, which is the entire five-issue
+      // lineage in one sentence. So one document must raise an Error, and a
+      // stack overflow in the recursive loader is the one that does.
+      //
+      // The eighth pass recorded that this was impractical, citing a
+      // measurement: 20000 levels parse fine in 2.8s. The measurement was
+      // right and the generalisation was wrong. Measured properly:
+      //
+      //   20000 -> parses (a YamlList), 4.2s
+      //   32000 -> `unparseable: nesting too deep to load`, 10.3s
+      //   64000 -> same, 39s
+      //
+      // 32000 is used because it is the first depth that reliably overflows.
+      // It costs this test a few seconds per rule, which is the price of the
+      // property the last five attempts did not buy.
+      final deepEnoughToOverflow = 'jobs: ${'[' * 32000}${']' * 32000}\n';
+
+      final unreadable = <String, String>{
+        'a nesting depth that overflows the loader': deepEnoughToOverflow,
         'unclosed flow sequence': 'jobs: [a, b',
         'a tab where YAML forbids one': 'jobs:\n\tbuild: {}',
         'duplicate mapping key': 'on: push\non: pull_request\n',
@@ -2428,6 +2526,10 @@ void main() {
         'a bare scalar': 'nonsense',
         'an alias to nothing': 'jobs: *missing\n',
       };
+      // Two of these — `not a mapping at all` and `a bare scalar` — are VALID
+      // YAML. They exercise the `doc is! YamlMap` branch, which is ordinary
+      // control flow, not error handling. Said plainly because the test's name
+      // covers them and its purpose does not (#217).
 
       for (final rule in rules.entries) {
         unreadable.forEach((what, text) {
