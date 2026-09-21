@@ -245,6 +245,23 @@ void _assertPromoteShape(Workflow wf) {
           '${refuse.continueOnError}) — it would be skipped or ignored',
     );
 
+    // The `summary` step's env, the way `refuse`'s is. The extracted-body
+    // test injects its own env, so it is structurally blind to the wiring
+    // that feeds it: hardcoding `PROMOTE_OUTCOME: success` made a failed run
+    // report "the promote step ended as `success`" — a false claim in the
+    // honesty line itself — with the suite green (#184, #209).
+    final summary = job.stepById('summary');
+    if (summary != null) {
+      expect(
+        summary.env['PROMOTE_OUTCOME'],
+        '\${{ steps.promote.outcome }}',
+        reason:
+            'refusal: the summary step\'s PROMOTE_OUTCOME is '
+            '`${summary.env['PROMOTE_OUTCOME']}`, not the promote step\'s '
+            'outcome. It would report an outcome that did not happen',
+      );
+    }
+
     // Every step that ACTS must be unconditional. Only the first step was
     // checked, so `if: always()` on `promote` was green and the "a failed
     // refusal stops the run" guarantee was gone (#171). The reporting and

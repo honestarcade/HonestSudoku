@@ -632,7 +632,7 @@ CI and the tag-to-Play pipeline, on `milestone/m1-ci`. Three stories implemented
   **Issue:** #165
 
 - **Decision:** `report-gate-failure` triggers on `needs.gate.result != 'success'` rather than `failure()`.
-  **Why:** a cancelled gate is not a failure, so the "nothing shipped" line never appeared for one — the case an operator is most likely to misread.
+  **Why:** a cancelled gate is not a failure, so the "nothing shipped" line never appeared for one *(flagged 2026-09-21, #209: UNVERIFIED — when a run is cancelled GitHub cancels its dependent jobs rather than evaluating their `if:`, so this job may not run for a cancelled gate either. The change is still right, `result != 'success'` being broader than `failure()`; the cancelled case is a claim nobody has tested. `release.yml` carries the same flag; this is its ledger twin, which #196 named and did not correct.)* — the case an operator is most likely to misread.
   **Issue:** #165
 
 - **Note (unlogged deviations, now recorded):** `play-promote.yml` and `play-api-check.yml` use `timeout-minutes: 15` where the plan said 10; `tools/play_promote.sh` collapses the plan's exit codes 3 and 4 into 5, which #133 named and neither fix restored; the promote summary lists version codes space-separated where the plan said comma-separated; `tools/setup_play_ci.sh` `chmod 700`s the secrets directory rather than refusing a loose one, and implements no `--rotate`. Each is defensible and none was in the ledger.

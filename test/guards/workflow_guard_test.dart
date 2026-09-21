@@ -576,6 +576,13 @@ void _assertReleaseShape(Workflow wf) {
     'tools/check_aab.sh',
     'release-shape: `scan` must run the permission scan',
   );
+  expect(
+    ship.stepById('sidecar')!.run,
+    contains(r'sha256sum "$aab" > "$aab.sha256"'),
+    reason:
+        'release-shape: the sidecar must compute the checksum. Emptying it '
+        r'(`: > "$aab.sha256"`) was green, and #198 listed pinning it (#209)',
+  );
   _expectRunsExactly(
     ship.stepById('cert'),
     'tools/verify_upload_cert.sh',
@@ -1791,6 +1798,105 @@ void main() {
         }
       },
     );
+
+    test('every declared key link is actually wired', () {
+      // The scripts with the most thorough tests here are worth nothing if
+      // no workflow invokes them — and nothing checked that. `release.yml`
+      // could stop calling `ci_version.sh`, and `play-promote.yml` stop
+      // calling `play_promote.sh`, with the suite green (#206). Both are
+      // declared `key_links` in their stories' Must-haves.
+      //
+      // Equality, not `contains`: `contains` survives `|| true` and a
+      // renamed flag.
+      const links = <String, (String, String)>{
+        'release.yml → ci_version.sh': (
+          '.github/workflows/release.yml',
+          'tools/ci_version.sh',
+        ),
+        'release.yml → check_aab.sh': (
+          '.github/workflows/release.yml',
+          'tools/check_aab.sh',
+        ),
+        'release.yml → verify_upload_cert.sh': (
+          '.github/workflows/release.yml',
+          'tools/verify_upload_cert.sh',
+        ),
+        'play-promote.yml → play_promote.sh': (
+          '.github/workflows/play-promote.yml',
+          'tools/play_promote.sh',
+        ),
+        'ci.yml → gate.sh': ('.github/workflows/ci.yml', 'tools/gate.sh'),
+        'ci.yml → mutation_check.py': (
+          '.github/workflows/ci.yml',
+          'tools/mutation_check.py',
+        ),
+      };
+      links.forEach((name, link) {
+        final (workflow, script) = link;
+        expect(
+          pathExists(script),
+          isTrue,
+          reason: 'key-link: $script does not exist',
+        );
+        final wf = Workflow.parse(workflow, readFile(workflow));
+        expect(wf.problem, isNull, reason: '$workflow: ${wf.problem}');
+        final calls = [
+          for (final job in wf.jobs)
+            for (final step in job.steps)
+              if ((step.run ?? '').contains(script)) '${job.name}.${step.id}',
+        ];
+        expect(
+          calls,
+          isNotEmpty,
+          reason:
+              'key-link: $name is declared in the story\'s Must-haves and '
+              'no step in $workflow runs $script. Every refusal that script '
+              'makes is dead code if nothing calls it',
+        );
+      });
+    });
+
+    test('every workflow pins its step set', () {
+      // `ship`'s 18 ids were pinned for #182; `play-promote.yml` was not, so
+      // a NEW step there could publish #130's literal string on every
+      // failure path with the suite green (#209). Derived from the files
+      // rather than named per-file, because naming them per-file is exactly
+      // how two of four came to be unpinned.
+      const expected = <String, Map<String, List<String>>>{
+        '.github/workflows/play-promote.yml': {
+          'promote': [
+            'refuse',
+            'checkout',
+            'token',
+            'promote',
+            'summary',
+            'forget',
+          ],
+        },
+        '.github/workflows/play-api-check.yml': {
+          'check': ['checkout', 'java', 'play', 'keystore', 'forget'],
+        },
+      };
+      expected.forEach((path, jobs) {
+        final wf = Workflow.parse(path, readFile(path));
+        expect(wf.problem, isNull, reason: '$path: ${wf.problem}');
+        expect(
+          wf.jobs.map((j) => j.name).toList(),
+          jobs.keys.toList(),
+          reason: 'step-set: $path has jobs other than ${jobs.keys}',
+        );
+        jobs.forEach((job, ids) {
+          expect(
+            wf.job(job)!.steps.map((s) => s.id).toList(),
+            ids,
+            reason:
+                'step-set: exactly these steps in this order in '
+                '$path job `$job` — an inserted step runs with whatever '
+                'that job holds, and in `promote` that is a live Play token',
+          );
+        });
+      });
+    });
 
     test('dependabot watches both ecosystems', () {
       final offenders = dependabotOffenders(
