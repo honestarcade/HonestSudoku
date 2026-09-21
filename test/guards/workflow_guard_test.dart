@@ -1777,6 +1777,18 @@ void main() {
           stderrEncoding: utf8,
         );
         if (probe.exitCode != 0) {
+          // Distinguish "no auth" from "no ruleset". Pointing this test at a
+          // nonexistent ruleset id printed `+52 ~1: All tests passed!` — so
+          // DELETING the ruleset, the single most likely way to undo #187,
+          // was invisible to the guard built to detect it (#202).
+          final err = probe.stderr.toString();
+          if (err.contains('Not Found') || err.contains('404')) {
+            fail(
+              'ruleset: ruleset 23682733 does not exist. The `main` branch '
+              'has no protection, so nothing requires `gate` or `mutations` '
+              'before a merge',
+            );
+          }
           markTestSkipped('gh unavailable or unauthenticated');
           return;
         }
@@ -2008,6 +2020,48 @@ void main() {
           );
         }
       }
+    });
+
+    test('the rules parse through Workflow.parse and nothing else', () {
+      // #203: `parse` and `parseWithLoader` were collapsed into one body so
+      // there would be "no second body to rewrite". A NEW one can still be
+      // added and the rules repointed at it — I did exactly that and the
+      // suite stayed green with `dart analyze` clean.
+      //
+      // The chain: #177 the handler was missing; #191 no test reached it;
+      // #194 the test reached it through a bypassable seam; #203 the call
+      // sites route around it. The link that has never been asserted is
+      // WHICH FUNCTION THE RULES CALL, so that is what this asserts.
+      final rules = readFile('test/guards/workflow_rules.dart');
+      expect(
+        rules,
+        isNot(contains('loadYaml')),
+        reason:
+            'parse-path: workflow_rules.dart loads YAML itself, bypassing '
+            'the error handling in Workflow.parse',
+      );
+      final entryPoints = RegExp(r'Workflow\.(\w+)\(')
+          .allMatches(rules)
+          .map((m) => m.group(1))
+          .toSet();
+      expect(
+        entryPoints,
+        {'parse'},
+        reason:
+            'parse-path: the rules reach Workflow through $entryPoints. '
+            'Only `parse` carries the StackOverflowError handling, so any '
+            'other entry point is #177 back on the production path',
+      );
+      // And nothing may pass a loader: the default is the real one.
+      // Anchored: a bare `load:` also matches the word `payload:` in a
+      // comment, which is how this test first failed on its own prose.
+      expect(
+        RegExp(r'[\s(,]load:\s').hasMatch(rules),
+        isFalse,
+        reason:
+            'parse-path: a rule passes its own loader, so the handler it '
+            'relies on is whatever that loader does',
+      );
     });
 
     test('dependabot watches both ecosystems', () {

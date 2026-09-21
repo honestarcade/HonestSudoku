@@ -162,6 +162,15 @@ MUTATIONS: list[Mutation] = [
              sub(r'(chmod 600 "\$KEYSTORE"\n)', r'\1echo "pw: $HS_KEYSTORE_PASS"\n'),
              "the only script holding the plaintext password was outside the leak group",
              'reached stdout'),
+    # ---- #203/#207: the call site, and the ordering ----------------------
+    Mutation("#203", "the rules use a second parse path", "test/guards/workflow_rules.dart",
+             sub(r"Workflow\.parse\(", "Workflow.parseFast(", 0),
+             "the StackOverflowError handler becomes unreachable from every rule",
+             'parse-path'),
+    Mutation("#207", "the token check moves above the argument checks", "tools/play_promote.sh",
+             sub(r'\[ -n "\$\{PLAY_TOKEN:-\}" \] \|\| die_args "PLAY_TOKEN is not set"\n', ""),
+             "a bad track is no longer refused before the token is demanded",
+             'order:'),
     # ---- #204: the shell questions, asked of bash ------------------------
     Mutation("#204", "|| true hidden behind a shell comment", ".github/workflows/release.yml",
              sub(r'(-alias "\$HS_KEY_ALIAS" > /dev/null)\n', r'\1 || true # tolerate\n'),

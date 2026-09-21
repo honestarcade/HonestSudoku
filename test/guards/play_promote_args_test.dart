@@ -293,6 +293,33 @@ void _assertPromoteShape(Workflow wf) {
 }
 
 void main() {
+  test('a track is refused with no token at all', () {
+    // #21 AC4's whole rationale is that argument checks run BEFORE the
+    // token check, so the refusals can be proven without a token. Moving
+    // the PLAY_TOKEN check above them left the suite green: every refusal
+    // test supplied a fake token, and the no-token test supplied valid
+    // arguments, so nothing distinguished the orders (#207).
+    //
+    // This is the one case that does: no token, bad track.
+    final r = _run([_package, 'internal', 'production']);
+    expect(
+      r.code,
+      2,
+      reason:
+          'order: production must be refused before PLAY_TOKEN is even '
+          'looked at. Got ${r.code}: ${r.err}',
+    );
+    expect(
+      r.err,
+      contains('human act in the Play Console'),
+      reason:
+          'order: the refusal must be the production one, not a complaint '
+          'about a missing token — that is what "arguments first" means',
+    );
+    expect(r.err, isNot(contains('PLAY_TOKEN')));
+    expect(r.out.trim(), isEmpty);
+  });
+
   test('the script exists and is executable', () {
     expect(pathExists(_script), isTrue);
     final mode = File('${repoRoot.path}/$_script').statSync().mode;

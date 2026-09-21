@@ -324,3 +324,7 @@ echo "GATE PASSED $BUNDLE"
 #
 # (#196)
 echo "note: tools/mutation_check.py is not part of this gate — run it before changing a guard"
+# The ruleset check needs an admin-scoped gh token, which CI does not have and
+# should not be given to read one setting. It runs here when you are
+# authenticated and skips otherwise, so a green CI says nothing about it (#202).
+echo "note: the ruleset binding is checked only where \`gh\` has admin scope — CI skips it"
