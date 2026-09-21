@@ -117,6 +117,23 @@ api() {
 
 EDIT_ID=""
 API_BODY_FILE="$(mktemp)"
+# Delete an edit and say so if it did not work. `curl` without `--fail`
+# exits 0 for an HTTP error, so keying the warning off curl's status meant a
+# DELETE answered 500 left an edit pending while the run printed promoted=101
+# and exited 0 — the outcome the warning exists to prevent. `--fail` makes
+# curl exit 22 on 4xx/5xx, which is a status worth reading. Two of the three
+# delete sites had no warning branch at all (#178).
+delete_edit() {
+  # $1 = the edit id, $2 = what to call it in the warning.
+  [ -n "$1" ] || return 0
+  if ! curl -sS --fail --connect-timeout 10 --max-time 30 -o /dev/null \
+    -X DELETE "${auth[@]}" "$API/$PACKAGE/edits/$1" 2> /dev/null; then
+    echo "play_promote: warning: could not delete the $2 edit $1;" >&2
+    echo "  it is still pending on the Play account and must be" >&2
+    echo "  discarded in the Console before the next promotion." >&2
+  fi
+}
+
 cleanup() {
   rm -f "$API_BODY_FILE"
   # Any edit that was not committed is deleted, so a failed run leaves no
@@ -125,9 +142,7 @@ cleanup() {
     # `||` so cleanup never changes the exit code — but say so, because AC 3
     # claims the edits ARE deleted, and a silent failure leaves one pending
     # while the run still reports success (#161).
-    curl -sS --connect-timeout 10 --max-time 30 -o /dev/null -X DELETE "${auth[@]}" \
-      "$API/$PACKAGE/edits/$EDIT_ID" 2> /dev/null ||
-      echo "play_promote: warning: could not delete edit $EDIT_ID; it is still pending" >&2
+    delete_edit "$EDIT_ID" "in-flight"
   fi
 }
 trap cleanup EXIT
@@ -167,7 +182,7 @@ CODES_JSON="[$(printf '%s' "$CODES" | tr ' ' '\n' | sed 's/^/"/; s/$/"/' | paste
 # it for the trap: each attempt below opens its own edit and overwrites
 # EDIT_ID, so the trap would only ever see the last one and this one would be
 # left pending on the account.
-curl -sS --connect-timeout 10 --max-time 30 -o /dev/null -X DELETE "${auth[@]}" "$API/$PACKAGE/edits/$EDIT_ID" 2> /dev/null || true
+delete_edit "$EDIT_ID" "read-only"
 EDIT_ID=""
 
 # One attempt is open-edit -> PUT -> commit, because the draft-app rule can be
@@ -200,8 +215,7 @@ attempt_promotion() {
   # one — the same hazard the read-only edit above is deleted to avoid
   # (#144). The AC is "the read-only edit and any failed edit are deleted".
   if [ -n "$EDIT_ID" ]; then
-    curl -sS --connect-timeout 10 --max-time 30 -o /dev/null -X DELETE "${auth[@]}" \
-      "$API/$PACKAGE/edits/$EDIT_ID" 2> /dev/null || true
+    delete_edit "$EDIT_ID" "previous attempt's"
     EDIT_ID=""
   fi
 

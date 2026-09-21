@@ -39,6 +39,31 @@ const _package = 'com.honestarcade.sudoku';
 /// argument refusal's 2) and means the same thing on every machine.
 const _unreachableApi = 'http://127.0.0.1:1';
 
+/// Answers a POST with an edit id and everything else with 500; a DELETE
+/// exits 22, which is what `curl --fail` does on a 4xx or 5xx.
+const _curlStub = r"""#!/bin/sh
+out=""; method="GET"; want_status=0; prev=""
+for a in "$@"; do
+  case "$prev" in
+    -o) out="$a" ;;
+    -X) method="$a" ;;
+  esac
+  if [ "$a" = "-w" ]; then want_status=1; fi
+  prev="$a"
+done
+case "$method" in
+  POST)
+    if [ -n "$out" ]; then printf '{"id":"E1"}' > "$out"; fi
+    if [ "$want_status" = 1 ]; then printf '200'; fi
+    exit 0 ;;
+  DELETE) exit 22 ;;
+  *)
+    if [ -n "$out" ]; then printf '{"error":"boom"}' > "$out"; fi
+    if [ "$want_status" = 1 ]; then printf '500'; fi
+    exit 0 ;;
+esac
+""";
+
 ({int code, String out, String err}) _run(List<String> args, {String? token}) {
   final r = Process.runSync(
     _script,
@@ -56,8 +81,6 @@ const _unreachableApi = 'http://127.0.0.1:1';
   return (code: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString());
 }
 
-/// The refusal must be reached, unconditionally, before anything that could
-/// mint a credential — in every job of the file, not just the first.
 /// Runs a refusal step's `run:` body under bash with the dispatch inputs set,
 /// and returns its exit code. The body is pure shell — no external command —
 /// so this needs no stubs and no network.
@@ -384,6 +407,74 @@ void main() {
         () => _assertPromoteShape(Workflow.parse('play-promote.yml', mutated)),
         throwsA(isA<TestFailure>()),
         reason: 'refusal-negative: "$why" was not caught',
+      );
+    });
+  });
+
+  group('a failed edit deletion is reported, not swallowed', () {
+    // curl without --fail exits 0 for an HTTP error, so #161's warning —
+    // which keyed off curl's exit status — could not fire. A DELETE answered
+    // 500 left an edit pending on the Play account while the run printed
+    // promoted=101 and exited 0, which is the outcome the warning exists to
+    // prevent. Two of the three delete sites had no warning branch at all
+    // (#178).
+    late Directory dir;
+
+    setUp(() => dir = Directory.systemTemp.createTempSync('hs-promote'));
+    tearDown(() => dir.deleteSync(recursive: true));
+
+    /// A curl that opens an edit, then answers everything else 500 — so the
+    /// script dies, the EXIT trap runs, and the cleanup DELETE is the call
+    /// under test.
+    void stubCurl() {
+      final f = File('${dir.path}/curl')..writeAsStringSync(_curlStub);
+      Process.runSync('chmod', ['+x', f.path]);
+    }
+
+    ({int code, String err}) run() {
+      final r = Process.runSync(
+        _script,
+        [_package, 'internal', 'alpha'],
+        workingDirectory: repoRoot.path,
+        includeParentEnvironment: false,
+        environment: {
+          'PATH': '${dir.path}:/usr/bin:/bin',
+          'PLAY_TOKEN': 'fake',
+          'HS_PLAY_API': _unreachableApi,
+        },
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8,
+      );
+      return (code: r.exitCode, err: r.stderr.toString());
+    }
+
+    test('a DELETE answered 500 warns that the edit is still pending', () {
+      stubCurl();
+      final r = run();
+      expect(r.code, isNot(0), reason: 'the run itself must still fail');
+      expect(
+        r.err,
+        contains('still pending'),
+        reason:
+            'a DELETE that failed must say so: the edit stays on the Play '
+            'account and blocks the next promotion',
+      );
+    });
+
+    test('every delete in the script goes through delete_edit', () {
+      // Two of three sites had no warning branch, so the fix is only as good
+      // as its application. A bare `curl ... -X DELETE` anywhere in the
+      // script means one more silent failure.
+      final text = File('${repoRoot.path}/$_script').readAsStringSync();
+      final bare = RegExp(r'curl[^\n]*-X DELETE')
+          .allMatches(text)
+          .map((m) => m.group(0)!)
+          .where((m) => !m.contains('--fail'))
+          .toList();
+      expect(
+        bare,
+        isEmpty,
+        reason: 'a DELETE without --fail cannot detect an HTTP error: $bare',
       );
     });
   });
