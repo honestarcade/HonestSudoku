@@ -362,6 +362,232 @@ List<String> _swallowsFailure(String body) {
   return offenders;
 }
 
+/// The command each workflow step's success depends on.
+///
+/// Top level because two tests need it: `a step fails when the command it
+/// runs fails` executes against it, and `every declared key link is actually
+/// wired` asserts each link a story promised is covered by that execution.
+const _dependsOn = <String, Map<String, Map<String, List<String>>>>{
+  '.github/workflows/ci.yml': {
+    'gate': {
+      'deps': ['flutter'],
+      'guards': ['flutter'],
+      'gate': ['tools/gate.sh'],
+    },
+    'mutations': {
+      'deps': ['flutter'],
+      'mutations': ['tools/mutation_check.py'],
+    },
+  },
+  '.github/workflows/release.yml': {
+    'ship': {
+      'secrets_present': [],
+      'version': ['tools/ci_version.sh'],
+      'deps': ['flutter'],
+      'keystore': ['base64'],
+      'keystore_check': ['keytool'],
+      'build': ['flutter'],
+      'scan': ['tools/check_aab.sh'],
+      'cert': ['tools/verify_upload_cert.sh'],
+      'sidecar': ['sha256sum'],
+      'asset': ['gh'],
+      'summary': [],
+      'name_failure': [],
+      'shred': [],
+    },
+    'report-gate-failure': {'say': []},
+  },
+  '.github/workflows/play-promote.yml': {
+    'promote': {
+      'refuse': [],
+      'token': ['gcloud'],
+      'promote': ['tools/play_promote.sh'],
+      'summary': [],
+      'forget': [],
+    },
+  },
+  '.github/workflows/play-api-check.yml': {
+    'check': {
+      'play': ['gcloud'],
+      'keystore': ['keytool'],
+      'forget': [],
+    },
+  },
+};
+
+/// Every command any step of [workflow] is exercised against.
+Set<String> _propagationCommands(String workflow) => {
+  for (final steps in (_dependsOn[workflow] ?? const {}).values)
+    for (final commands in steps.values) ...commands,
+};
+
+/// Runs a workflow step's `run:` body the way the runner would.
+///
+/// Every command in [ambient] is stubbed; the one named by [failing] exits 1
+/// and the rest exit 0. With no [failing] the body should SUCCEED, and that
+/// direction is the point: an assertion that a step fails when its command
+/// fails is worthless if the step fails whatever happens (#204).
+///
+/// Two fidelity details the first version got wrong, both of which made a
+/// step unable to pass:
+///
+///  * **`${{ … }}` is expanded before bash ever sees the body.** Left in
+///    place it is a bad substitution, and `set -u` aborts the script at the
+///    first one — before the command under test is reached. `build` was
+///    asserted for nothing because of this.
+///  * **The workspace has the files the body opens.** A redirect into a
+///    directory that does not exist fails for a reason that has nothing to
+///    do with the command being tested (`sidecar`).
+({int code, String out, String err}) _runStepBody(
+  String body, {
+  required Iterable<String> ambient,
+  String? failing,
+}) {
+  final dir = Directory.systemTemp.createTempSync('hs-stepbody');
+  try {
+    final bin = Directory('${dir.path}/bin')..createSync(recursive: true);
+
+    void stub(String command) {
+      final fails = command == failing;
+      // A succeeding stub writes a byte, because several bodies redirect a
+      // command's output to a file and then check the file is non-empty
+      // (`keystore` does exactly that). A silent `exit 0` leaves an empty
+      // file, so the step fails for want of output rather than for anything
+      // the test is asking about — vacuity by a different route.
+      //
+      // `curl` gets a real one. The Play steps read its `-w '%{http_code}'`
+      // and the file it writes with `-o`, and a stub that printed a fixed
+      // word made every one of them exit at the status check — again
+      // unable to pass whatever the body did.
+      const curlStub = '''
+#!/bin/sh
+out=""
+prev=""
+for arg in "\$@"; do
+  [ "\$prev" = "-o" ] && out="\$arg"
+  prev="\$arg"
+done
+[ -n "\$out" ] && printf '{"id":"stub-edit","track":"internal","releases":[]}' > "\$out"
+printf '200'
+exit 0
+''';
+      final String script;
+      if (fails) {
+        script = '#!/bin/sh\necho "\$command: simulated failure" >&2\nexit 1\n';
+      } else if (command == 'curl') {
+        script = curlStub;
+      } else if (command == 'keytool') {
+        // Both fingerprints a body compares come from keytool — one from the
+        // keystore listing, one from `-printcert` on the committed PEM — so
+        // one constant listing makes a correct step pass. Nothing is faked
+        // that the step is asserting: whether those two AGREE is the step's
+        // own logic, exercised for real by play-api-check; what is asked
+        // here is only whether keytool's failure reaches the step.
+        script =
+            '#!/bin/sh\n'
+            'echo "Alias name: \${HS_KEY_ALIAS:-upload}"\n'
+            'echo "SHA256: AA:BB:CC:DD:EE:FF"\n'
+            'exit 0\n';
+      } else {
+        script = '#!/bin/sh\necho "stub output for \$command"\nexit 0\n';
+      }
+      File('${bin.path}/${command.split('/').last}').writeAsStringSync(script);
+      Process.runSync('chmod', [
+        '+x',
+        '${bin.path}/${command.split('/').last}',
+      ]);
+      // A project script is invoked by path, so shadow it there too.
+      if (command.contains('/')) {
+        final asPath = File('${dir.path}/$command');
+        asPath.parent.createSync(recursive: true);
+        asPath.writeAsStringSync(script);
+        Process.runSync('chmod', ['+x', asPath.path]);
+      }
+    }
+
+    for (final command in ambient) {
+      stub(command);
+    }
+    // Not in any `dependsOn` list, but bodies call them and the host may not
+    // have them (`sha256sum` is absent on macOS), which would make a result
+    // depend on who ran the suite.
+    for (final command in const ['sha256sum', 'unzip', 'curl']) {
+      if (!ambient.contains(command)) stub(command);
+    }
+
+    final runnerTemp = Directory('${dir.path}/runner')..createSync();
+    File('${runnerTemp.path}/upload.keystore').writeAsStringSync('x');
+    File('${dir.path}/build/app/outputs/bundle/release/app-release.aab')
+      ..createSync(recursive: true)
+      ..writeAsStringSync('bundle');
+
+    // What the runner substitutes before the shell starts. The value is a
+    // plain word so the body stays valid shell; what each expression would
+    // really hold is asserted by the tests that pin the `env:` blocks.
+    final expanded = body.replaceAll(
+      RegExp(r'\$\{\{[^}]*\}\}'),
+      'workflow-expression',
+    );
+
+    final script = File('${dir.path}/step.sh')..writeAsStringSync(expanded);
+    final r = Process.runSync(
+      '/bin/bash',
+      [script.path],
+      workingDirectory: dir.path,
+      includeParentEnvironment: false,
+      environment: {
+        'PATH': '${bin.path}:/usr/bin:/bin',
+        'RUNNER_TEMP': runnerTemp.path,
+        'GITHUB_OUTPUT': '${dir.path}/out',
+        'GITHUB_ENV': '${dir.path}/env',
+        'GITHUB_PATH': '${dir.path}/path',
+        'GITHUB_WORKSPACE': dir.path,
+        'GITHUB_STEP_SUMMARY': '${dir.path}/summary',
+        'GITHUB_REF_NAME': 'v1.2.3',
+        'GITHUB_RUN_NUMBER': '7',
+        'GITHUB_RUN_ATTEMPT': '1',
+        'HS_KEYSTORE_B64': 'eA==',
+        'HS_KEYSTORE_PASS': 'PROPAGATE-PASS-1',
+        'HS_KEY_ALIAS': 'upload',
+        'HS_KEY_PASS': 'PROPAGATE-PASS-1',
+        // The play workflows' steps read these. A body that aborts on an
+        // unbound variable under `set -u` cannot pass, and a step that
+        // cannot pass makes its propagation check unfalsifiable.
+        'PLAY_SERVICE_ACCOUNT_JSON': '{"type":"service_account"}',
+        'PLAY_TOKEN': 'PROPAGATE-TOKEN-1',
+        'PACKAGE': 'com.honestarcade.sudoku',
+        'FROM_TRACK': 'internal',
+        'TO_TRACK': 'alpha',
+        'PROMOTE_OUTCOME': 'success',
+      },
+      stdoutEncoding: utf8,
+      stderrEncoding: utf8,
+    );
+    return (
+      code: r.exitCode,
+      out: r.stdout.toString(),
+      err: r.stderr.toString(),
+    );
+  } finally {
+    dir.deleteSync(recursive: true);
+  }
+}
+
+/// What an inserted step in this job would have access to.
+///
+/// The shared reason string used to name `promote`'s Play token whatever job
+/// it was reporting on, which reads as a copy-paste in a failure message that
+/// is supposed to tell you what is at stake (#209).
+String _jobHolds(String path, String job) {
+  if (job == 'promote') return 'a live Play token';
+  if (job == 'check') return 'the service-account key and the keystore';
+  if (job == 'ship') return 'the signing keystore and every release secret';
+  if (job == 'report-gate-failure') {
+    return 'every workflow-level secret, on every failed gate';
+  }
+  return 'that job\'s secrets';
+}
+
 /// A step that hands the service-account key to a Play upload action.
 /// Matched on the action's repository path rather than a substring of the
 /// whole `uses:`, so a lookalike under another owner is not this (#169).
@@ -1752,64 +1978,136 @@ void main() {
       }
     });
 
-    test(
-      'the required checks are still bound, and are the check-run names',
-      () {
-        // The one part of the merge gate with no guard on it: the ruleset lives
-        // in GitHub config, so #187 is real today and silently reversible
-        // tomorrow — the same failure mode as the issue itself, a gate that
-        // exists but does not bind (#196).
-        //
-        // Skipped rather than failed without network or auth: this asserts a
-        // fact about the remote, and a developer offline should not see a red
-        // suite for it. CI has both.
-        final probe = Process.runSync(
-          'gh',
+    test('the required checks are still bound, and are the check-run names', () {
+      // The one part of the merge gate with no guard on it: the ruleset
+      // lives in GitHub config, so #187 is real today and silently
+      // reversible tomorrow — the same failure mode as the issue itself, a
+      // gate that exists but does not bind (#196).
+      //
+      // Read WITHOUT authentication. The previous version used `gh` and
+      // said in three places that this needs an admin-scoped token CI does
+      // not have. That was simply untrue: this repository is public, and
+      // the rulesets endpoint answers 200 to an anonymous request with the
+      // enforcement state, the branch condition and both required checks.
+      // Only `bypass_actors` is redacted. So the check runs everywhere,
+      // including CI, and the reason it did not was that `ci.yml` passes no
+      // token at all (#202).
+      const rulesetUrl =
+          'https://api.github.com/repos/honestarcade/HonestSudoku/rulesets/23682733';
+      late final ProcessResult probe;
+      try {
+        probe = Process.runSync(
+          'curl',
           [
-            'api',
-            'repos/honestarcade/HonestSudoku/rulesets/23682733',
-            '--jq',
-            '[.enforcement] + [.rules[] | select(.type=="required_status_checks") '
-                '| .parameters.required_status_checks[] '
-                '| .context + ":" + (.integration_id|tostring)] | join(" ")',
+            '-sS',
+            '--max-time',
+            '20',
+            '-w',
+            '\n%{http_code}',
+            '-H',
+            'Accept: application/vnd.github+json',
+            rulesetUrl,
           ],
           stdoutEncoding: utf8,
           stderrEncoding: utf8,
         );
-        if (probe.exitCode != 0) {
-          // Distinguish "no auth" from "no ruleset". Pointing this test at a
-          // nonexistent ruleset id printed `+52 ~1: All tests passed!` — so
-          // DELETING the ruleset, the single most likely way to undo #187,
-          // was invisible to the guard built to detect it (#202).
-          final err = probe.stderr.toString();
-          if (err.contains('Not Found') || err.contains('404')) {
-            fail(
-              'ruleset: ruleset 23682733 does not exist. The `main` branch '
-              'has no protection, so nothing requires `gate` or `mutations` '
-              'before a merge',
-            );
-          }
-          markTestSkipped('gh unavailable or unauthenticated');
-          return;
-        }
-        final got = probe.stdout.toString().trim();
-        expect(
-          got,
-          contains('active'),
-          reason: 'ruleset: the main branch ruleset is not active',
+      } on ProcessException {
+        // `Process.runSync` THROWS when the binary is absent; it does not
+        // return a non-zero code. The old skip branch could therefore only
+        // ever mean "unauthenticated", and a developer without the tool got
+        // the red suite its comment promised they would not (#202).
+        markTestSkipped('curl is not installed');
+        return;
+      }
+
+      final lines = probe.stdout.toString().trim().split('\n');
+      final status = lines.isEmpty ? '' : lines.last.trim();
+      final payload = lines.take(lines.length - 1).join('\n');
+
+      if (probe.exitCode != 0) {
+        markTestSkipped('no network: ${probe.stderr}');
+        return;
+      }
+      if (status == '404') {
+        // Pointing this test at a nonexistent id printed `All tests
+        // passed!`, so DELETING the ruleset — the single most likely way to
+        // undo #187 — was invisible to the guard built to detect it (#202).
+        fail(
+          'ruleset: the ruleset at $rulesetUrl does not exist. The `main` '
+          'branch has no protection, so nothing requires `gate` or '
+          '`mutations` before a merge',
         );
-        for (final check in const ['gate', 'mutations']) {
-          expect(
-            got,
-            contains('$check:15368'),
-            reason:
-                'ruleset: `$check` is not a required status check pinned to '
-                'GitHub Actions. The context is the CHECK-RUN NAME, not the '
-                "PR UI's rendering (`CI / $check`) — #137 learned that twice",
-          );
-        }
-      },
-    );
+      }
+      expect(
+        status,
+        '200',
+        reason: 'ruleset: unexpected HTTP $status reading the ruleset',
+      );
+
+      final doc = jsonDecode(payload) as Map<String, dynamic>;
+
+      // WHOLE TOKENS, not substrings. `contains('active')` is satisfied by
+      // the substring inside `inactive`, so a ruleset switched to
+      // `enforcement: disabled` passed; and `contains('gate:15368')` is
+      // satisfied by `CI / gate:15368`, which is the PR UI's rendering and
+      // exactly the #137 failure this test's own message warns about. Both
+      // were green at round eight (#202).
+      expect(
+        doc['enforcement'],
+        'active',
+        reason:
+            'ruleset: the main branch ruleset is `${doc['enforcement']}`, '
+            'not active — nothing it says is enforced',
+      );
+
+      final refs =
+          ((doc['conditions'] as Map<String, dynamic>?)?['ref_name']
+                  as Map<String, dynamic>?)?['include']
+              as List? ??
+          const <String>[];
+      expect(
+        refs.cast<String>(),
+        contains('~DEFAULT_BRANCH'),
+        reason:
+            'ruleset: the ruleset does not apply to the default branch, so '
+            'it can be active and still not guard `main`',
+      );
+
+      final required = <String>[
+        for (final rule in (doc['rules'] as List? ?? const []))
+          if ((rule as Map)['type'] == 'required_status_checks')
+            for (final check
+                in ((rule['parameters'] as Map)['required_status_checks']
+                    as List))
+              '${(check as Map)['context']}:${check['integration_id']}',
+      ];
+      for (final check in const ['gate', 'mutations']) {
+        expect(
+          required,
+          contains('$check:15368'),
+          reason:
+              'ruleset: `$check` is not a required status check pinned to '
+              'GitHub Actions. Required now: $required. The context is the '
+              "CHECK-RUN NAME, not the PR UI's rendering (`CI / $check`) — "
+              '#137 learned that twice',
+        );
+      }
+
+      // `bypass_actors` is the one field anonymous reads redact, so it is
+      // asserted only where a token is present rather than silently not at
+      // all. `null` means redacted; `[]` means genuinely empty.
+      final bypass = doc['bypass_actors'];
+      if (bypass != null) {
+        expect(
+          bypass,
+          isEmpty,
+          reason:
+              'ruleset: $bypass can push to `main` without the checks. A '
+              'bypass actor is the gate not applying to whoever matters '
+              'most',
+        );
+      }
+    });
 
     test('every declared key link is actually wired', () {
       // The scripts with the most thorough tests here are worth nothing if
@@ -1818,8 +2116,19 @@ void main() {
       // calling `play_promote.sh`, with the suite green (#206). Both are
       // declared `key_links` in their stories' Must-haves.
       //
-      // Equality, not `contains`: `contains` survives `|| true` and a
-      // renamed flag.
+      // What this test does NOT do, said plainly because the comment that
+      // stood here said the opposite. It read "Equality, not `contains`:
+      // `contains` survives `|| true` and a renamed flag" while the code
+      // below was `contains`, so `|| true` on `play_promote.sh` was green,
+      // as were a commented-out call, an unreachable branch and a rename to
+      // a file that does not exist (#206, #211).
+      //
+      // Text cannot decide whether a step still DEPENDS on a script; only
+      // running it can, and `a step fails when the command it runs fails`
+      // does exactly that for every workflow. So this test now asserts the
+      // declaration is covered THERE, and the wiring is proven by execution
+      // rather than by a substring. The value it keeps is naming the link a
+      // story promised, which an exit code cannot do.
       const links = <String, (String, String)>{
         'release.yml → ci_version.sh': (
           '.github/workflows/release.yml',
@@ -1850,20 +2159,15 @@ void main() {
           isTrue,
           reason: 'key-link: $script does not exist',
         );
-        final wf = Workflow.parse(workflow, readFile(workflow));
-        expect(wf.problem, isNull, reason: '$workflow: ${wf.problem}');
-        final calls = [
-          for (final job in wf.jobs)
-            for (final step in job.steps)
-              if ((step.run ?? '').contains(script)) '${job.name}.${step.id}',
-        ];
         expect(
-          calls,
-          isNotEmpty,
+          _propagationCommands(workflow),
+          contains(script),
           reason:
-              'key-link: $name is declared in the story\'s Must-haves and '
-              'no step in $workflow runs $script. Every refusal that script '
-              'makes is dead code if nothing calls it',
+              'key-link: $name is declared in the story\'s Must-haves, but '
+              'no step of $workflow is exercised against $script in `a step '
+              'fails when the command it runs fails`. Until it is, nothing '
+              'proves the workflow still depends on it — every refusal that '
+              'script makes is dead code if nothing calls it',
         );
       });
     });
@@ -1871,9 +2175,21 @@ void main() {
     test('every workflow pins its step set', () {
       // `ship`'s 18 ids were pinned for #182; `play-promote.yml` was not, so
       // a NEW step there could publish #130's literal string on every
-      // failure path with the suite green (#209). Derived from the files
-      // rather than named per-file, because naming them per-file is exactly
-      // how two of four came to be unpinned.
+      // failure path with the suite green (#209).
+      //
+      // The first version of this test said it was "derived from the files
+      // rather than named per-file" and was a two-entry literal covering two
+      // of the four workflows. That comment was false, and what it hid was
+      // `release.yml`'s `report-gate-failure`: a job whose NAME was pinned,
+      // whose steps were pinned nowhere, which runs on every failed gate and
+      // can read every workflow-level secret. A step there that base64'd the
+      // signing keystore into the run summary passed the whole suite.
+      //
+      // So the enumeration is now closed against the directory: every file
+      // `_workflowFiles()` finds, and every job in it, must appear below.
+      // A new workflow, or a new job in an existing one, fails this test
+      // until someone writes down what its steps are. That is the property
+      // the old comment claimed and the old code did not have.
       const expected = <String, Map<String, List<String>>>{
         '.github/workflows/play-promote.yml': {
           'promote': [
@@ -1888,7 +2204,55 @@ void main() {
         '.github/workflows/play-api-check.yml': {
           'check': ['checkout', 'java', 'play', 'keystore', 'forget'],
         },
+        '.github/workflows/release.yml': {
+          'gate': <String>[],
+          'ship': [
+            'checkout',
+            'secrets_present',
+            'version',
+            'java',
+            'flutter',
+            'deps',
+            'keystore',
+            'keystore_check',
+            'build',
+            'scan',
+            'cert',
+            'sidecar',
+            'artifact',
+            'asset',
+            'play',
+            'summary',
+            'name_failure',
+            'shred',
+          ],
+          'report-gate-failure': ['say'],
+        },
+        '.github/workflows/ci.yml': {
+          'gate': [
+            'checkout',
+            'shellcheck',
+            'java',
+            'flutter',
+            'deps',
+            'guards',
+            'gate',
+            'artifact',
+          ],
+          'mutations': ['checkout', 'java', 'flutter', 'deps', 'mutations'],
+        },
       };
+
+      expect(
+        expected.keys.toSet(),
+        _workflowFiles().toSet(),
+        reason:
+            'step-set: a workflow file is not pinned here. Every file in '
+            '$_workflowDir must have its jobs and steps written down — an '
+            'unpinned file is a place a step can be added silently, which '
+            'is #209',
+      );
+
       expected.forEach((path, jobs) {
         final wf = Workflow.parse(path, readFile(path));
         expect(wf.problem, isNull, reason: '$path: ${wf.problem}');
@@ -1904,121 +2268,291 @@ void main() {
             reason:
                 'step-set: exactly these steps in this order in '
                 '$path job `$job` — an inserted step runs with whatever '
-                'that job holds, and in `promote` that is a live Play token',
+                'that job holds, which here is ${_jobHolds(path, job)}',
           );
         });
       });
     });
 
     test('a step fails when the command it runs fails', () {
-      // #205's principle, applied. `_swallowsFailure` was a per-line regex
-      // asked to answer a shell-semantics question, and it lost to a `#`
-      // inside a quoted string, a trailing `&`, `|| echo`, `$( || true )`,
-      // `set +o errexit`, and any command outside an eight-item allow-list
-      // (#197, #204). Every one of those is ORDINARY SHELL, and bash decides
-      // shell questions correctly by construction.
+      // #205's principle, applied to every workflow rather than one job.
       //
-      // So the question is asked of bash: stub the command the step depends
-      // on so it exits 1, run the step's real `run:` body, and require the
-      // step to exit non-zero. No command list, no swallow-form list, no
-      // per-step enumeration — the loop is over what the file contains.
-      final wf = Workflow.parse(
-        '.github/workflows/release.yml',
-        readFile('.github/workflows/release.yml'),
-      );
-      expect(wf.problem, isNull);
+      // `_swallowsFailure` was a per-line regex asked to answer a
+      // shell-semantics question, and it lost to a `#` inside a quoted
+      // string, a trailing `&`, `|| echo`, `$( || true )`, `set +o errexit`,
+      // and any command outside an eight-item allow-list (#197, #204). Every
+      // one of those is ORDINARY SHELL, and bash decides shell questions
+      // correctly by construction.
+      //
+      // Round eight then found the fix had the SAME blast radius as the
+      // thing it replaced: it looped `release.yml`'s `ship` job alone, so 9
+      // of the repository's 27 run-bodied steps were exercised and `|| true`
+      // on `tools/play_promote.sh` — the one key link nothing else covers —
+      // was green (#204, #206). A second mechanism with the same scope is
+      // not a fix, so the loop is now over every workflow file.
+      //
+      // This also subsumes the key-link question. A `key-link` test that
+      // asks whether a step's text CONTAINS a script name says yes to a
+      // commented-out call, an unreachable branch, a renamed file and
+      // `|| true`. Running the step with that script failing answers the
+      // question that was actually being asked: does this step still depend
+      // on that script.
 
-      // The command each step's success depends on. A step whose failure
-      // does not matter is named here with an empty list, so adding a step
-      // is a deliberate decision rather than a silent omission.
-      const dependsOn = <String, List<String>>{
-        'secrets_present': [],
-        'version': ['tools/ci_version.sh'],
-        'deps': ['flutter'],
-        'keystore': ['base64'],
-        'keystore_check': ['keytool'],
-        'build': ['flutter'],
-        'scan': ['tools/check_aab.sh'],
-        'cert': ['tools/verify_upload_cert.sh'],
-        'sidecar': ['sha256sum'],
-        'asset': ['gh'],
-        'summary': [],
-        'name_failure': [],
-        'shred': [],
+      // The map is closed against the files: every run-bodied step in every
+      // workflow must be named. A step whose failure genuinely does not
+      // matter is named with an empty list, so leaving one out is a
+      // deliberate act rather than an omission nobody sees.
+      final actual = <String>{};
+      for (final path in _workflowFiles()) {
+        final wf = Workflow.parse(path, readFile(path));
+        expect(wf.problem, isNull, reason: '$path: ${wf.problem}');
+        for (final job in wf.jobs) {
+          for (final step in job.steps) {
+            if (step.run != null) actual.add('$path ${job.name} ${step.id}');
+          }
+        }
+      }
+      final declared = <String>{
+        for (final path in _dependsOn.keys)
+          for (final job in _dependsOn[path]!.keys)
+            for (final id in _dependsOn[path]![job]!.keys) '$path $job $id',
       };
-
-      final ship = wf.job('ship')!;
       expect(
-        ship.steps.where((s) => s.run != null).map((s) => s.id).toSet(),
-        dependsOn.keys.toSet(),
+        declared,
+        actual,
         reason:
             'propagation: a step with a `run:` body is not listed in '
             'dependsOn. Say which command it depends on, or say none',
       );
 
-      final dir = Directory.systemTemp.createTempSync('hs-propagate');
-      addTearDown(() => dir.deleteSync(recursive: true));
-      final bin = Directory('${dir.path}/bin')..createSync(recursive: true);
+      final ambient = <String>{
+        for (final jobs in _dependsOn.values)
+          for (final steps in jobs.values)
+            for (final commands in steps.values) ...commands,
+      };
 
-      for (final step in ship.steps) {
-        final body = step.run;
-        if (body == null) continue;
-        final commands = dependsOn[step.id] ?? const [];
-        for (final command in commands) {
-          // A stub that fails, for the command this step turns on.
-          final name = command.split('/').last;
-          File('${bin.path}/$name')
-            ..writeAsStringSync(
-              '#!/bin/sh\necho "$name: simulated failure" >&2\nexit 1\n',
-            )
-            ..createSync(recursive: false);
-          Process.runSync('chmod', ['+x', '${bin.path}/$name']);
-          // A project script is invoked by path, so shadow it there too.
-          final asPath = File('${dir.path}/$command');
-          if (command.contains('/')) {
-            asPath.parent.createSync(recursive: true);
-            asPath
-              ..writeAsStringSync(
-                '#!/bin/sh\necho "$command: simulated failure" >&2\nexit 1\n',
-              )
-              ..createSync(recursive: false);
-            Process.runSync('chmod', ['+x', asPath.path]);
-          }
+      _dependsOn.forEach((path, jobs) {
+        final wf = Workflow.parse(path, readFile(path));
+        jobs.forEach((job, steps) {
+          steps.forEach((id, commands) {
+            final step = wf.job(job)!.steps.firstWhere((s) => s.id == id);
+            final body = step.run!;
+            for (final command in commands) {
+              // BOTH directions, and the second is the one #204 was missing.
+              //
+              // Asking only "does it fail when the command fails" is
+              // satisfied by a body that fails NO MATTER WHAT, and four of
+              // the nine steps then covered did exactly that: `build`
+              // because `${{ … }}` is a bash bad substitution that aborts
+              // before `flutter` is reached, `sidecar` and `keystore`
+              // because the harness lacked files they open, and `asset`
+              // because `sha256sum` is absent on macOS. `isNot(0)` held
+              // unconditionally, so the assertion proved nothing about them.
+              //
+              // A test that cannot pass is as useless as one that cannot
+              // fail, so the same body is also run with everything
+              // succeeding and must then SUCCEED.
+              final failed = _runStepBody(
+                body,
+                ambient: ambient,
+                failing: command,
+              );
+              expect(
+                failed.code,
+                isNot(0),
+                reason:
+                    'propagation: $path job `$job` step `$id` reported '
+                    'SUCCESS while `$command` exited 1. Its failure does not '
+                    'reach the step, so the step guarantees nothing — and if '
+                    '`$command` is a project script, nothing now proves the '
+                    'step still runs it. stdout: ${failed.out}',
+              );
 
-          final script = File('${dir.path}/step.sh')..writeAsStringSync(body);
-          final runnerTemp = Directory('${dir.path}/runner')
-            ..createSync(recursive: true);
-          File('${runnerTemp.path}/upload.keystore').writeAsStringSync('x');
-          final r = Process.runSync(
-            '/bin/bash',
-            [script.path],
-            workingDirectory: dir.path,
-            includeParentEnvironment: false,
-            environment: {
-              'PATH': '${bin.path}:/usr/bin:/bin',
-              'RUNNER_TEMP': runnerTemp.path,
-              'GITHUB_OUTPUT': '${dir.path}/out',
-              'GITHUB_STEP_SUMMARY': '${dir.path}/summary',
-              'GITHUB_REF_NAME': 'v1.2.3',
-              'GITHUB_RUN_NUMBER': '7',
-              'GITHUB_RUN_ATTEMPT': '1',
-              'HS_KEYSTORE_B64': 'eA==',
-              'HS_KEYSTORE_PASS': 'PROPAGATE-PASS-1',
-              'HS_KEY_ALIAS': 'upload',
-              'HS_KEY_PASS': 'PROPAGATE-PASS-1',
-            },
-            stdoutEncoding: utf8,
-            stderrEncoding: utf8,
+              final clean = _runStepBody(body, ambient: ambient);
+              expect(
+                clean.code,
+                0,
+                reason:
+                    'vacuity: $path job `$job` step `$id` fails even when '
+                    '`$command` SUCCEEDS, so the propagation check above it '
+                    'is satisfied unconditionally and proves nothing. Fix '
+                    'the harness until this step can pass, or the assertion '
+                    'is theatre. stderr: ${clean.err}',
+              );
+            }
+          });
+        });
+      });
+    });
+
+    test('every workflow pins its step set', () {
+      // `ship`'s 18 ids were pinned for #182; `play-promote.yml` was not, so
+      // a NEW step there could publish #130's literal string on every
+      // failure path with the suite green (#209).
+      //
+      // The first version of this test said it was "derived from the files
+      // rather than named per-file" and was a two-entry literal covering two
+      // of the four workflows. That comment was false, and what it hid was
+      // `release.yml`'s `report-gate-failure`: a job whose NAME was pinned,
+      // whose steps were pinned nowhere, which runs on every failed gate and
+      // can read every workflow-level secret. A step there that base64'd the
+      // signing keystore into the run summary passed the whole suite.
+      //
+      // So the enumeration is now closed against the directory: every file
+      // `_workflowFiles()` finds, and every job in it, must appear below.
+      // A new workflow, or a new job in an existing one, fails this test
+      // until someone writes down what its steps are. That is the property
+      // the old comment claimed and the old code did not have.
+      const expected = <String, Map<String, List<String>>>{
+        '.github/workflows/play-promote.yml': {
+          'promote': [
+            'refuse',
+            'checkout',
+            'token',
+            'promote',
+            'summary',
+            'forget',
+          ],
+        },
+        '.github/workflows/play-api-check.yml': {
+          'check': ['checkout', 'java', 'play', 'keystore', 'forget'],
+        },
+        '.github/workflows/release.yml': {
+          'gate': <String>[],
+          'ship': [
+            'checkout',
+            'secrets_present',
+            'version',
+            'java',
+            'flutter',
+            'deps',
+            'keystore',
+            'keystore_check',
+            'build',
+            'scan',
+            'cert',
+            'sidecar',
+            'artifact',
+            'asset',
+            'play',
+            'summary',
+            'name_failure',
+            'shred',
+          ],
+          'report-gate-failure': ['say'],
+        },
+        '.github/workflows/ci.yml': {
+          'gate': [
+            'checkout',
+            'shellcheck',
+            'java',
+            'flutter',
+            'deps',
+            'guards',
+            'gate',
+            'artifact',
+          ],
+          'mutations': ['checkout', 'java', 'flutter', 'deps', 'mutations'],
+        },
+      };
+
+      expect(
+        expected.keys.toSet(),
+        _workflowFiles().toSet(),
+        reason:
+            'step-set: a workflow file is not pinned here. Every file in '
+            '$_workflowDir must have its jobs and steps written down — an '
+            'unpinned file is a place a step can be added silently, which '
+            'is #209',
+      );
+
+      expected.forEach((path, jobs) {
+        final wf = Workflow.parse(path, readFile(path));
+        expect(wf.problem, isNull, reason: '$path: ${wf.problem}');
+        expect(
+          wf.jobs.map((j) => j.name).toList(),
+          jobs.keys.toList(),
+          reason: 'step-set: $path has jobs other than ${jobs.keys}',
+        );
+        jobs.forEach((job, ids) {
+          expect(
+            wf.job(job)!.steps.map((s) => s.id).toList(),
+            ids,
+            reason:
+                'step-set: exactly these steps in this order in '
+                '$path job `$job` — an inserted step runs with whatever '
+                'that job holds, which here is ${_jobHolds(path, job)}',
+          );
+        });
+      });
+    });
+
+    test('every rule reports a document it cannot read, and never throws', () {
+      // #203, answered by running the rules instead of reading them.
+      //
+      // The chain is five long: #177 the error handling was missing; #191 no
+      // test reached it; #194 the test reached it through a bypassable seam;
+      // #203 the call sites could route around it; and at round eight the
+      // text assertion written for #203 was itself defeated three ways —
+      // repoint five of six call sites and leave one `Workflow.parse(` and
+      // the set equality is satisfied; put the required spelling in a
+      // COMMENT and no real call site is needed at all; or reach a second
+      // parse path through an extension, a helper in a third file, or a
+      // tear-off, none of which spell `Workflow.`.
+      //
+      // Every one of those defeats a rule ABOUT the source, and none of them
+      // survives running the rules: the property is a runtime one. Whatever
+      // a rule calls internally, a document it cannot read must come back as
+      // an offender rather than as an exception that takes the suite with it.
+      //
+      // Honest limit, because this is the fifth attempt at this property and
+      // an overstated claim is what made the previous four look finished:
+      // this covers the errors a loader RETURNS on bad input. It does not
+      // reproduce a stack overflow — the depth needed to overflow the
+      // recursive loader also destabilises whatever test file runs beside it
+      // (#177, #191), so `Workflow.parse` keeps its own injected-loader test
+      // for that one. What changed is that the OTHER paths are no longer
+      // unguarded.
+      const rules = <String, List<WorkflowOffender> Function(String, String)>{
+        'unpinnedUses': unpinnedUses,
+        'permissionOffenders': permissionOffenders,
+        'concurrencyOffenders': concurrencyOffenders,
+        'secretsInRunOffenders': secretsInRunOffenders,
+        'untrustedInRunOffenders': untrustedInRunOffenders,
+        'shellTraceOffenders': shellTraceOffenders,
+      };
+
+      const unreadable = <String, String>{
+        'unclosed flow sequence': 'jobs: [a, b',
+        'a tab where YAML forbids one': 'jobs:\n\tbuild: {}',
+        'duplicate mapping key': 'on: push\non: pull_request\n',
+        'not a mapping at all': '- just\n- a\n- list\n',
+        'a bare scalar': 'nonsense',
+        'an alias to nothing': 'jobs: *missing\n',
+      };
+
+      for (final rule in rules.entries) {
+        unreadable.forEach((what, text) {
+          late final List<WorkflowOffender> offenders;
+          expect(
+            () => offenders = rule.value('.github/workflows/bad.yml', text),
+            returnsNormally,
+            reason:
+                'parse-path: rule `${rule.key}` THREW on $what instead of '
+                'reporting it. A workflow nobody can parse is a workflow '
+                'nobody is checking, and the exception takes the whole suite '
+                'with it — #177, reachable again through whatever parse path '
+                'this rule uses',
           );
           expect(
-            r.exitCode,
-            isNot(0),
+            offenders,
+            isNotEmpty,
             reason:
-                'propagation: step `${step.id}` reported SUCCESS while '
-                '`$command` exited 1. Its failure does not reach the step, '
-                'so the step guarantees nothing. stdout: ${r.stdout}',
+                'parse-path: rule `${rule.key}` returned NO offender for $what. '
+                'Silence and "this file is fine" are the same answer to the '
+                'caller, which is how an unparseable workflow passes a gate',
           );
-        }
+        });
       }
     });
 

@@ -188,6 +188,106 @@ MUTATIONS: list[Mutation] = [
              sub(r'(chmod 600 "\$KEYSTORE"\n)', r'\1echo "pw: $HS_KEYSTORE_PASS"\n'),
              "the only script holding the plaintext password was outside the leak group",
              'reached stdout'),
+    # ---- #208: the channels and the chokepoint ---------------------------
+    # All four were GREEN at round eight.
+    Mutation("#208", "the service-account key goes on gcloud's command line",
+             ".github/workflows/play-api-check.yml",
+             sub(r'(gcloud auth activate-service-account --key-file "\$key" --quiet)',
+                 r'\1 --debug-sa "$PLAY_SERVICE_ACCOUNT_JSON"', 1),
+             "the whole key lands in the process table, readable by any later step",
+             'gcloud.log'),
+    # NO workspace mutation here, deliberately, and #213 says why.
+    #
+    # The channel exists and the scan LISTS the leaked file -- printed the
+    # directory listing to confirm it, rather than inferring from a green
+    # run. What could not be reproduced in an isolated worktree is a MATCH:
+    # in both scripts tried, the password that reaches `$PWD` is not in the
+    # sentinel set at the moment of the scan. So the channel's effectiveness
+    # is unproven, and an entry that passes would say the opposite.
+    #
+    # Leaving the battery green with no entry, and the gap filed, beats
+    # either a SURVIVED entry nobody can action or a mutation aimed at
+    # whatever happens to go red (#208, #213).
+    Mutation("#208", "the key is copied beside the one path forget removes",
+             ".github/workflows/play-api-check.yml",
+             sub(r'(\n(\s*)gcloud auth activate-service-account)',
+                 r'\n\2mkdir -p "$RUNNER_TEMP/keep"\n\2cp "$key" "$RUNNER_TEMP/keep/play-sa.json"\1', 1),
+             "the suffix exemption covered any path ending in that name",
+             'leak:'),
+    Mutation("#208", "a process is started outside the chokepoint",
+             "test/guards/secrets_scripts_test.dart",
+             sub(r"(\nvoid main\(\) \{)",
+                 r'\nvoid _bypass() async {\n'
+                 r'  await Process.start("/bin/bash", ["x.sh"]);\n'
+                 r'}\1', 1),
+             "Process.start, Process.run and tear-offs all walked past the old rule",
+             'leak-chokepoint'),
+    # ---- #206: the key link, proven by running the step ------------------
+    # All three were GREEN at round eight, against `tools/play_promote.sh` --
+    # the one key link no other guard covered -- because the test asked
+    # whether the step's TEXT contained the script name.
+    Mutation("#206", "play_promote.sh's failure is swallowed",
+             ".github/workflows/play-promote.yml",
+             sub(r'(\| tee "\$RUNNER_TEMP/promote\.out")', r"\1 || true", 1),
+             "every refusal the script makes can be neutered while the step reports success",
+             'propagation'),
+    Mutation("#206", "the play_promote.sh call is commented out",
+             ".github/workflows/play-promote.yml",
+             sub(r"^(\s*)(tools/play_promote\.sh)", r"\1# \2", 1, re.M),
+             "a substring in a shell comment satisfied the old key-link test",
+             'vacuity'),
+    Mutation("#206", "play_promote.sh is renamed to a file that does not exist",
+             ".github/workflows/play-promote.yml",
+             sub(r"tools/play_promote\.sh", "tools/play_promote.sh.disabled", 1),
+             "the workflow called a missing file while the guard reported the link wired",
+             'vacuity'),
+    # GREEN at round eight: only PROMOTE_OUTCOME was pinned, so a real
+    # internal->alpha promotion could publish "internal -> production".
+    Mutation("#209", "the summary step's TO_TRACK is a literal production",
+             ".github/workflows/play-promote.yml",
+             sub(r"(PROMOTE_OUTCOME:[^\n]*\n(?:[^\n]*\n)*?\s*)TO_TRACK: \$\{\{ inputs\.to_track \}\}",
+                 r"\1TO_TRACK: production", 1),
+             "a forged production claim in the run summary — #142's threat model",
+             'refusal'),
+    # ---- #203: the parse path, decided by running the rules --------------
+    # The mutation the TEXT assertion cannot see. Repointing five of six call
+    # sites satisfies its set equality, because one surviving `Workflow.parse(`
+    # is all it looks for. Round eight proved that green. The execution test
+    # catches it, which is the whole of #205 in one entry.
+    Mutation("#203", "five of six rules reach an unguarded second parse path",
+             "test/guards/workflow_rules.dart",
+             sub(r"Workflow\.parse\(", "WorkflowFast.of(", 5),
+             "the error handling is unreachable from five of the six rules",
+             'parse-path',
+             also=(("test/guards/workflow_yaml.dart",
+                    append("extension WorkflowFast on Workflow {\n"
+                           "  static Workflow of(String path, String text) {\n"
+                           "    final doc = loadYaml(text);\n"
+                           "    return Workflow.parse(path, text, load: (_) => doc);\n"
+                           "  }\n"
+                           "}\n")),)),
+    # ---- #202: the ruleset, compared as whole tokens ---------------------
+    # All three were GREEN at round eight: `contains('active')` is satisfied
+    # by `inactive`, and `contains('gate:15368')` by `CI / gate:15368` --
+    # the PR UI rendering the guard's own message warns about.
+    Mutation("#202", "a disabled ruleset is accepted", "test/guards/workflow_guard_test.dart",
+             sub(r"(final doc = jsonDecode\(payload\) as Map<String, dynamic>;\n)",
+                 r"\1      doc['enforcement'] = 'disabled';\n", 1),
+             "the merge gate can be switched off and the guard says nothing",
+             'ruleset'),
+    Mutation("#202", "the PR-UI rendering is accepted as the context",
+             "test/guards/workflow_guard_test.dart",
+             sub(r"'\$\{\(check as Map\)\['context'\]\}:\$\{check\['integration_id'\]\}',",
+                 "'CI / ${(check as Map)['context']}:${check['integration_id']}',", 1),
+             "#137's exact failure: the rendered name is not the check-run name",
+             'ruleset'),
+    Mutation("#202", "the ruleset stops targeting the default branch",
+             "test/guards/workflow_guard_test.dart",
+             sub(r"(final doc = jsonDecode\(payload\) as Map<String, dynamic>;\n)",
+                 r"\1      (doc['conditions']['ref_name'] as Map)['include'] = "
+                 r"['refs/heads/nothing'];\n", 1),
+             "a ruleset can be active and still not guard main",
+             'ruleset'),
     # ---- #203/#207: the call site, and the ordering ----------------------
     # The defect as it would really arrive: the second entry point is ADDED,
     # and then the rules are repointed at it. Both halves, or the mutation is
@@ -226,6 +326,38 @@ MUTATIONS: list[Mutation] = [
              sub(r"(run: tools/check_aab\.sh)$", r"\1 &", 1, re.M),
              "a backgrounded command's exit status is never waited on",
              'propagation'),
+    # The mutation that was GREEN until the vacuity check landed: the build
+    # step stops building. `${{ … }}` is a bash bad substitution, so the body
+    # aborted before `flutter` was ever reached and `isNot(0)` held whatever
+    # the step did (round eight).
+    Mutation("#204", "the build step stops building", ".github/workflows/release.yml",
+             sub(r"^(\s*)flutter build appbundle(?:[^\n]*\\\n)*[^\n]*\n",
+                 r'\1echo "built"\n', 1, re.M),
+             "the step that produces the shipped bundle no longer produces it",
+             'propagation'),
+    # And the guard on that guard: without the expansion the harness performs,
+    # `build` cannot pass, and the vacuity assertion must say so.
+    Mutation("#204", "the harness stops expanding ${{ }} before bash sees it",
+             "test/guards/workflow_guard_test.dart",
+             sub(r"RegExp\(r'\\\$\\\{\\\{\[\^\}\]\*\\\}\\\}'\)",
+                 "RegExp(r'THIS-MATCHES-NOTHING')", 1),
+             "a step that cannot pass makes its propagation check unfalsifiable",
+             'vacuity'),
+    # Round eight: both of these were GREEN. The step set was pinned for two
+    # of four files, so the job that runs on every failed gate -- and reads
+    # every workflow-level secret -- was unpinned, and a brand-new workflow
+    # file was not looked at by anything.
+    Mutation("#209", "a step exfiltrates the keystore from report-gate-failure",
+             ".github/workflows/release.yml",
+             sub(r"^      - id: say$",
+                 '      - id: sneak\n'
+                 '        name: Sneak\n'
+                 '        run: echo "$HS_KEYSTORE_B64" >> "$GITHUB_STEP_SUMMARY"\n'
+                 '\n'
+                 '      - id: say',
+                 1, re.M),
+             "the job that runs on every failed gate was pinned by name only",
+             'step-set'),
     # ---- #208/#206/#209: the chokepoint, the key links, the step sets -----
     Mutation("#208", "the service-account key reaches the job summary",
              ".github/workflows/play-api-check.yml",
@@ -244,13 +376,14 @@ MUTATIONS: list[Mutation] = [
              sub(r'tools/ci_version\.sh "\$GITHUB_REF_NAME"',
                  'echo name=9.9.9; echo code=9999; : "$GITHUB_REF_NAME"', 0),
              "tag validation and the version-code formula become dead code",
-             'key-link'),
+             # Caught by running the step now, not by a substring (#206).
+             'propagation'),
     Mutation("#206", "play-promote.yml stops calling play_promote.sh",
              ".github/workflows/play-promote.yml",
              sub(r"tools/play_promote\.sh com\.honestarcade\.sudoku",
                  "echo promoted=999; : com.honestarcade.sudoku", 0),
              "the track allowlist and production refusal become dead code",
-             'key-link'),
+             'propagation'),
     Mutation("#209", "a new step publishes the promoted line",
              ".github/workflows/play-promote.yml",
              sub(r"^      - id: promote$",
@@ -265,7 +398,7 @@ MUTATIONS: list[Mutation] = [
              sub(r"PROMOTE_OUTCOME: \$\{\{ steps\.promote\.outcome \}\}",
                  "PROMOTE_OUTCOME: success"),
              "a failed run reports the promote step ended as success",
-             'not the promote step'),
+             'refusal'),
     Mutation("#209", "the sidecar computes nothing",
              ".github/workflows/release.yml",
              sub(r'sha256sum "\$aab" > "\$aab\.sha256"', ': > "$aab.sha256"'),

@@ -324,10 +324,11 @@ echo "GATE PASSED $BUNDLE"
 #
 # (#196)
 echo "note: tools/mutation_check.py is not part of this gate — run it before changing a guard"
-# The ruleset check needs an admin-scoped gh token, which CI does not have and
-# should not be given to read one setting. It runs here when you are
-# authenticated and skips otherwise, so a green CI says nothing about it (#202).
-echo "note: the ruleset binding is checked only where \`gh\` has admin scope — CI skips it"
+# The ruleset check reads the PUBLIC rulesets endpoint anonymously, so it runs
+# here and in CI alike and skips only without network. The note this replaces
+# said it needed an admin-scoped token CI should not be given; that was never
+# true of this repository, and it was the stated reason for leaving the merge
+# gate's own binding unverified in CI (#202, #211).
 # The gate reads the WORKING TREE. A defect that is committed and corrected
 # only in the tree therefore passes here and fails in CI, which reads the
 # commit — that is not hypothetical: an interrupted mutation run put an
