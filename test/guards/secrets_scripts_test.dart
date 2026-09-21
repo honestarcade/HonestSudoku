@@ -103,8 +103,12 @@ List<({String where, String text})> _channels(String out, String err) {
       String text;
       try {
         text = entity.readAsStringSync();
-      } on FormatException {
-        continue; // a binary file the scripts produced, e.g. a keystore
+      } catch (_) {
+        // A binary file the scripts produced — a PKCS12 keystore throws
+        // FileSystemException, not FormatException, when decoded as UTF-8.
+        // Scanning its bytes for a sentinel would be a different check; a
+        // keystore is supposed to contain the key.
+        continue;
       }
       channels.add((
         where: 'file ${entity.path.replaceFirst(_home, r'$HOME')}',
