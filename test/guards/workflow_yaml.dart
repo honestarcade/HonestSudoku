@@ -206,6 +206,21 @@ class Workflow {
     dynamic doc;
     try {
       doc = loadYaml(text);
+    } on StackOverflowError {
+      // Deep nesting overflows the recursive loader. StackOverflowError is
+      // an Error, not an Exception, so `on YamlException` did not catch it
+      // and it escaped `parse` as a crash rather than the designed offender
+      // (#177).
+      return Workflow._(
+        path,
+        const [],
+        null,
+        const [],
+        const [],
+        const [],
+        const [],
+        'unparseable: nesting too deep to load',
+      );
     } on YamlException catch (e) {
       return Workflow._(
         path,
@@ -331,6 +346,33 @@ class Workflow {
         );
       }
     }
+    String? unusable;
+    if (jobsNode == null) {
+      unusable = 'no `jobs:` key — this is not a workflow';
+    } else if (jobsNode is! YamlMap) {
+      unusable =
+          '`jobs:` is a ${jobsNode.runtimeType}, not a mapping of job names';
+    } else if (jobs.isEmpty) {
+      unusable = '`jobs:` names no jobs';
+    } else {
+      for (final job in jobs) {
+        if (job.uses != null) continue;
+        if (job.steps.isEmpty) {
+          unusable = 'job `${job.name}` has no steps — `steps:` must be a list';
+          break;
+        }
+        for (final step in job.steps) {
+          if (step.uses == null && step.run == null) {
+            unusable =
+                'job `${job.name}` step ${step.id ?? step.index} has neither '
+                '`run:` nor `uses:` — a non-string `run:` reads as absent';
+            break;
+          }
+        }
+        if (unusable != null) break;
+      }
+    }
+
     return Workflow._(
       path,
       jobs,
@@ -339,7 +381,11 @@ class Workflow {
       pushTags,
       pushBranches,
       scripts,
-      null,
+      // Parsed is not the same as usable. These all loaded as YAML, produced
+      // zero jobs or steps, and yielded zero offenders from every rule — so
+      // a structurally wrong workflow scanned as clean, which is the larger
+      // class of the failure the header warns about (#177).
+      unusable,
       hasPermissions: _lookup(doc, 'permissions') != null,
       permissionsScalar: _permissionsScalar(doc),
       hasConcurrency: _lookup(doc, 'concurrency') != null,

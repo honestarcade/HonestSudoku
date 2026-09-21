@@ -660,23 +660,48 @@ void main() {
     });
 
     test('a secret used through env:, and a heredoc writing a file, pass', () {
+      // Whole documents, not loose lines. As bare fragments these parsed to a
+      // mapping with no `jobs:`, so there were no run scripts and the rule
+      // returned empty whatever it did — the claim was never exercised. A
+      // fragment carrying ${{ secrets.HS_KEY_PASS }}, ${{ github.ref_name }}
+      // AND `set -x` returned zero offenders from all three rules (#177).
       for (final good in const [
-        r'          HS_KEY_PASS: ${{ secrets.HS_KEY_PASS }}',
-        '        run: |\n          echo "\$HS_KEY_PASS" > /dev/null\n',
+        '      - env:\n'
+            '          HS_KEY_PASS: \${{ secrets.HS_KEY_PASS }}\n'
+            '        run: echo "\$HS_KEY_PASS" > /dev/null\n',
         // The false positive the print-detecting rule introduced: this writes
         // a signing properties file and prints nothing (#141).
-        '        run: |\n'
+        '      - run: |\n'
             '          cat <<EOF > key.properties\n'
             '          storePassword=\$HS_KEYSTORE_PASS\n'
             '          EOF\n',
-        '        run: base64 -d <<< "\$HS_KEYSTORE_B64" > "\$RUNNER_TEMP/k"\n',
+        '      - run: base64 -d <<< "\$HS_KEYSTORE_B64" > "\$RUNNER_TEMP/k"\n',
       ]) {
         expect(
-          secretsInRunOffenders('good.yml', good),
+          secretsInRunOffenders('good.yml', _workflow(good)),
           isEmpty,
           reason: 'secrets-in-run-negative: refused `$good`',
         );
       }
+    });
+
+    test('the negative fixtures are real documents that the rules read', () {
+      // The guard on the guard: if _workflow() ever stopped producing a
+      // parseable workflow, every negative fixture above would go vacuous
+      // again and pass by reading nothing. So one fixture is asserted to be
+      // CAUGHT, proving the rules see through the wrapper at all (#177).
+      final doc = _workflow(
+        '      - env:\n'
+        '          TAG: \${{ github.ref_name }}\n'
+        '        run: echo "\${{ secrets.HS_KEY_PASS }}"\n'
+        '          set -x\n',
+      );
+      expect(Workflow.parse('x.yml', doc).problem, isNull);
+      expect(
+        secretsInRunOffenders('x.yml', doc),
+        isNotEmpty,
+        reason: 'the wrapper must produce a document the rules actually read',
+      );
     });
 
     test('untrusted github/inputs values are refused in a run: body', () {
@@ -695,16 +720,20 @@ void main() {
     });
 
     test('step outputs and non-run uses of github. are allowed', () {
+      // Whole documents, for the reason in the fixture above (#177).
       for (final good in const [
-        r'        run: echo "${{ steps.version.outputs.name }}"',
-        r'        if: github.event_name == '
-            'pull_request'
-            '',
-        r'          name: honest-sudoku-aab-${{ github.sha }}',
-        r'          TAG: ${{ github.ref_name }}',
+        '      - run: echo "\${{ steps.version.outputs.name }}"\n',
+        "      - if: github.event_name == 'pull_request'\n"
+            '        run: echo hello\n',
+        '      - uses: actions/upload-artifact@v7\n'
+            '        with:\n'
+            '          name: honest-sudoku-aab-\${{ github.sha }}\n',
+        '      - env:\n'
+            '          TAG: \${{ github.ref_name }}\n'
+            '        run: echo "\$TAG"\n',
       ]) {
         expect(
-          untrustedInRunOffenders('good.yml', good),
+          untrustedInRunOffenders('good.yml', _workflow(good)),
           isEmpty,
           reason: 'untrusted-in-run-negative: refused `$good`',
         );
@@ -935,6 +964,57 @@ void main() {
       },
     );
 
+    test('a document that parses but is not a usable workflow is refused', () {
+      // parse() set `problem` only when the YAML would not load. Each of
+      // these loaded, produced zero jobs or steps, and yielded zero
+      // offenders from every rule — so a structurally wrong workflow scanned
+      // as clean. The header promises the opposite: a guard that cannot read
+      // its subject must fail, not pass quietly (#177).
+      const unusable = <String, String>{
+        'jobs: as a list': 'name: X\non: push\njobs:\n  - gate\n',
+        'jobs: with no jobs': 'name: X\non: push\njobs: {}\n',
+        'steps: as a map':
+            'name: X\non: push\njobs:\n  a:\n    steps:\n      run: echo hi\n',
+        'a step with neither run nor uses':
+            'name: X\non: push\njobs:\n  a:\n    steps:\n      - name: x\n',
+        'run: as a number':
+            'name: X\non: push\njobs:\n  a:\n    steps:\n      - run: 42\n',
+        'run: as a list':
+            'name: X\non: push\njobs:\n  a:\n    steps:\n'
+            '      - run:\n          - echo hi\n',
+        'valid YAML that is not a workflow': 'hello: world\n',
+      };
+      unusable.forEach((why, text) {
+        final wf = Workflow.parse('x.yml', text);
+        expect(
+          wf.problem,
+          isNotNull,
+          reason: 'unusable: "$why" was accepted as a readable workflow',
+        );
+        // And every rule must report it, rather than returning empty.
+        for (final rule in <List<WorkflowOffender> Function(String, String)>[
+          unpinnedUses,
+          permissionOffenders,
+          concurrencyOffenders,
+        ]) {
+          expect(
+            rule('x.yml', text),
+            isNotEmpty,
+            reason: 'unusable: "$why" scanned clean',
+          );
+        }
+      });
+    });
+
+    test('nesting too deep to load is an offender, not a crash', () {
+      // StackOverflowError is an Error, not an Exception, so `on
+      // YamlException` did not catch it and it escaped parse() as a crash
+      // (#177).
+      final deep = 'a:\n${'  ' * 2}${'[' * 60000}';
+      final wf = Workflow.parse('x.yml', deep);
+      expect(wf.problem, isNotNull);
+    });
+
     test('a workflow that cannot be parsed is refused, not skipped', () {
       const broken = 'name: Broken\non: [push\njobs:\n  a:\n';
       for (final offenders in [
@@ -1136,7 +1216,7 @@ void main() {
       const bad =
           'name: X\non: push\nconcurrency: x\n'
           'jobs:\n  a:\n    permissions:\n      contents: read\n'
-          '    steps:\n      - run: true\n';
+          '    steps:\n      - run: \'true\'\n';
       final offenders = permissionOffenders('bad.yml', bad);
       expect(offenders, hasLength(1));
       expect(offenders.single.message, contains('no top-level'));
@@ -1146,7 +1226,7 @@ void main() {
           'name: X\non: push\nconcurrency: x\n'
           'permissions: read-all\n'
           'jobs:\n  a:\n    permissions: write-all\n'
-          '    steps:\n      - run: true\n';
+          '    steps:\n      - run: \'true\'\n';
       final offenders = permissionOffenders('bad.yml', bad);
       expect(offenders, hasLength(1));
       expect(offenders.single.message, contains('write-all'));
@@ -1157,7 +1237,7 @@ void main() {
       const bad =
           'name: X\non: push\nconcurrency: x\n'
           "permissions: 'write-all'\n"
-          'jobs:\n  a:\n    steps:\n      - run: true\n';
+          'jobs:\n  a:\n    steps:\n      - run: \'true\'\n';
       final offenders = permissionOffenders('bad.yml', bad);
       expect(offenders, hasLength(1));
       expect(offenders.single.message, contains('write-all'));
@@ -1167,7 +1247,7 @@ void main() {
         permissionOffenders(
           'good.yml',
           'name: X\non: push\nconcurrency: x\npermissions: read-all\n'
-              'jobs:\n  a:\n    steps:\n      - run: true\n',
+              'jobs:\n  a:\n    steps:\n      - run: \'true\'\n',
         ),
         isEmpty,
       );
@@ -1177,7 +1257,7 @@ void main() {
         concurrencyOffenders(
           'bad.yml',
           'name: X\non: push\npermissions:\n  contents: read\n'
-              'jobs:\n  a:\n    steps:\n      - run: true\n',
+              'jobs:\n  a:\n    steps:\n      - run: \'true\'\n',
         ),
         hasLength(1),
       );
@@ -1188,7 +1268,7 @@ void main() {
           'good.yml',
           'name: X\non: push\npermissions:\n  contents: read\n'
               'concurrency: play-release\n'
-              'jobs:\n  a:\n    steps:\n      - run: true\n',
+              'jobs:\n  a:\n    steps:\n      - run: \'true\'\n',
         ),
         isEmpty,
       );
@@ -1197,7 +1277,7 @@ void main() {
           'good.yml',
           'name: X\non: push\npermissions:\n  contents: read\n'
               'concurrency:\n  group: ci\n  cancel-in-progress: true\n'
-              'jobs:\n  a:\n    steps:\n      - run: true\n',
+              'jobs:\n  a:\n    steps:\n      - run: \'true\'\n',
         ),
         isEmpty,
       );
