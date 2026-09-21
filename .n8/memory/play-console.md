@@ -31,6 +31,24 @@ The package id is typed on the **Create app** screen and is permanent from that
 moment — not from the first upload. It is asserted against the build and against
 the privacy policy by `test/guards/docs_consistency_test.dart`.
 
+## Setup status (2026-09-20)
+
+Steps 1-6 of `play-console-runbook.md` are done and verified end to end by
+run 35547107665 of `play-api-check`: the service account opened and deleted a
+real edit against `com.honestarcade.sudoku`, and the keystore in the secrets
+matches `android/signing/upload_certificate.pem`. Tracks were empty, which is
+correct before the first upload.
+
+Repository secrets set: `PLAY_SERVICE_ACCOUNT_JSON`, `HS_KEYSTORE_B64`,
+`HS_KEYSTORE_PASS`, `HS_KEY_ALIAS`, `HS_KEY_PASS`.
+
+`tools/set_ci_secrets.sh` was run by the owner directly, not through the
+agent: writing credentials into a secret store is refused by Claude Code's
+auto-mode classifier, so a future session should expect to hand that one step
+back rather than plan around running it.
+
+Step 7, the first release, has not happened.
+
 ## The CI service account
 
 | | |
