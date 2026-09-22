@@ -203,7 +203,7 @@ MUTATIONS: list[Mutation] = [
     Mutation("#190", "the password moves onto keytool's argv", "tools/set_ci_secrets.sh",
              sub(r"-storepass:env HS_PASS_PROBE", '-storepass "$KEYSTORE_PASS"'),
              "the password becomes readable from the process table by anything on the machine",
-             'command line'),
+             'reached keytool.log'),
     Mutation("#190", "make_upload_key.sh prints the password", "tools/make_upload_key.sh",
              sub(r'(chmod 600 "\$KEYSTORE"\n)', r'\1echo "pw: $HS_KEYSTORE_PASS"\n'),
              "the only script holding the plaintext password was outside the leak group",
@@ -268,7 +268,7 @@ MUTATIONS: list[Mutation] = [
              sub(r"(PROMOTE_OUTCOME:[^\n]*\n(?:[^\n]*\n)*?\s*)TO_TRACK: \$\{\{ inputs\.to_track \}\}",
                  r"\1TO_TRACK: production", 1),
              "a forged production claim in the run summary — #142's threat model",
-             'refusal'),
+             "refusal: the summary step's TO_TRACK is"),
     # ---- #203: the parse path, decided by running the rules --------------
     # The mutation the TEXT assertion cannot see. Repointing five of six call
     # sites satisfies its set equality, because one surviving `Workflow.parse(`
@@ -366,13 +366,13 @@ MUTATIONS: list[Mutation] = [
              sub(r'run: rm -f "\$RUNNER_TEMP/upload\.keystore"',
                  'run: echo "keystore removed"', 1),
              "the decoded signing keystore survives the job",
-             'destroys'),
+             'destroys:'),
     Mutation("#216", "the play-api-check forget step stops deleting",
              ".github/workflows/play-api-check.yml",
              sub(r'rm -f "\$RUNNER_TEMP/play-sa\.json" "\$RUNNER_TEMP/upload\.keystore"',
                  'echo "credentials forgotten"', 1),
              "the service-account key and the keystore both survive the job",
-             'destroys'),
+             'destroys:'),
     # ---- #224/#225: the positive controls ---------------------------------
     # Every one of these was GREEN at b80cf0f, and each is a test that could
     # not fail for a different reason: a file that was never planted, a body
@@ -383,19 +383,19 @@ MUTATIONS: list[Mutation] = [
              sub(r'(          )rm -f "\$RUNNER_TEMP/play-sa\.json"',
                  r'\1echo "credentials forgotten"', 1),
              "the service-account key survives the job",
-             'destroys'),
+             'destroys:'),
     Mutation("#224", "play-api-check's forget drops the key from its rm",
              ".github/workflows/play-api-check.yml",
              sub(r'rm -f "\$RUNNER_TEMP/play-sa\.json" "\$RUNNER_TEMP/upload\.keystore"',
                  'rm -f "$RUNNER_TEMP/upload.keystore"', 1),
              "half the assertion was load-bearing and half asserted nothing",
-             'destroys'),
+             'destroys:'),
     Mutation("#224", "the harness stops planting one of the credentials",
              "test/guards/workflow_guard_test.dart",
              sub(r"const _runnerCredentials = \['upload\.keystore', 'play-sa\.json'\];",
                  "const _runnerCredentials = ['upload.keystore'];", 1),
              "the precondition is what stops the assertion going vacuous again",
-             'precondition'),
+             'destroys: precondition'),
     Mutation("#225", "a secret is published after the password compare",
              ".github/workflows/release.yml",
              sub(r'(          echo "the keystore opens, and holds the configured alias"\n)',
@@ -428,7 +428,7 @@ MUTATIONS: list[Mutation] = [
              "test/guards/secrets_scripts_test.dart",
              sub(r'echo "gcloud \\\$\*" >> "\$\{_tmp\.path\}/gcloud\.log"\n', "", 1),
              "the channel that catches a key on a command line goes quiet",
-             'argv'),
+             'argv: gcloud.log is empty'),
     # Two edits, because removing a protection proves nothing unless the thing
     # it protects against is present. Nothing in the file has the laundering
     # shape today, so the widened window alone changed no verdict and the
@@ -535,20 +535,20 @@ MUTATIONS: list[Mutation] = [
              sub(r"(final doc = jsonDecode\(payload\) as Map<String, dynamic>;\n)",
                  r"\1      doc['enforcement'] = 'disabled';\n", 1),
              "the merge gate can be switched off and the guard says nothing",
-             'ruleset'),
+             'ruleset:'),
     Mutation("#202", "the PR-UI rendering is accepted as the context",
              "test/guards/workflow_guard_test.dart",
              sub(r"'\$\{\(check as Map\)\['context'\]\}:\$\{check\['integration_id'\]\}',",
                  "'CI / ${(check as Map)['context']}:${check['integration_id']}',", 1),
              "#137's exact failure: the rendered name is not the check-run name",
-             'ruleset'),
+             'ruleset:'),
     Mutation("#202", "the ruleset stops targeting the default branch",
              "test/guards/workflow_guard_test.dart",
              sub(r"(final doc = jsonDecode\(payload\) as Map<String, dynamic>;\n)",
                  r"\1      (doc['conditions']['ref_name'] as Map)['include'] = "
                  r"['refs/heads/nothing'];\n", 1),
              "a ruleset can be active and still not guard main",
-             'ruleset'),
+             'ruleset:'),
     # ---- #203/#207: the call site, and the ordering ----------------------
     # The defect as it would really arrive: the second entry point is ADDED,
     # and then the rules are repointed at it. Both halves, or the mutation is
@@ -665,7 +665,7 @@ MUTATIONS: list[Mutation] = [
              sub(r"PROMOTE_OUTCOME: \$\{\{ steps\.promote\.outcome \}\}",
                  "PROMOTE_OUTCOME: success"),
              "a failed run reports the promote step ended as success",
-             'refusal'),
+             "refusal: the summary step's PROMOTE_OUTCOME is"),
     Mutation("#209", "the sidecar computes nothing",
              ".github/workflows/release.yml",
              sub(r'sha256sum "\$aab" > "\$aab\.sha256"', ': > "$aab.sha256"'),
@@ -742,12 +742,12 @@ MUTATIONS: list[Mutation] = [
     Mutation("#200", "a password onto argv in the WORKFLOW", ".github/workflows/play-api-check.yml",
              sub(r"-storepass:env HS_KEYSTORE_PASS", '-storepass "$HS_KEYSTORE_PASS"', 0),
              "#186's own reproduction: the source rule scanned tools/ only",
-             'command line'),
+             'a secret reached file'),
     Mutation("#183", "--fail removed from the edit deletion", "tools/play_promote.sh",
              sub(r"curl -sS --fail --connect-timeout 10 --max-time 30",
                  "curl -sS --connect-timeout 10 --max-time 30"),
              "curl exits 0 on 4xx/5xx without --fail, so the warning cannot fire",
-             'still pending'),
+             'a DELETE that failed must say so'),
     # ---- #182: the upload rule applied to every file, and step sets -------
     Mutation("#182", "a Play upload added to ci.yml", ".github/workflows/ci.yml",
              sub(r"(        run: tools/gate\.sh\n)",
@@ -835,12 +835,12 @@ MUTATIONS: list[Mutation] = [
     Mutation("#173", "keytool -list loses its -alias", ".github/workflows/play-api-check.yml",
              sub(r' -alias "\$HS_KEY_ALIAS" > "\$listing"', ' > "$listing"'),
              "the alias check asks about the whole keystore, not the configured entry",
-             'keytool -list is asked for the configured alias'),
+             'keytool -list must be scoped to the configured alias'),
     Mutation("#173", "the fingerprint comparison is dropped",
              ".github/workflows/play-api-check.yml",
              sub(r'if \[ "\$bundle_fp" != "\$pem_fp" \]; then', "if false; then"),
              "the uploaded keystore need not match the committed certificate",
-             'a keystore that is not the committed certificate is refused'),
+             'fingerprint mismatch must fail'),
     Mutation("#173", "the tracks grep loses its || true",
              ".github/workflows/play-api-check.yml",
              sub(r"\{ grep -oE '\"track\":\"\[a-z\]\+\"' \|\| true; \}",
@@ -853,12 +853,12 @@ MUTATIONS: list[Mutation] = [
              sub(r'          if \[ "\$HS_KEY_PASS" != "\$HS_KEYSTORE_PASS" \]; then.*?\n          fi\n',
                  "", flags=re.S),
              "a mismatch reaches the four-minute Gradle build again",
-             'differing passwords are refused before the build'),
+             'differing passwords must fail'),
     Mutation("#174", "the keypass check is inverted", ".github/workflows/release.yml",
              sub(r'if \[ "\$HS_KEY_PASS" != "\$HS_KEYSTORE_PASS" \]; then',
                  'if [ "$HS_KEY_PASS" = "$HS_KEYSTORE_PASS" ]; then'),
              "every correct release fails",
-             'matching passwords pass'),
+             'matching: HS_KEY_PASS differs'),
 
     # ---- the unconverted rules (#175) -------------------------------------
     Mutation("#175", "an unpinned action in flow style", ".github/workflows/release.yml",
@@ -868,12 +868,12 @@ MUTATIONS: list[Mutation] = [
              sub(r"(      - id: shred\n(?:.*\n)*?        run: [^\n]*\n)",
                  r"\1      - {uses: attacker/action}\n"),
              "an unpinned third party inside the merge gate",
-             'every action is pinned'),
+             'pins:'),
     Mutation("#175", "write-all permissions, quoted", ".github/workflows/release.yml",
              sub(r"^permissions:\n  contents: read$",
                  "permissions: 'write-all'", flags=re.M),
              "the job gets every scope",
-             'declares its permissions'),
+             'permissions:'),
 
     # ---- the scripts ------------------------------------------------------
     Mutation("#176", "the password is printed", "tools/set_ci_secrets.sh",
@@ -900,7 +900,7 @@ MUTATIONS: list[Mutation] = [
     Mutation("#178", "a negative version code is accepted", "tools/play_release_codes.py",
              sub(r'r"\[0-9\]\+"', 'r"-?[0-9]+"'),
              "a negative code is promoted as a version code",
-             'negative'),
+             'negative:'),
     Mutation("#159", "the newline guard is removed", "tools/ci_version.sh",
              sub(r'has_newline "\$run" && die "run number contains a newline"\n', ""),
              "a newline in the run number is accepted again",
@@ -964,7 +964,7 @@ MUTATIONS: list[Mutation] = [
              # The leak scan added for #190 now fires first, inside the same
              # round-trip test: an unescaped password partially reaches
              # stderr. Earlier and more specific than the old marker.
-             'survives the round trip'),
+             'reached stderr'),
 ]
 
 
