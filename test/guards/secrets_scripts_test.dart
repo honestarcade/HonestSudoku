@@ -275,10 +275,12 @@ List<({String where, String text, String path})> _channels(
 void _collectWorkspaceLeaks(
   List<({String where, String text, String path})> channels,
 ) {
+  // Computed HERE, per scan, not once for the whole suite (#227).
+  final unmodified = _unmodifiedAtRoot();
   for (final entity in repoRoot.listSync()) {
     if (entity is! File) continue;
     final name = entity.path.substring(repoRoot.path.length + 1);
-    if (_trackedAtRoot.contains(name)) continue;
+    if (unmodified.contains(name)) continue;
     String text;
     try {
       text = entity.readAsStringSync();
@@ -293,25 +295,33 @@ void _collectWorkspaceLeaks(
   }
 }
 
-/// Top-level files git tracks AND that a run has not modified.
+/// Top-level files whose content still matches the index, AT SCAN TIME.
 ///
-/// Tracking alone was the wrong test. `hs-leak-probe.txt` — a 0-byte artefact
-/// from a debugging session — was committed to `main`, which put it in this
-/// set, so a secret written to that path was skipped before the file was ever
-/// read. The guard was blinded by its own debris (#213).
+/// The previous version was a lazy `final`: both git queries ran ONCE, on
+/// first use, before any script under test had modified anything. So a file a
+/// script overwrote DURING the run was not modified yet when the set was
+/// built, stayed in the skip set, and was never read — while the docstring
+/// claimed the opposite (#227).
 ///
-/// Subtracting the MODIFIED files fixes the general case too: a script that
-/// overwrites a committed file with a secret leaves it modified, so it is
-/// scanned rather than exempted for having a familiar name.
-final Set<String> _trackedAtRoot = () {
+/// Measured: on a clean tree the leak was invisible, and the same tree went
+/// red on a second run purely because the first run's debris made the file
+/// modified before the set was computed. A guard whose verdict depends on
+/// leftover state is worse than no guard, because it looks like one.
+///
+/// A function, therefore, called per scan. `git ls-files --modified` is a
+/// stat-and-hash over a dozen root files; that cost is not worth a cache that
+/// is wrong.
+Set<String> _unmodifiedAtRoot() {
+  Set<String> topLevel(String out) => {
+    for (final line in out.split('\n'))
+      if (!line.contains('/') && line.isNotEmpty) line,
+  };
   // chokepoint-exempt: reads the git index to tell a committed file from one
-  // a script created; handles no secret and its output is a list of names.
-  final r = Process.runSync(
+  // a script created or overwrote; passes no secret and its output is a list
+  // of file names.
+  final tracked = Process.runSync(
     'git',
-    // `--cached` ONLY. Adding `--others` would list untracked files too,
-    // and an untracked top-level file is precisely what a leaking script
-    // leaves behind — it would have put the leak in the skip set.
-    ['ls-files', '--cached'],
+    ['ls-files'],
     workingDirectory: repoRoot.path,
     stdoutEncoding: utf8,
   );
@@ -324,13 +334,9 @@ final Set<String> _trackedAtRoot = () {
     workingDirectory: repoRoot.path,
     stdoutEncoding: utf8,
   );
-  Set<String> topLevel(String out) => {
-    for (final line in out.split('\n'))
-      if (!line.contains('/') && line.isNotEmpty) line,
-  };
-  return topLevel(r.stdout.toString())
+  return topLevel(tracked.stdout.toString())
     ..removeAll(topLevel(modified.stdout.toString()));
-}();
+}
 
 void _collectFiles(
   Directory dir,
@@ -960,6 +966,67 @@ exit 0
       );
       return found;
     }
+
+    test('a password too short for the leak scan is refused', () {
+      // The leak scan searches TRANSFORMED forms — base64, reversed, the
+      // slices — only for values of eight characters or more, because a
+      // lowercased four-letter password matches English prose. That threshold
+      // is a guarantee only if short passwords cannot exist, and nothing
+      // asserted the script enforcing it: deleting the whole length check
+      // left the suite at its baseline count (#230).
+      //
+      // Executed, not read. The boundary is the assertion.
+      final home = Directory('$_home/shortpw')..createSync(recursive: true);
+      addTearDown(() => home.deleteSync(recursive: true));
+
+      ({int code, String err}) attempt(String password) {
+        final r = _exec(
+          '/bin/bash',
+          ['tools/make_upload_key.sh'],
+          workingDirectory: repoRoot.path,
+          environment: {
+            'PATH': Platform.environment['PATH'] ?? '/usr/bin:/bin',
+            'HOME': home.path,
+            'HS_KEYSTORE_PASS': password,
+            // A keytool that cannot run: this test is about the refusal that
+            // happens before any key is made, and a real one would mint a
+            // throwaway keystore for nothing.
+            'HS_KEYTOOL': '/nonexistent/keytool',
+            'HS_UPLOAD_CERT_OUT': '${home.path}/cert.pem',
+          },
+          why: 'make_upload_key.sh length check',
+        );
+        return (code: r.code, err: r.err);
+      }
+
+      final short = attempt('elevenchars');
+      expect(
+        short.code,
+        isNot(0),
+        reason:
+            'password-length: an 11-character password was accepted. The leak '
+            'scan can only search it verbatim, so a base64 copy of it in a '
+            'job summary would not be found',
+      );
+      expect(
+        short.err,
+        contains('12'),
+        reason: 'password-length: the refusal does not say what the minimum is',
+      );
+
+      // The positive control: one character longer must get PAST the length
+      // check. It still fails — the keytool path is deliberately bogus — but
+      // it must fail for that reason and not for its length.
+      final long = attempt('twelvechars1');
+      expect(
+        long.err,
+        isNot(contains('is 12 characters')),
+        reason:
+            'password-length: a 12-character password was refused for its '
+            'length, so the boundary is off by one and the check would '
+            'reject something it should allow',
+      );
+    });
 
     test('a password full of shell metacharacters survives the round trip', () {
       final keytool = resolveKeytool();
@@ -1712,11 +1779,13 @@ exit 0
     // So: every `Process.` in this file is an offence unless it sits inside
     // `_exec`'s own body, and that body's extent is MEASURED rather than
     // guessed from a nearby string.
-    // EVERY guard test file, not only this one. The rule's own name said
-    // "in this file", and a new `test/guards/zz_probe_test.dart` starting a
-    // process raw therefore ran with no scan at all and the suite stayed
-    // green (#220). The chokepoint is allowed to exist in exactly one place;
-    // everywhere else a process start is an offence.
+    // THIS FILE ONLY, and the block below says why.
+    //
+    // What stood here claimed the opposite — "EVERY guard test file …
+    // everywhere else a process start is an offence" — describing a change
+    // that was written and then reverted in the same commit, twenty lines
+    // above the comment that says it was reverted. It survived its own
+    // revert and asserted a guard that does not exist (#229).
     const chokepointFile = 'test/guards/secrets_scripts_test.dart';
     final source = readFile(chokepointFile);
     final lines = source.split('\n');

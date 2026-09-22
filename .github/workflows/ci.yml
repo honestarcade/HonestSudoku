@@ -16,6 +16,12 @@ on:
 
 permissions:
   contents: read
+  # NOT `administration: read`. It was added here for #228 so the ruleset
+  # guard could read `bypass_actors` in CI, and it is not a permission
+  # GITHUB_TOKEN can be granted at all: the workflow failed validation, zero
+  # jobs ran, and the required-check binding refused the merge. Reading that
+  # field needs a PAT with admin scope — a secret to store and rotate, which
+  # is the owner's call and not this file's. The guard says so instead.
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -80,6 +86,12 @@ jobs:
 
       - id: gate
         name: Quality gate
+        # gate.sh runs the guard suite again, ruleset test included, so this
+        # step makes the same API call the `guards` step does. Without the
+        # token it is an anonymous call per PR from a shared runner IP — the
+        # one most likely to eat the 403 the token exists to avoid (#230).
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: tools/gate.sh
 
       # Only on a pull request: a workflow_call from the release workflow
@@ -106,7 +118,12 @@ jobs:
   # contributor runs locally before every commit.
   mutations:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Measured, not guessed: 92 mutations took 25m20s; 102 hit the old 30
+    # exactly and were cancelled with an empty log. Each mutation is one run
+    # of the guard suite (~15s), so the battery's cost is linear in its size
+    # and this number moves when the battery does. 45 is headroom for the
+    # current count, not a licence for a runaway.
+    timeout-minutes: 45
     env:
       FLUTTER_SUPPRESS_ANALYTICS: "true"
     steps:
@@ -141,4 +158,8 @@ jobs:
         # through and report the remainder as WRONG-REASON (#219).
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          # Python buffers stdout when it is not a terminal, so a cancelled
+          # job left NO progress lines — not one `[N/102]`. Unbuffered, the
+          # log shows how far it got and which entry was running.
+          PYTHONUNBUFFERED: "1"
         run: tools/mutation_check.py
