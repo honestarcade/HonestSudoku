@@ -874,7 +874,10 @@ MUTATIONS: list[Mutation] = [
              sub(r"^permissions:\n  contents: read$",
                  "permissions: 'write-all'", flags=re.M),
              "the job gets every scope",
-             'permissions:'),
+             # The OFFENDER line, not `permissions:`: that prefix is printed
+             # by `permissions_guard_test.dart` on every green run AND by this
+             # mutation's own inserted `permissions: 'write-all'` (#244).
+             'permissions .github/workflows'),
 
     # ---- the scripts ------------------------------------------------------
     Mutation("#176", "the password is printed", "tools/set_ci_secrets.sh",
@@ -940,24 +943,56 @@ MUTATIONS: list[Mutation] = [
                  r"\1  if (command.isNotEmpty) return null;\n", 1),
              "on a host without base64 the leak scan silently stops seeing encoded secrets",
              'stub-fidelity'),
-    # ---- #237: the defects that only a positive control catches -------------
+    # ---- #237: the defects a positive control names -------------------------
     # A control cannot be protected by mutating the control -- that makes the
     # suite GREENER, so such an entry would SURVIVE by construction. What
-    # protects it is a defect nothing else catches: neuter the control and
-    # these two survive, and the battery says so.
+    # protects it is a defect whose only NAMED catcher is that control: with
+    # the control neutered the refusal entry is still caught by
+    # play_promote_args_test, and the pre-flight entry by the leak test's own
+    # control, so the battery reports WRONG-REASON rather than SURVIVED.
+    # Either way it goes red, which is the protection; "these two survive"
+    # was the mechanism claimed at round thirteen, and it is not what happens
+    # (#245).
     Mutation("#237", "the promote refusal announces the refusal and exits 0",
              ".github/workflows/play-promote.yml",
              sub(r'(              echo "production is a human act in the Play Console" >&2\n)'
                  r"              exit 1\n",
                  r"\1              exit 0\n", 1),
-             "the message still prints, so only `expect(code, isNot(0))` can see it",
+             "the message still prints, so the honesty control is what names this one",
              'completed on an input it exists to refuse'),
     Mutation("#237", "the secrets pre-flight can never succeed",
              ".github/workflows/release.yml",
              sub(r'(          echo "all five secrets are present"\n)',
                  r"\1          exit 1\n", 1),
-             "every refusal still fails as expected; only the control notices",
+             "every refusal still fails as expected; the control is what names this one",
              'the step fails even with every secret set'),
+    Mutation("#245", "the pre-flight cannot complete when the secrets are equal",
+             ".github/workflows/release.yml",
+             sub(r'(          echo "all five secrets are present"\n)',
+                 r'          [ "$HS_KEY_PASS" != "$HS_KEYSTORE_PASS" ] || exit 1\n\1', 1),
+             "an inverted copy of keystore_check's own comparison, in a [] step",
+             # The fifth control, recorded at round thirteen as impossible to
+             # protect. `secrets_present` is `[]`, so the propagation check
+             # never runs it, and the pre-flight test runs it with DISTINCT
+             # values -- only the leak test's shared-secret pass reaches this
+             # line, and only its control names it (#245).
+             'cannot complete even with every secret equal'),
+    # ---- #243: the channel exclusions a body could write through ------------
+    # Both GREEN at de58e85: the skip was by path shape, so a file the body
+    # wrote inside `bin/` and the script overwritten under its own feet were
+    # dropped from the channel entirely.
+    Mutation("#243", "a secret is written into the harness's own bin directory",
+             ".github/workflows/release.yml",
+             sub(r'(          test -s "\$RUNNER_TEMP/upload\.keystore")',
+                 r'\1\n          printf %s "$HS_KEYSTORE_B64" > "$GITHUB_WORKSPACE/bin/leak"', 1),
+             "$GITHUB_WORKSPACE is what upload-artifact sweeps on a runner",
+             'published-secret'),
+    Mutation("#243", "a secret is written over the step script itself",
+             ".github/workflows/release.yml",
+             sub(r'(          test -s "\$RUNNER_TEMP/upload\.keystore")',
+                 r'\1\n          printf %s "$HS_KEYSTORE_B64" > "$GITHUB_WORKSPACE/step.sh"', 1),
+             "the body can overwrite the file it is running from",
+             'published-secret'),
     Mutation("#119", "the credentials file is written by a heredoc",
              "tools/make_upload_key.sh",
              sub(r"escape_for_double_quotes \"\$HS_KEYSTORE_PASS\"", '$HS_KEYSTORE_PASS'),
@@ -1068,13 +1103,15 @@ def main() -> int:
     # The same run is the baseline assertion the battery never had: a suite
     # that is red before any mutation makes every verdict below meaningless.
     print("mutation_check: baseline and marker audit", flush=True)
-    base = run(SUITE + ["--reporter", "json"])
-    if base.returncode != 0:
-        print("mutation_check: the suite is RED before any mutation, so no "
-              "verdict below would mean anything:", file=sys.stderr)
-        print((base.stdout + base.stderr)[-3000:], file=sys.stderr)
-        return 2
+    # SUITE_SLOW, the superset: a `slow`-tagged test is excluded from the
+    # mutation runs, but its name and its prints are in the output of any run
+    # that includes it, so auditing the smaller suite leaves them unchecked
+    # (#244).
+    base = run(SUITE_SLOW + ["--reporter", "json"])
     names: list[str] = []
+    printed: list[str] = []
+    by_id: dict[str, str] = {}
+    failed: list[str] = []
     for line in base.stdout.splitlines():
         line = line.strip()
         if not line.startswith("{"):
@@ -1083,37 +1120,60 @@ def main() -> int:
             event = json.loads(line)
         except ValueError:
             continue
-        if event.get("type") != "testStart":
-            continue
-        name = event.get("test", {}).get("name", "")
-        # `loading <path>` is the runner's own bookkeeping, not a test.
-        if name and not name.startswith("loading "):
-            names.append(name)
+        kind = event.get("type")
+        if kind == "testStart":
+            test = event.get("test", {})
+            name = test.get("name", "")
+            by_id[str(test.get("id"))] = name
+            # `loading <path>` is the runner's own bookkeeping, not a test.
+            if name and not name.startswith("loading "):
+                names.append(name)
+        elif kind == "print":
+            # What a test PRINTS is in a green run's output exactly as a test
+            # name is, and a marker matching it is just as vacuous. This is
+            # how `'permissions:'` shipped: `permissions_guard_test.dart`
+            # prints `release-no-permissions: ... is absent` on every run, so
+            # that entry scored `caught` for any red suite at all (#244).
+            printed.append(event.get("message", ""))
+        elif kind == "testDone" and event.get("result") != "success":
+            failed.append(str(event.get("testID")))
+    if base.returncode != 0:
+        # The NAMES of what failed. This printed the tail of the json stream
+        # once, which is progress events and names nothing an operator can act
+        # on (#247).
+        print("mutation_check: the suite is RED before any mutation, so no "
+              "verdict below would mean anything. Failing:", file=sys.stderr)
+        for tid in failed or ["(none reported -- run the suite directly)"]:
+            print(f"  {by_id.get(tid, tid)}", file=sys.stderr)
+        return 2
     if len(names) < 100:
         print(f"mutation_check: the json reporter yielded {len(names)} test "
               f"names, which cannot be right -- the marker audit below would "
               f"pass by reading nothing", file=sys.stderr)
         return 2
+    haystack = [("a test's NAME", n) for n in names]
+    haystack += [("what a test PRINTS", t) for t in printed]
     vacuous = [
-        (m, name)
+        (m, kind, text)
         for m in selected
         if m.expect
-        for name in names
-        if m.expect in name
+        for kind, text in haystack
+        if m.expect in text
     ]
     if vacuous:
-        print("mutation_check: these markers are part of a test's NAME, so "
-              "they are present whether or not the guard fired:",
+        print("mutation_check: these markers are in the output of a GREEN "
+              "run, so they are present whether or not the guard fired:",
               file=sys.stderr)
-        for m, name in vacuous:
+        for m, kind, text in vacuous:
             print(f"  {m.expect!r}  ({m.issue} {m.name})", file=sys.stderr)
-            print(f"      matches: {name}", file=sys.stderr)
+            print(f"      matches {kind}: {text.strip()[:110]}", file=sys.stderr)
         print("Use a prefix of the assertion's own reason -- `leak:`, "
-              "`overflow:` -- which no name contains.", file=sys.stderr)
+              "`overflow:` -- which nothing green prints.", file=sys.stderr)
         return 2
     if args.audit:
         print(f"{len(selected)} markers audited against {len(names)} test "
-              f"names; none is part of one")
+              f"names and {len(printed)} printed lines; none is present in a "
+              f"green run")
         return 0
 
     print(f"mutation_check: {len(selected)} mutations\n")
@@ -1136,6 +1196,26 @@ def main() -> int:
             broken.append((m, "changed nothing"))
             print(f"  BROKEN  {label}\n          changed nothing")
             continue
+
+        # The third source of a vacuous marker, and the one no baseline run
+        # can show: the mutation's OWN inserted text. A guard that prints the
+        # offending line puts that text into the output, so a marker matching
+        # it is present because the mutation ran, not because the guard fired
+        # (#244).
+        if m.expect:
+            added = "\n".join(
+                line
+                for new, old in zip(mutated, originals)
+                for line in new.splitlines()
+                if line not in old.splitlines()
+            )
+            if m.expect in added:
+                broken.append((m, "the marker is in the text this mutation "
+                                  "inserts, so a guard that echoes the "
+                                  "offending line satisfies it"))
+                print(f"  BROKEN  {label}\n          marker {m.expect!r} is in "
+                      f"this mutation's own inserted text")
+                continue
 
         IN_FLIGHT.write_text(
             f"{m.issue} {m.name}\n"
