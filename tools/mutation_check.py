@@ -1181,8 +1181,23 @@ def main() -> int:
               f"names, which cannot be right -- the marker audit below would "
               f"pass by reading nothing", file=sys.stderr)
         return 2
+    # And every message a guard COULD print, from the source. What actually
+    # printed is environment-dependent -- `signing_guard_test.dart`'s
+    # `could not be reached` appears only where no Android SDK is installed,
+    # which made `'reached'` vacuous in CI and fine locally -- so the audit
+    # reads the literals too and is the same verdict everywhere. Conservative
+    # by construction: it may flag a marker that only MIGHT be printed, and
+    # the remedy for that is a more distinctive marker, which always exists.
+    printable: list[str] = []
+    for source in sorted((ROOT / "test" / "guards").glob("*.dart")):
+        text = source.read_text()
+        for call in re.finditer(r"(?:print|markTestSkipped)\(\s*(.*?)\);",
+                                text, re.S):
+            printable.append(" ".join(re.findall(r"'([^']*)'", call.group(1))))
+
     haystack = [("a test's NAME", n) for n in names]
     haystack += [("what a test PRINTS", t) for t in printed]
+    haystack += [("a message a test can print", t) for t in printable]
     vacuous = [
         (m, kind, text)
         for m in selected
@@ -1202,8 +1217,8 @@ def main() -> int:
         return 2
     if args.audit:
         print(f"{len(selected)} markers audited against {len(names)} test "
-              f"names and {len(printed)} printed lines; none is present in a "
-              f"green run")
+              f"names, {len(printed)} printed lines and {len(printable)} "
+              f"messages a guard can print; none of them matches")
         return 0
 
     print(f"mutation_check: {len(selected)} mutations\n")

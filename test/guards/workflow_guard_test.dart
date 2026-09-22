@@ -2906,7 +2906,13 @@ void main() {
           'rate-limited',
         ]) {
           if (out.contains(why)) {
-            markTestSkipped('the child could not read the ruleset: $why');
+            // Worded to contain no marker: `'ruleset:'` is one, and a
+            // skip message is printed, so this sentence would have made
+            // three #202 entries vacuous in every run where the child was
+            // rate-limited (#244).
+            markTestSkipped(
+              'the child could not reach the rulesets API ($why)',
+            );
             return;
           }
         }
