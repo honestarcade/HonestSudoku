@@ -294,7 +294,11 @@ MUTATIONS: list[Mutation] = [
              "test/guards/workflow_rules.dart",
              sub(r"Workflow\.parse\(", "WorkflowQuick.of(", 5),
              "an overflow in the loader escapes as a crash; the six-row test is green",
-             'overflow',
+             # The COLON. `'overflow'` alone is a substring of the test's own
+             # name, which the runner prints on every run including a green
+             # one, so both of these entries scored `caught` for any red
+             # suite whatever and could never report WRONG-REASON (#238).
+             'overflow:',
              also=(("test/guards/workflow_yaml.dart",
                     append("extension WorkflowQuick on Workflow {\n"
                            "  static Workflow of(String path, String text) {\n"
@@ -312,7 +316,7 @@ MUTATIONS: list[Mutation] = [
              sub(r"    \} on StackOverflowError \{\n(?:.*\n)*?        'unparseable: nesting too deep to load',\n      \);\n",
                  "", 1),
              "#177's crash, verbatim: the overflow is an Error and nothing catches it",
-             'overflow'),
+             'overflow:'),
 
     # Both GREEN at 933cfad: `target` and the `pull_request` rule were never
     # read, and either change leaves `main` unguarded with the guard silent.
@@ -900,6 +904,58 @@ MUTATIONS: list[Mutation] = [
              sub(r'has_newline "\$run" && die "run number contains a newline"\n', ""),
              "a newline in the run number is accepted again",
              'newline was accepted'),
+    # ---- #236/#240: the channels and the wirings the twelfth pass left open --
+    # All GREEN at 2aecace. The first is the published-secret guard blinded by
+    # one byte; the rest are wirings whose absence changed no verdict.
+    Mutation("#236", "a secret is published with one byte that is not UTF-8",
+             ".github/workflows/release.yml",
+             sub(r'(          test -s "\$RUNNER_TEMP/upload\.keystore")',
+                 "\\1\n          printf '%s\\\\377' \"$HS_KEYSTORE_B64\" >> \"$GITHUB_STEP_SUMMARY\"", 1),
+             "readAsStringSync threw on the byte and the catch dropped the whole summary",
+             'published-secret'),
+    Mutation("#236", "a password is written into the workspace with a junk byte",
+             "tools/set_ci_secrets.sh",
+             sub(r'(KEY_PASS="\$\(read_credential HS_KEY_PASS\)"\n)',
+                 r'\1printf "%s\\377" "$KEYSTORE_PASS" > "$PWD/hs-workspace-leak.txt"\n', 1),
+             "the workspace scan skipped any file it could not decode, so one byte hid the rest",
+             'GITHUB_WORKSPACE',
+             creates=("hs-workspace-leak.txt",)),
+    Mutation("#240", "the ruleset flag is dropped from the gate step",
+             ".github/workflows/ci.yml",
+             sub(r"          HS_RULESET_READ_EXPECTED: \$\{\{ secrets\.HS_RULESET_READ_TOKEN != '' && '1' \|\| '' \}\}\n        run: tools/gate\.sh",
+                 "        run: tools/gate.sh", 1),
+             "a lapsed token then makes the bypass check skip instead of fail, in the gate",
+             'ruleset-token'),
+    Mutation("#240", "the digest stub stops being the real sha256sum",
+             "test/guards/workflow_guard_test.dart",
+             sub(r"const _runReal = \{'base64', 'sha256sum'\};",
+                 "const _runReal = {'base64'};", 1),
+             "the summary's digest row reads `stub output for sha256sum` and nothing minds",
+             'bundle SHA-256'),
+    Mutation("#240", "a _runReal command the host lacks falls back to an echo",
+             "test/guards/workflow_guard_test.dart",
+             sub(r"(String\? _realBinary\(String command\) \{\n)",
+                 r"\1  if (command.isNotEmpty) return null;\n", 1),
+             "on a host without base64 the leak scan silently stops seeing encoded secrets",
+             'stub-fidelity'),
+    # ---- #237: the defects that only a positive control catches -------------
+    # A control cannot be protected by mutating the control -- that makes the
+    # suite GREENER, so such an entry would SURVIVE by construction. What
+    # protects it is a defect nothing else catches: neuter the control and
+    # these two survive, and the battery says so.
+    Mutation("#237", "the promote refusal announces the refusal and exits 0",
+             ".github/workflows/play-promote.yml",
+             sub(r'(              echo "production is a human act in the Play Console" >&2\n)'
+                 r"              exit 1\n",
+                 r"\1              exit 0\n", 1),
+             "the message still prints, so only `expect(code, isNot(0))` can see it",
+             'completed on an input it exists to refuse'),
+    Mutation("#237", "the secrets pre-flight can never succeed",
+             ".github/workflows/release.yml",
+             sub(r'(          echo "all five secrets are present"\n)',
+                 r"\1          exit 1\n", 1),
+             "every refusal still fails as expected; only the control notices",
+             'the step fails even with every secret set'),
     Mutation("#119", "the credentials file is written by a heredoc",
              "tools/make_upload_key.sh",
              sub(r"escape_for_double_quotes \"\$HS_KEYSTORE_PASS\"", '$HS_KEYSTORE_PASS'),
@@ -954,6 +1010,8 @@ def compiles_as_dart(paths: list[pathlib.Path]) -> bool:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--list", action="store_true")
+    ap.add_argument("--audit", action="store_true",
+                    help="run the marker preflight alone and exit")
     ap.add_argument("--only", default="")
     args = ap.parse_args()
 
@@ -987,6 +1045,41 @@ def main() -> int:
         print("mutation_check: refusing to run with uncommitted changes:", file=sys.stderr)
         print(dirty, file=sys.stderr)
         return 2
+
+    # THE MARKERS, BEFORE ANY MUTATION.
+    #
+    # A marker that appears in the output of a GREEN run cannot tell "this
+    # guard fired" from "the suite went red somewhere"; every entry carrying
+    # it then scores `caught` whatever happens, and can never report
+    # WRONG-REASON. That is not hypothetical -- both #217 entries carried
+    # `'overflow'`, which is a substring of that test's own NAME, and the
+    # runner prints every name on every run (#238).
+    #
+    # It is mechanical, so it is checked rather than remembered. The same run
+    # is the baseline assertion the battery never had: a suite that is
+    # already red makes every verdict below meaningless.
+    print("mutation_check: baseline and marker audit", flush=True)
+    base = run(SUITE)
+    baseline = base.stdout + base.stderr
+    if base.returncode != 0:
+        print("mutation_check: the suite is RED before any mutation, so no "
+              "verdict below would mean anything:", file=sys.stderr)
+        print(baseline[-3000:], file=sys.stderr)
+        return 2
+    vacuous = sorted({m.expect for m in selected if m.expect and m.expect in baseline})
+    if vacuous:
+        print("mutation_check: these markers appear in a GREEN run, so they "
+              "cannot discriminate:", file=sys.stderr)
+        for marker in vacuous:
+            for m in selected:
+                if m.expect == marker:
+                    print(f"  {marker!r}  ({m.issue} {m.name})", file=sys.stderr)
+        print("Use a prefix of the assertion's reason -- `leak:`, `overflow:` "
+              "-- which no test NAME contains.", file=sys.stderr)
+        return 2
+    if args.audit:
+        print(f"{len(selected)} markers, none of them present in a green run")
+        return 0
 
     print(f"mutation_check: {len(selected)} mutations\n")
     survived: list[Mutation] = []
