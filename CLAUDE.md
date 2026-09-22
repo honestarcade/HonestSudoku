@@ -20,11 +20,11 @@ evidence that the suite can fail. Adding a guard means adding its mutation.
 A comment may say *why*. A claim about what the code does *now* belongs in the
 `reason:` of an assertion, where it is executed; a claim about anything else —
 history, a measurement, another tool's output, a count — carries a date and a
-source in the same sentence, or is cut. Four passes running added sentences the
-code did not back (#218, #229, #233, #239), and the second half of that rule is
-what round twelve cost: every false sentence it found was of the kind a
-`reason:` cannot hold. One of them had its `expect` already and passed
-vacuously, so only a mutation could find it. When a change is reverted or
+source in the same sentence, or is cut. Five passes running added sentences the
+code did not back (#218, #229, #233, #239, #246), so neither half is optional:
+a `reason:` cannot hold a fact about history or a measurement, and a sentence
+with no date and no source is the one nothing re-reads. Where a count can be
+computed, cut it and name the command instead. When a change is reverted or
 narrowed, the comments it added are part of the revert.
 
 ## Project invariants

@@ -835,6 +835,16 @@ _runStepBody(
   try {
     final bin = Directory('${dir.path}/bin')..createSync(recursive: true);
 
+    // Every file the HARNESS writes, with the exact text it wrote.
+    //
+    // The `wrote` channel skips these, and it skips them by CONTENT: a file
+    // whose bytes still match what was put there is not something the body
+    // wrote. Skipping by path shape instead — `bin/**`, `step.sh`, any
+    // planted path — meant a body could write a secret into one of them and
+    // the channel dropped it, with the suite green (#243). `$GITHUB_WORKSPACE`
+    // is this directory, and on a runner that is what upload-artifact sweeps.
+    final harnessWrote = <String, String>{};
+
     void stub(String command) {
       final fails = command == failing;
       // A succeeding stub writes a byte, because several bodies redirect a
@@ -916,16 +926,16 @@ exit 0
       } else {
         script = '#!/bin/sh\necho "stub output for \$command"\nexit 0\n';
       }
-      File('${bin.path}/${command.split('/').last}').writeAsStringSync(script);
-      Process.runSync('chmod', [
-        '+x',
-        '${bin.path}/${command.split('/').last}',
-      ]);
+      final stubPath = '${bin.path}/${command.split('/').last}';
+      File(stubPath).writeAsStringSync(script);
+      harnessWrote[stubPath] = script;
+      Process.runSync('chmod', ['+x', stubPath]);
       // A project script is invoked by path, so shadow it there too.
       if (command.contains('/')) {
         final asPath = File('${dir.path}/$command');
         asPath.parent.createSync(recursive: true);
         asPath.writeAsStringSync(script);
+        harnessWrote[asPath.path] = script;
         Process.runSync('chmod', ['+x', asPath.path]);
       }
     }
@@ -966,6 +976,7 @@ exit 0
       File('${dir.path}/$relative')
         ..createSync(recursive: true)
         ..writeAsStringSync(content);
+      harnessWrote['${dir.path}/$relative'] = content;
     });
 
     // The caller's chance to assert the workspace is what it expects BEFORE
@@ -973,6 +984,7 @@ exit 0
     beforeRun?.call(dir);
 
     final script = File('${dir.path}/step.sh')..writeAsStringSync(expanded);
+    harnessWrote[script.path] = expanded;
     final r = Process.runSync(
       '/bin/bash',
       [script.path],
@@ -1013,19 +1025,19 @@ exit 0
     final wrote = StringBuffer();
     for (final entity in dir.listSync(recursive: true)) {
       if (entity is! File) continue;
-      if (entity.path.startsWith('${bin.path}/')) continue;
-      if (entity.path == script.path) continue;
-      // An input the caller planted is not something the body wrote; left in,
-      // "the summary carries the note" would be satisfied by the note itself.
-      if (plant.keys.any((p) => entity.path == '${dir.path}/$p')) continue;
       // latin1 over the BYTES, and no `catch`. `readAsStringSync` throws on
       // the first byte that is not valid UTF-8, and the catch that stood
       // here dropped the whole file — so `printf '%s\377' "$HS_KEYSTORE_B64"`
       // put the keystore in the run summary with the suite green (#236).
       // A total decoding leaves every ASCII byte of a secret searchable.
-      wrote.writeln(
-        latin1.decode(entity.readAsBytesSync(), allowInvalid: true),
-      );
+      final text = latin1.decode(entity.readAsBytesSync(), allowInvalid: true);
+      // Unchanged since the harness wrote it — a stub, the script, a planted
+      // input — so the body did not write it. Anything else in this tree it
+      // DID write, including a file it put inside `bin/`, the script
+      // overwritten under its own feet, and a planted file it appended to:
+      // all three were skipped by path and all three were green (#243).
+      if (harnessWrote[entity.path] == text) continue;
+      wrote.writeln(text);
     }
 
     return (
@@ -2720,10 +2732,13 @@ void main() {
               'absent field is a skip, and it must stay one — a maintainer '
               'without an admin token must not see a red suite for it',
         );
-        // The key and its value are asserted, not only the branch: `''` and
-        // `'0'` are what ci.yml writes when the secret is absent, and either
-        // one read as "the token can see the field" turns every fork's PR
-        // red for a field nobody there can read (#240).
+        // The key and its value are asserted, not only the branch. `''` is
+        // what ci.yml writes when the secret is absent — that expression
+        // yields `'1'` or `''` and can produce nothing else — and reading it
+        // as "the token can see the field" would turn every fork's PR red
+        // for a field nobody there can read. `'0'` and a neighbouring key
+        // are values the comparison must also refuse; they are not things
+        // ci.yml writes, which is what this comment said (#246).
         for (final other in const [
           {'HS_RULESET_READ_EXPECTED': ''},
           {'HS_RULESET_READ_EXPECTED': '0'},
@@ -2844,6 +2859,83 @@ void main() {
               'missing one means the suite stopped running where it did',
         );
       },
+    );
+
+    test(
+      'the flag the workflow sets is the flag the guard reads',
+      () {
+        // The last unexercised wiring of #228, and #240 recorded it as
+        // untestable in-process, which it is: a test cannot set its own
+        // process environment, so hard-coding the argument at the call site
+        // was green. A CHILD can. This runs the ruleset test with the flag
+        // set and both tokens stripped, where an absent `bypass_actors` must
+        // be a FAILURE — with the argument hard-coded it becomes a skip,
+        // which is the silent downgrade #228 exists to prevent (#245).
+        //
+        // `slow`, and the first test to carry that tag. Measured on
+        // 2026-09-22 (`flutter test --no-pub --plain-name 'the flag the
+        // workflow sets'`): about 2s, because the child reuses the build the
+        // parent just made. The tag is for the multiplier rather than for
+        // that number — the battery would otherwise spawn one more full test
+        // process per mutation, and there are over a hundred.
+        final env = Map<String, String>.from(Platform.environment)
+          ..remove('GITHUB_TOKEN')
+          ..remove('GH_TOKEN')
+          ..['HS_RULESET_READ_EXPECTED'] = '1';
+        final child = Process.runSync(
+          'flutter',
+          [
+            'test',
+            '--no-pub',
+            '--plain-name',
+            'the required checks are still bound',
+            'test/guards/workflow_guard_test.dart',
+          ],
+          environment: env,
+          includeParentEnvironment: false,
+        );
+        final out = '${child.stdout}${child.stderr}';
+
+        // The three conditions under which the read cannot happen at all are
+        // the parent's own skips, and an anonymous read from a shared runner
+        // address can meet the third. A skip here says so out loud rather
+        // than passing for a reason that has nothing to do with the wiring.
+        for (final why in const [
+          'no network',
+          'curl is not installed',
+          'rate-limited',
+        ]) {
+          if (out.contains(why)) {
+            // Worded to contain no marker: `'ruleset:'` is one, and a
+            // skip message is printed, so this sentence would have made
+            // three #202 entries vacuous in every run where the child was
+            // rate-limited (#244).
+            markTestSkipped(
+              'the child could not reach the rulesets API ($why)',
+            );
+            return;
+          }
+        }
+
+        expect(
+          child.exitCode,
+          isNot(0),
+          reason:
+              'flag-wiring: with HS_RULESET_READ_EXPECTED=1 and no token, an '
+              'absent `bypass_actors` must fail. The child passed, so the '
+              'flag never reached the verdict — the guard is back to '
+              'skipping on a lapsed token. Child output:\n$out',
+        );
+        expect(
+          out,
+          contains('Rotate it (#228)'),
+          reason:
+              'flag-wiring: the child failed for some other reason than the '
+              'lapsed-token check. Child output:\n$out',
+        );
+      },
+      tags: ['slow'],
+      timeout: const Timeout(Duration(minutes: 5)),
     );
 
     test('every declared key link is actually wired', () {
