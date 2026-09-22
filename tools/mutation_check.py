@@ -581,8 +581,11 @@ MUTATIONS: list[Mutation] = [
     # `build` cannot pass, and the vacuity assertion must say so.
     Mutation("#204", "the harness stops expanding ${{ }} before bash sees it",
              "test/guards/workflow_guard_test.dart",
-             sub(r"RegExp\(r'\\\$\\\{\\\{\[\^\}\]\*\\\}\\\}'\)",
-                 "RegExp(r'THIS-MATCHES-NOTHING')", 1),
+             # Anchored on the grouped form `([^}]*)` the expansion took when it
+             # became `replaceAllMapped` for `expressions:` (#226); the previous
+             # anchor went BROKEN in the eleventh pass's own battery run.
+             sub(r"RegExp\(r'\\\$\\\{\\\{\(\[\^\}\]\*\)\\\}\\\}'\)",
+                 "RegExp(r'(THIS-MATCHES-NOTHING)')", 1),
              "a step that cannot pass makes its propagation check unfalsifiable",
              'vacuity'),
     # Round eight: both of these were GREEN. The step set was pinned for two
