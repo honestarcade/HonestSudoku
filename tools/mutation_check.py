@@ -285,10 +285,34 @@ MUTATIONS: list[Mutation] = [
                            "    return Workflow.parse(path, text, load: (_) => doc);\n"
                            "  }\n"
                            "}\n")),)),
-    # NO #217 mutation: the guard that caught it is gone with the overflow
-    # document, and an entry whose guard does not exist would pass for the
-    # wrong reason. The bypass, the measurements and the proposed fix are on
-    # the issue, which stays open.
+    # ---- #217: the Error path, in a worker isolate --------------------------
+    # The bypass that passed both guards at round nine: a parse path that
+    # catches YamlException and NOT Error, so every document of the six-row
+    # test comes back reported while a real overflow escapes. Only the
+    # worker-isolate test can see it, which is why its marker is its own.
+    Mutation("#217", "five of six rules reach a parse path that catches only YamlException",
+             "test/guards/workflow_rules.dart",
+             sub(r"Workflow\.parse\(", "WorkflowQuick.of(", 5),
+             "an overflow in the loader escapes as a crash; the six-row test is green",
+             'overflow',
+             also=(("test/guards/workflow_yaml.dart",
+                    append("extension WorkflowQuick on Workflow {\n"
+                           "  static Workflow of(String path, String text) {\n"
+                           "    dynamic doc;\n"
+                           "    try {\n"
+                           "      doc = loadYaml(text);\n"
+                           "    } on YamlException catch (e) {\n"
+                           "      return Workflow.parse(path, text, load: (_) => throw e);\n"
+                           "    }\n"
+                           "    return Workflow.parse(path, text, load: (_) => doc);\n"
+                           "  }\n"
+                           "}\n")),)),
+    Mutation("#217", "the StackOverflowError handler is removed from Workflow.parse",
+             "test/guards/workflow_yaml.dart",
+             sub(r"    \} on StackOverflowError \{\n(?:.*\n)*?        'unparseable: nesting too deep to load',\n      \);\n",
+                 "", 1),
+             "#177's crash, verbatim: the overflow is an Error and nothing catches it",
+             'overflow'),
 
     # Both GREEN at 933cfad: `target` and the `pull_request` rule were never
     # read, and either change leaves `main` unguarded with the guard silent.
@@ -297,14 +321,14 @@ MUTATIONS: list[Mutation] = [
              sub(r"(final doc = jsonDecode\(payload\) as Map<String, dynamic>;\n)",
                  r"\1      doc['target'] = 'tag';\n", 1),
              "the branch condition then guards nothing",
-             'ruleset'),
+             'not branches'),
     Mutation("#219", "the pull_request rule is removed from the ruleset",
              "test/guards/workflow_guard_test.dart",
              sub(r"(final doc = jsonDecode\(payload\) as Map<String, dynamic>;\n)",
                  r"\1      (doc['rules'] as List).removeWhere"
                  r"((r) => (r as Map)['type'] == 'pull_request');\n", 1),
              "required checks apply to pull requests; without the rule they are unreachable",
-             'ruleset'),
+             'no `pull_request` rule'),
     # ---- #215/#216: what a step DOES, not what it exits with -------------
     # All three were GREEN at 933cfad. The first is a secret published from an
     # already-pinned step; the other two are steps that exist to destroy a
@@ -408,6 +432,79 @@ MUTATIONS: list[Mutation] = [
              sub(r'if \[ "\$\{#HS_KEYSTORE_PASS\}" -lt 12 \]; then\n(?:.*\n)*?fi\n', "", 1),
              "the leak scan only searches transformed forms for 8+ characters",
              'password-length'),
+    Mutation("#230", "the sentinel floor drops back below the transformed-forms threshold",
+             "test/guards/secrets_scripts_test.dart",
+             sub(r"  if \(v\.length < 8\) \{\n    fail\(\n      'leak-fixture:",
+                 "  if (v.length < 4) {\n    fail(\n      'leak-fixture:", 1),
+             "a five-to-seven character fixture is searched verbatim only, silently",
+             'fixture-floor'),
+    Mutation("#230", "make_upload_key stops cd-ing to the repository root",
+             "tools/make_upload_key.sh",
+             sub(r'cd "\$\(dirname "\$0"\)/\.\."\n', "", 1),
+             "the refusal over the committed certificate checks the caller's directory",
+             'cert-cwd'),
+    # ---- #226, the second half: summary, name_failure, and the two steps ----
+    # in play-promote that were run by nothing. All GREEN at 9cc2317.
+    Mutation("#226", "the release summary claims production and drops the track",
+             ".github/workflows/release.yml",
+             sub(r'(        run: \|\n          set -euo pipefail\n          aab=build/app/outputs/bundle/release/app-release\.aab\n)'
+                 r'          \{\n(?:            [^\n]*\n|\n)*?          \} >> "\$GITHUB_STEP_SUMMARY"\n',
+                 r'\1          echo "### Release $TAG shipped to production, all checks passed" >> "$GITHUB_STEP_SUMMARY"\n', 1),
+             "the run summary names a track the release never goes to",
+             'honesty'),
+    Mutation("#226", "the release summary loses the no-release-note fallback",
+             ".github/workflows/release.yml",
+             sub(r'            if \[ -f "\$RUNNER_TEMP/no-release-note" \]; then\n'
+                 r'              echo ""\n'
+                 r'              cat "\$RUNNER_TEMP/no-release-note"\n'
+                 r'            fi\n', "", 1),
+             "a missing GitHub release is no longer mentioned where the reader looks (#180)",
+             'honesty'),
+    Mutation("#226", "the failure diagnostic is gutted",
+             ".github/workflows/release.yml",
+             sub(r"          echo '\$\{\{ toJSON\(steps\) \}\}' \\\n"
+                 r"            \| grep -B2 '\"outcome\": \"failure\"' \\\n"
+                 r"            \| tee -a \"\$GITHUB_STEP_SUMMARY\" \|\| true\n",
+                 '          echo "diagnostics disabled"\n', 1),
+             "the post-failure step names nothing; passed at round eleven",
+             'honesty'),
+    Mutation("#226", "the promote refusal accepts production",
+             ".github/workflows/play-promote.yml",
+             sub(r'            if \[ "\$track" = "production" \]; then\n'
+                 r'              echo "production is a human act in the Play Console" >&2\n'
+                 r'              exit 1\n'
+                 r'            fi\n', "", 1),
+             "the one step standing between a dispatch and the production track",
+             'honesty'),
+    Mutation("#226", "the promote summary reports a promotion whatever happened",
+             ".github/workflows/play-promote.yml",
+             sub(r'if \[ "\$PROMOTE_OUTCOME" = "success" \] && \[ -n "\$codes" \]; then',
+                 'if true; then', 1),
+             "#130 again: 'Promoted on Play' on the failure path",
+             'honesty'),
+    Mutation("#226", "a [] step loses its covering case and nothing else notices",
+             "test/guards/workflow_guard_test.dart",
+             sub(r"  'the failed-gate notice does not claim a release': \(\n(?:.*\n)*?  \),\n", "", 1),
+             "`say` is [] and no test runs it -- the state #226 found four steps in",
+             'coverage'),
+    # ---- #232: the base64 stub was a stub ------------------------------------
+    # The issue's own reproducer, green at 9cc2317 because `base64` printed a
+    # fixed word and the encoding never reached the scan.
+    Mutation("#232", "a secret is published through base64",
+             ".github/workflows/release.yml",
+             sub(r'(          test -s "\$RUNNER_TEMP/upload\.keystore")',
+                 r'\1\n          printf %s "$HS_KEYSTORE_B64" | base64 >> "$GITHUB_STEP_SUMMARY"', 1),
+             "base64 is one command and a reader of the summary decodes it instantly",
+             'published-secret'),
+    Mutation("#232", "the password is bound to an env key spelled ALIAS and published",
+             ".github/workflows/release.yml",
+             sub(r'(          HS_KEY_ALIAS: \$\{\{ secrets\.HS_KEY_ALIAS \}\}\n          HS_KEY_PASS: \$\{\{ secrets\.HS_KEY_PASS \}\}\n)',
+                 r'\1          HS_KEYSTORE_ALIAS: ${{ secrets.HS_KEYSTORE_PASS }}\n', 1),
+             "exempting by env NAME let any *ALIAS key carry any secret (#225); keyed on the secret now",
+             'published-secret',
+             also=((".github/workflows/release.yml",
+                    sub(r'(          echo "the keystore opens, and holds the configured alias"\n)',
+                        r'\1          echo "$HS_KEYSTORE_ALIAS" >> "$GITHUB_STEP_SUMMARY"\n', 1)),)),
     # ---- #202: the ruleset, compared as whole tokens ---------------------
     # All three were GREEN at round eight: `contains('active')` is satisfied
     # by `inactive`, and `contains('gate:15368')` by `CI / gate:15368` --
@@ -484,8 +581,11 @@ MUTATIONS: list[Mutation] = [
     # `build` cannot pass, and the vacuity assertion must say so.
     Mutation("#204", "the harness stops expanding ${{ }} before bash sees it",
              "test/guards/workflow_guard_test.dart",
-             sub(r"RegExp\(r'\\\$\\\{\\\{\[\^\}\]\*\\\}\\\}'\)",
-                 "RegExp(r'THIS-MATCHES-NOTHING')", 1),
+             # Anchored on the grouped form `([^}]*)` the expansion took when it
+             # became `replaceAllMapped` for `expressions:` (#226); the previous
+             # anchor went BROKEN in the eleventh pass's own battery run.
+             sub(r"RegExp\(r'\\\$\\\{\\\{\(\[\^\}\]\*\)\\\}\\\}'\)",
+                 "RegExp(r'(THIS-MATCHES-NOTHING)')", 1),
              "a step that cannot pass makes its propagation check unfalsifiable",
              'vacuity'),
     # Round eight: both of these were GREEN. The step set was pinned for two
