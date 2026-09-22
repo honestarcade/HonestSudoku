@@ -967,6 +967,67 @@ exit 0
       return found;
     }
 
+    test('a password too short for the leak scan is refused', () {
+      // The leak scan searches TRANSFORMED forms — base64, reversed, the
+      // slices — only for values of eight characters or more, because a
+      // lowercased four-letter password matches English prose. That threshold
+      // is a guarantee only if short passwords cannot exist, and nothing
+      // asserted the script enforcing it: deleting the whole length check
+      // left the suite at its baseline count (#230).
+      //
+      // Executed, not read. The boundary is the assertion.
+      final home = Directory('$_home/shortpw')..createSync(recursive: true);
+      addTearDown(() => home.deleteSync(recursive: true));
+
+      ({int code, String err}) attempt(String password) {
+        final r = _exec(
+          '/bin/bash',
+          ['tools/make_upload_key.sh'],
+          workingDirectory: repoRoot.path,
+          environment: {
+            'PATH': Platform.environment['PATH'] ?? '/usr/bin:/bin',
+            'HOME': home.path,
+            'HS_KEYSTORE_PASS': password,
+            // A keytool that cannot run: this test is about the refusal that
+            // happens before any key is made, and a real one would mint a
+            // throwaway keystore for nothing.
+            'HS_KEYTOOL': '/nonexistent/keytool',
+            'HS_UPLOAD_CERT_OUT': '${home.path}/cert.pem',
+          },
+          why: 'make_upload_key.sh length check',
+        );
+        return (code: r.code, err: r.err);
+      }
+
+      final short = attempt('elevenchars');
+      expect(
+        short.code,
+        isNot(0),
+        reason:
+            'password-length: an 11-character password was accepted. The leak '
+            'scan can only search it verbatim, so a base64 copy of it in a '
+            'job summary would not be found',
+      );
+      expect(
+        short.err,
+        contains('12'),
+        reason: 'password-length: the refusal does not say what the minimum is',
+      );
+
+      // The positive control: one character longer must get PAST the length
+      // check. It still fails — the keytool path is deliberately bogus — but
+      // it must fail for that reason and not for its length.
+      final long = attempt('twelvechars1');
+      expect(
+        long.err,
+        isNot(contains('is 12 characters')),
+        reason:
+            'password-length: a 12-character password was refused for its '
+            'length, so the boundary is off by one and the check would '
+            'reject something it should allow',
+      );
+    });
+
     test('a password full of shell metacharacters survives the round trip', () {
       final keytool = resolveKeytool();
       final marker = '${_tmp.path}/PWNED';
@@ -1718,11 +1779,13 @@ exit 0
     // So: every `Process.` in this file is an offence unless it sits inside
     // `_exec`'s own body, and that body's extent is MEASURED rather than
     // guessed from a nearby string.
-    // EVERY guard test file, not only this one. The rule's own name said
-    // "in this file", and a new `test/guards/zz_probe_test.dart` starting a
-    // process raw therefore ran with no scan at all and the suite stayed
-    // green (#220). The chokepoint is allowed to exist in exactly one place;
-    // everywhere else a process start is an offence.
+    // THIS FILE ONLY, and the block below says why.
+    //
+    // What stood here claimed the opposite — "EVERY guard test file …
+    // everywhere else a process start is an offence" — describing a change
+    // that was written and then reverted in the same commit, twenty lines
+    // above the comment that says it was reverted. It survived its own
+    // revert and asserted a guard that does not exist (#229).
     const chokepointFile = 'test/guards/secrets_scripts_test.dart';
     final source = readFile(chokepointFile);
     final lines = source.split('\n');

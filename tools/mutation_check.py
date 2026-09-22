@@ -36,12 +36,14 @@ import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-# The guard suite, MINUS the `slow` tag by default.
+# The guard suite, minus any `slow`-tagged test.
 #
-# One tagged test builds a 64000-character document to overflow the YAML
-# loader, which costs ~45s. Run once per mutation that is 70 minutes of CI for
-# a property one mutation tests. Mutations that need it set `slow=True` and
-# get the full suite; everything else runs in a third of the time (#217).
+# NOTHING carries that tag today — the test that did was reverted with #217 —
+# so this currently excludes nothing, and `dart_test.yaml` says so too. The
+# machinery stays because the reason for it is real and was measured: a guard
+# whose input is expensive is run once per mutation, and a 45s test turns a
+# 20-minute battery into 90. When the next expensive guard arrives it tags
+# itself and the mutations that need it set `slow=True` (#229).
 SUITE = ["flutter", "test", "--no-pub", "--tags", "guard",
          "--exclude-tags", "slow"]
 SUITE_SLOW = ["flutter", "test", "--no-pub", "--tags", "guard"]
@@ -360,6 +362,40 @@ MUTATIONS: list[Mutation] = [
                  r'          printf %s "$HS_KEY_PASS" | rev >> "$GITHUB_STEP_SUMMARY"\n\1', 1),
              "rev is one command and the reader reverses it instantly",
              'published-secret'),
+    # ---- #226: the steps that make a claim -------------------------------
+    # Both GREEN at b80cf0f. `say` is the only thing on the failed-gate path
+    # that says nothing shipped, and it could say the reverse.
+    Mutation("#226", "the failed-gate notice claims a release shipped",
+             ".github/workflows/release.yml",
+             sub(r'echo "gate failed on \$TAG; nothing shipped"',
+                 'echo "release $TAG shipped to production"', 1),
+             "the workflow announces a shipped release on a gate that failed",
+             'honesty'),
+    Mutation("#226", "the secrets pre-flight stops checking",
+             ".github/workflows/release.yml",
+             sub(r'(id: secrets_present\n(?:[^\n]*\n)*?        )run: \|\n(?:          [^\n]*\n|\n)*',
+                 r'\1run: echo "all five secrets are present"\n\n', 1),
+             "a step named Assert every secret is present announces a check it does not do",
+             'secrets-preflight'),
+    # ---- #220/#230: the guards that had no mutations ----------------------
+    Mutation("#220", "the gcloud stub stops recording its argv",
+             "test/guards/secrets_scripts_test.dart",
+             sub(r'echo "gcloud \\\$\*" >> "\$\{_tmp\.path\}/gcloud\.log"\n', "", 1),
+             "the channel that catches a key on a command line goes quiet",
+             'argv'),
+    Mutation("#220", "the harmless exemption widens to a three-line window",
+             "test/guards/secrets_scripts_test.dart",
+             sub(r"      if \(harmless\.hasMatch\(lines\[i\]\)\) continue;",
+                 "      if (harmless.hasMatch(\n"
+                 "        lines.sublist(i, (i + 3).clamp(0, lines.length)).join(' '),\n"
+                 "      )) {\n        continue;\n      }", 1),
+             "a raw call with a chmod two lines away was laundered by the window",
+             'leak-chokepoint'),
+    Mutation("#230", "make_upload_key stops enforcing a minimum password length",
+             "tools/make_upload_key.sh",
+             sub(r'if \[ "\$\{#HS_KEYSTORE_PASS\}" -lt 12 \]; then\n(?:.*\n)*?fi\n', "", 1),
+             "the leak scan only searches transformed forms for 8+ characters",
+             'password-length'),
     # ---- #202: the ruleset, compared as whole tokens ---------------------
     # All three were GREEN at round eight: `contains('active')` is satisfied
     # by `inactive`, and `contains('gate:15368')` by `CI / gate:15368` --

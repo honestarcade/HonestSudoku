@@ -16,6 +16,16 @@ on:
 
 permissions:
   contents: read
+  # Read-only, and the merge gate's own bypass list is why.
+  #
+  # `bypass_actors` is redacted from any read without it — including an
+  # authenticated one — so the assertion that NOBODY can push past the
+  # required checks could never run in CI, while the code claimed it could
+  # (#228). An earlier decision declined admin scope on the reasoning that
+  # reading rulesets needed it; that turned out to be true of this one field
+  # and nothing else, and a permissions control nobody can verify is worth
+  # less than a read-only grant.
+  administration: read
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -80,6 +90,12 @@ jobs:
 
       - id: gate
         name: Quality gate
+        # gate.sh runs the guard suite again, ruleset test included, so this
+        # step makes the same API call the `guards` step does. Without the
+        # token it is an anonymous call per PR from a shared runner IP — the
+        # one most likely to eat the 403 the token exists to avoid (#230).
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: tools/gate.sh
 
       # Only on a pull request: a workflow_call from the release workflow

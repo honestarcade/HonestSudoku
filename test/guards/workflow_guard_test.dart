@@ -440,7 +440,11 @@ Set<String> _propagationCommands(String workflow) => {
 /// response body, so the string match is falsifiable without waiting for a
 /// real 403.
 bool _isRateLimited(String status, String payload) {
-  if (status != '403') return false;
+  // 403 OR 429. GitHub answers primary and secondary rate limits with
+  // either, and a 429 falling through to `expect(status, '200')` turns the
+  // ruleset guard red for a reason that has nothing to do with the ruleset —
+  // and in the battery, into a cascade of WRONG-REASON (#230).
+  if (status != '403' && status != '429') return false;
   final body = payload.toLowerCase();
   return body.contains('rate limit') || body.contains('secondary rate');
 }
@@ -2097,6 +2101,13 @@ void main() {
       );
       expect(_isRateLimited('200', rateLimited), isFalse);
       expect(_isRateLimited('404', rateLimited), isFalse);
+      // GitHub uses 429 for secondary limits; a 429 that is not rate
+      // limiting is still a failure.
+      expect(_isRateLimited('429', rateLimited), isTrue);
+      expect(
+        _isRateLimited('429', '{"message":"Service unavailable"}'),
+        isFalse,
+      );
     });
 
     test('the required checks are still bound, and are the check-run names', () {
@@ -2265,23 +2276,34 @@ void main() {
         );
       }
 
-      // `bypass_actors` is redacted unless the caller is authenticated with
-      // enough scope to see it: the key is ABSENT from an anonymous read, not
-      // null-valued. Before the token was sent this branch could therefore
-      // never execute, while the comment above it claimed it ran "where a
-      // token is present" — a path that did not exist (#219).
+      // `bypass_actors` is redacted from every read that lacks repository
+      // Administration: read — including an authenticated one. Sending a
+      // token was not enough: `ci.yml` granted `contents: read`, which zeroes
+      // the rest, so in CI the field stayed absent and this branch stayed
+      // dead while the comment claimed a token made it live (#228). The
+      // workflow now grants `administration: read`, and CI asserts the field
+      // is PRESENT rather than tolerating its absence.
       //
-      // Now a token is sent when one is available, and with it the field
-      // comes back (`[]` on this repository). Where no token is available the
-      // branch still does not run, which is why the absence is reported
-      // rather than passed over in silence.
+      // Locally, where there may be no token at all, absence is a skip with a
+      // message — `printOnFailure` was used here and emits only when the test
+      // FAILS, so on this passing path it printed nothing at all.
       final bypass = doc['bypass_actors'];
       if (bypass == null) {
-        printOnFailure(
-          'ruleset: bypass_actors was not returned, so nobody checked whether '
-          'an actor can push past the gate. Set GITHUB_TOKEN to a token that '
-          'can read repository administration to cover it.',
+        // In CI this must not happen: the workflow grants the scope, so an
+        // absent field means the grant was removed and the check is dead.
+        if (Platform.environment['CI'] == 'true') {
+          fail(
+            'ruleset: bypass_actors was not returned in CI, so nobody checked '
+            'whether an actor can push past the gate. `ci.yml` grants '
+            '`administration: read` for exactly this; if that was removed, '
+            'the merge gate can be bypassed with this guard green',
+          );
+        }
+        markTestSkipped(
+          'bypass_actors needs a token with repository administration read; '
+          'the rest of the ruleset was checked',
         );
+        return;
       }
       if (bypass != null) {
         expect(
