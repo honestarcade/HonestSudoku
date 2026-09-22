@@ -525,6 +525,13 @@ const _publicSecrets = {'HS_KEY_ALIAS'};
 /// Deliberately smaller than `secrets_scripts_test.dart`'s `_leakForms`: this
 /// runs over every step of every workflow, and it carries the transforms a
 /// shell reaches for without thinking.
+///
+/// Open by decision, not by oversight: hex, rot13, a value split across two
+/// writes, reversed-then-base64, and a DIGEST of the secret. The last is a
+/// real leak for a human-chosen password and catching it needs a sha256
+/// implementation, which means a dependency this project would have to
+/// justify against invariant 3 — so it is recorded here and on #241 rather
+/// than implied to be covered.
 Iterable<String> _leakShapes(String secret) sync* {
   yield secret;
   yield secret.split('').reversed.join();
@@ -2018,10 +2025,10 @@ void main() {
       // fails in the scanner before recursion — so it exercises the refusal
       // path, not the `Error` path.
       //
-      // Balanced brackets DO overflow, at 32000 here and at some larger and
-      // unknown depth on the CI runner, which is why asserting an overflow
-      // from a fixed depth is not shippable. That is #217, open, with the
-      // measurements.
+      // Balanced brackets DO overflow, at a depth that differs between
+      // machines — which is why asserting one from a FIXED depth is not
+      // shippable, and why `every rule reports a document that overflows the
+      // loader` searches for the depth in a worker isolate instead (#217).
       expect(
         Workflow.parse('x.yml', 'a:\n    ${'[' * 6000}').problem,
         isNotNull,
@@ -2671,8 +2678,9 @@ void main() {
       // be reached for real in CI.
       //
       // Without the token — a maintainer's shell — the skip stands, and the
-      // runner counts and prints it: `~1` in the compact reporter, `⏭️` and
-      // `1 skipped` in CI's expanded one. Reported, not silent:
+      // runner counts and prints it: `~1` from the compact reporter, and
+      // `⏭️` with `N passed, 1 skipped` from the one CI selects on GitHub
+      // Actions. Reported, not silent:
       // `printOnFailure` was used for that once and emits only when the
       // test FAILS.
       final verdict = _bypassVerdict(
@@ -3010,8 +3018,10 @@ void main() {
       // credential and `secrets_present` has its own test below. The rest
       // make a CLAIM in a run summary or a log, and each could be replaced
       // by an `echo` of the opposite with the suite green — `summary` and
-      // `name_failure` still could at round eleven, and play-promote's
-      // `refuse` and `summary` were run by nothing at all.
+      // `name_failure` still could at round eleven. play-promote's `refuse`
+      // is also exercised by `play_promote_args_test.dart`, which runs its
+      // body and asserts the exit codes; what was missing here is the same
+      // question asked of what it SAYS. Its `summary` was run by nothing.
       //
       // `say` is the sharpest: on a failed gate it is the only thing that
       // says nothing shipped, and it could say the reverse.
@@ -3080,9 +3090,10 @@ void main() {
 
     test('every [] step is exercised by a named test', () {
       // #226's "better still". Declaring a step `[]` in `_dependsOn` takes
-      // it out of the propagation check, and for nine steps that was the end
-      // of the story: three destroy a credential, six make a claim, and
-      // until #216 and #226 none was run by anything. The rationale for `[]`
+      // it out of the propagation check, and for the steps declared `[]`
+      // that was the end of the story until #216 and #226. No count is
+      // written here: the assertion below is over the sets themselves, and a
+      // number in a comment is one more thing to keep true by hand. The rationale for `[]`
       // used to live in three comments that disagreed (#233); it lives on
       // `_dependsOn` now, and this is the part of it that executes: the
       // `[]` steps and the steps some test runs must be the SAME set. A `[]`
@@ -3578,19 +3589,23 @@ void main() {
       // in the recursive loader does — alias recursion and billion-laughs
       // both raise `YamlException`; measured on the issue.
       //
-      // A real overflow was unshippable for a round because its depth is a
-      // property of the STACK: 32000 levels overflow on macOS and parse on
-      // the ubuntu runner, and the cost climbs superlinearly (32000 -> 5s,
-      // 96000 -> 45s per rule). `ulimit -s` does not help; the VM ignores it
-      // (measured: 64000 frames at every limit from 256K to unlimited).
+      // A real overflow was unshippable for a round because the depth that
+      // produces one is a property of the stack the parse runs on, and the
+      // MAIN isolate's stack differs between machines and settings — which
+      // is why a fixed depth passed here and parsed cleanly on the runner.
       //
-      // What does help is that a WORKER isolate's stack is a VM constant and
-      // eight times smaller than the main isolate's: 4000 levels overflow
-      // there in about 80ms. So every parse here runs in `Isolate.run`, the
-      // depth is found by doubling until `Workflow.parse` itself reports the
-      // overflow — asserting it happened, which is the one thing the reverted
-      // row got right — and each rule then meets a document twice that deep.
-      // Cheap everywhere, and machine-independent for the right reason.
+      // A WORKER isolate's does not: `Isolate.run` overflows the loader at a
+      // far smaller depth, and at the same one under every stack limit tried.
+      // So every parse here runs in a worker, the depth is found by doubling
+      // until `Workflow.parse` itself reports the overflow — asserting it
+      // happened, which is the one thing the reverted row got right — and
+      // each rule then meets a document twice that deep.
+      //
+      // The measurements behind that paragraph, including the `ulimit -s`
+      // one that was quoted here wrongly, are on #217 and #239 with the date
+      // and the command that produced them. None of them is asserted; what
+      // is asserted is below, and it needs no number: some depth under the
+      // cap overflows, and every rule reports it.
       String deep(int n) => 'jobs: ${'[' * n}${']' * n}\n';
       const cap = 1 << 16;
 

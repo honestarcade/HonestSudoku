@@ -39,7 +39,8 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 # The guard suite, minus any `slow`-tagged test.
 #
-# NOTHING carries that tag today — the test that did was reverted with #217 —
+# NOTHING carries that tag today — the expensive test that carried it was
+# reverted, and #217 was later closed by a cheap one that does not need it —
 # so this currently excludes nothing, and `dart_test.yaml` says so too. The
 # machinery stays because the reason for it is real and was measured: a guard
 # whose input is expensive is run once per mutation, and a 45s test turns a

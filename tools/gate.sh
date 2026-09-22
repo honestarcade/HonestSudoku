@@ -325,7 +325,8 @@ echo "GATE PASSED $BUNDLE"
 # (#196)
 echo "note: tools/mutation_check.py is not part of this gate — run it before changing a guard"
 # The ruleset check reads the PUBLIC rulesets endpoint, so it runs here and in
-# CI alike and skips only without network. One field, `bypass_actors`, needs a
+# CI alike, and skips when there is no network, no `curl`, or the read is
+# rate-limited. One field, `bypass_actors`, needs a
 # token with repository Administration: CI passes HS_RULESET_READ_TOKEN and
 # asserts it; a shell without one sees that single check skipped, and the
 # runner prints the skip (#228). The note this replaces said the whole check
