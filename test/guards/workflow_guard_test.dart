@@ -2277,31 +2277,29 @@ void main() {
       }
 
       // `bypass_actors` is redacted from every read that lacks repository
-      // Administration: read — including an authenticated one. Sending a
-      // token was not enough: `ci.yml` granted `contents: read`, which zeroes
-      // the rest, so in CI the field stayed absent and this branch stayed
-      // dead while the comment claimed a token made it live (#228). The
-      // workflow now grants `administration: read`, and CI asserts the field
-      // is PRESENT rather than tolerating its absence.
+      // Administration — including an authenticated one — and GITHUB_TOKEN
+      // CANNOT be granted it: `administration` is not a permission key the
+      // workflow syntax accepts. The tenth pass added it to ci.yml on the
+      // strength of a comment saying it would work, the workflow failed
+      // validation, zero jobs ran, and the required-check binding refused
+      // the merge (#228).
       //
-      // Locally, where there may be no token at all, absence is a skip with a
-      // message — `printOnFailure` was used here and emits only when the test
-      // FAILS, so on this passing path it printed nothing at all.
+      // So in CI this field is unreadable BY CONSTRUCTION, not by omission.
+      // Reading it needs a PAT with admin scope — a secret to store and
+      // rotate, which is the owner's decision. Until one exists the bypass
+      // list is checked wherever such a token is present (a maintainer's
+      // shell) and reported as unchecked everywhere else. Reported, not
+      // silent: `printOnFailure` was used for that once and emits only when
+      // the test FAILS, so on this passing path it said nothing at all.
       final bypass = doc['bypass_actors'];
       if (bypass == null) {
-        // In CI this must not happen: the workflow grants the scope, so an
-        // absent field means the grant was removed and the check is dead.
-        if (Platform.environment['CI'] == 'true') {
-          fail(
-            'ruleset: bypass_actors was not returned in CI, so nobody checked '
-            'whether an actor can push past the gate. `ci.yml` grants '
-            '`administration: read` for exactly this; if that was removed, '
-            'the merge gate can be bypassed with this guard green',
-          );
-        }
+        // Not a failure and not a silent pass: a skip, which the runner
+        // counts and prints, so a green run visibly says `~1`.
         markTestSkipped(
-          'bypass_actors needs a token with repository administration read; '
-          'the rest of the ruleset was checked',
+          'bypass_actors is unreadable without repository administration, '
+          'which GITHUB_TOKEN cannot hold. The enforcement, target, branch '
+          'condition, pull_request rule and required checks were verified; '
+          'the bypass list was not. Closing that needs an admin PAT (#228)',
         );
         return;
       }

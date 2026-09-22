@@ -16,16 +16,12 @@ on:
 
 permissions:
   contents: read
-  # Read-only, and the merge gate's own bypass list is why.
-  #
-  # `bypass_actors` is redacted from any read without it — including an
-  # authenticated one — so the assertion that NOBODY can push past the
-  # required checks could never run in CI, while the code claimed it could
-  # (#228). An earlier decision declined admin scope on the reasoning that
-  # reading rulesets needed it; that turned out to be true of this one field
-  # and nothing else, and a permissions control nobody can verify is worth
-  # less than a read-only grant.
-  administration: read
+  # NOT `administration: read`. It was added here for #228 so the ruleset
+  # guard could read `bypass_actors` in CI, and it is not a permission
+  # GITHUB_TOKEN can be granted at all: the workflow failed validation, zero
+  # jobs ran, and the required-check binding refused the merge. Reading that
+  # field needs a PAT with admin scope — a secret to store and rotate, which
+  # is the owner's call and not this file's. The guard says so instead.
 
 concurrency:
   group: ci-${{ github.ref }}
