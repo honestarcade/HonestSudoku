@@ -140,11 +140,13 @@ jobs:
   # contributor runs locally before every commit.
   mutations:
     runs-on: ubuntu-latest
-    # Measured, not guessed: 92 mutations took 25m20s; 102 hit the old 30
-    # exactly and were cancelled with an empty log. Each mutation is one run
-    # of the guard suite (~15s), so the battery's cost is linear in its size
-    # and this number moves when the battery does. 45 is headroom for the
-    # current count, not a licence for a runaway.
+    # Measured, not guessed, and re-measured when the battery grows: 123
+    # mutations took 32m43s locally and 42m in this job on 2026-09-22; 102
+    # hit the old 30-minute limit exactly and were cancelled with an empty
+    # log. Each mutation is one run of the guard suite, so the cost is linear
+    # in the battery's size — `tools/mutation_check.py --list` gives the
+    # current count. 45 is headroom for that count, not a licence for a
+    # runaway, and a pass that adds entries re-reads this line.
     timeout-minutes: 45
     env:
       FLUTTER_SUPPRESS_ANALYTICS: "true"
@@ -175,9 +177,11 @@ jobs:
 
       - id: mutations
         name: Mutation battery
-        # One suite run per mutation, so this job alone makes ~88 calls to
-        # that endpoint. Anonymous it would exhaust the hourly limit partway
-        # through and report the remainder as WRONG-REASON (#219).
+        # One suite run per mutation, so this job alone makes one call to
+        # that endpoint per entry in the battery — over a hundred, and
+        # `--list` says how many today. Anonymous it would exhaust the
+        # hourly limit partway through and report the remainder as
+        # WRONG-REASON (#219).
         env:
           # HS_RULESET_READ_TOKEN can read `bypass_actors`; `github.token`
           # cannot (#228). The fallback is for a fork, whose PRs cannot see

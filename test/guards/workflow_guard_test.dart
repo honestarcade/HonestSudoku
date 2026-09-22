@@ -2732,10 +2732,13 @@ void main() {
               'absent field is a skip, and it must stay one — a maintainer '
               'without an admin token must not see a red suite for it',
         );
-        // The key and its value are asserted, not only the branch: `''` and
-        // `'0'` are what ci.yml writes when the secret is absent, and either
-        // one read as "the token can see the field" turns every fork's PR
-        // red for a field nobody there can read (#240).
+        // The key and its value are asserted, not only the branch. `''` is
+        // what ci.yml writes when the secret is absent — that expression
+        // yields `'1'` or `''` and can produce nothing else — and reading it
+        // as "the token can see the field" would turn every fork's PR red
+        // for a field nobody there can read. `'0'` and a neighbouring key
+        // are values the comparison must also refuse; they are not things
+        // ci.yml writes, which is what this comment said (#246).
         for (final other in const [
           {'HS_RULESET_READ_EXPECTED': ''},
           {'HS_RULESET_READ_EXPECTED': '0'},

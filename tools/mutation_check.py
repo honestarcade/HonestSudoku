@@ -1100,12 +1100,16 @@ def main() -> int:
     # #217 entries carried `'overflow'` -- a substring of `every rule reports
     # a document that overflows the loader` (#238).
     #
-    # Checked against the NAMES, from the json reporter, and not against the
-    # run's printed output: the compact reporter truncates each line to a
-    # terminal width, CI's reporter does not truncate at all, and the path it
-    # prefixes differs between the two. Auditing the output would have made
-    # this refuse in CI and pass locally, which is the machine-dependence
-    # #217 was reverted for once already. Names come from the source.
+    # Read from the json stream rather than from a run's printed output,
+    # because that output is machine-dependent in a way this check must not
+    # be. Measured 2026-09-22, `flutter test --no-pub --tags guard` piped to
+    # a file: no CR bytes, and every line still capped near 198 characters,
+    # so whether a given test's name survives depends on the length of the
+    # absolute path printed before it — which differs between this checkout
+    # and a runner's. CI's reporter prints them whole. An output-based audit
+    # would therefore refuse in one place and pass in the other, which is the
+    # machine-dependence #217 was reverted for once already. The json stream
+    # carries names and prints entire.
     #
     # The same run is the baseline assertion the battery never had: a suite
     # that is red before any mutation makes every verdict below meaningless.
