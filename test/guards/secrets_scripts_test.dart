@@ -143,14 +143,17 @@ void _deriveSentinels(Map<String, String> env) {
 void _addSentinel(String value, String where) {
   final v = value.trim();
   if (v.isEmpty) return;
-  // A one- or two-character value would match half the English in a log.
-  // Four is short enough to keep real fixtures working and long enough that a
-  // match means something.
-  if (v.length < 4) {
+  // Eight, to match `_leakForms`: below eight only the verbatim form is
+  // searched, so a seven-character fixture piped through `base64` would walk
+  // past the scan while the fixture looked covered. The floor here was four
+  // — long enough that a verbatim match means something, and exactly the gap
+  // #220 demonstrated and asked to close (#230).
+  if (v.length < 8) {
     fail(
-      'leak-fixture: the value of `$where` is ${v.length} character(s), too '
-      'short to search a log for. Give the fixture a distinctive value — a '
-      'short one silently disables the leak scan for this test',
+      'leak-fixture: the value of `$where` is ${v.length} character(s); the '
+      'transformed forms are searched from eight. Give the fixture a longer '
+      'distinctive value — a short one silently disables most of the leak '
+      'scan for this test',
     );
   }
   _sentinels.add(v);
@@ -966,6 +969,73 @@ exit 0
       );
       return found;
     }
+
+    test('a fixture too short for the transformed forms is refused', () {
+      // #230 item 3. `_leakForms` searches base64, reversed, hex and the rest
+      // only from eight characters, and `_addSentinel` accepted four — so a
+      // fixture of five to seven characters was searched verbatim only, the
+      // exact hole #220 demonstrated, with nothing saying so. The floor is
+      // asserted at its boundary: seven refused, eight accepted.
+      expect(
+        () => _addSentinel('seven77', 'a probe'),
+        throwsA(
+          isA<TestFailure>().having(
+            (f) => f.message,
+            'message',
+            contains('leak-fixture'),
+          ),
+        ),
+        reason:
+            'fixture-floor: a seven-character fixture was accepted as a '
+            'sentinel, and only its verbatim form will ever be searched',
+      );
+      _addSentinel('eight888', 'a probe');
+      expect(
+        _sentinels,
+        contains('eight888'),
+        reason: 'fixture-floor: an eight-character fixture was refused',
+      );
+      _sentinels.remove('eight888');
+    });
+
+    test('the overwrite refusal sees the committed certificate from any '
+        'directory', () {
+      // #230 item 8. Two comments in the script said it cd's to the
+      // repository root; it did not, so `CERT_OUT`'s default resolved
+      // against the caller's directory and the refusal protecting the
+      // committed `android/signing/upload_certificate.pem` checked a path
+      // that does not exist when the script is run from anywhere else. Run
+      // it from a scratch directory with the default output: it must refuse,
+      // and name the file.
+      final elsewhere = Directory('$_home/elsewhere')
+        ..createSync(recursive: true);
+      addTearDown(() => elsewhere.deleteSync(recursive: true));
+      final r = _exec(
+        '/bin/bash',
+        ['${repoRoot.path}/tools/make_upload_key.sh'],
+        workingDirectory: elsewhere.path,
+        environment: {
+          'PATH': Platform.environment['PATH'] ?? '/usr/bin:/bin',
+          'HOME': elsewhere.path,
+          'HS_KEYSTORE_PASS': 'irrelevant-but-long-enough',
+          'HS_KEYTOOL': '/nonexistent/keytool',
+        },
+        why: 'make_upload_key.sh overwrite refusal from another directory',
+      );
+      expect(
+        r.code,
+        2,
+        reason:
+            'cert-cwd: run from outside the repository, the script did not '
+            'refuse over the committed certificate. Exit ${r.code}; stderr: '
+            '${r.err}',
+      );
+      expect(
+        r.err,
+        contains('upload_certificate.pem already exists'),
+        reason: 'cert-cwd: the refusal does not name the committed certificate',
+      );
+    });
 
     test('a password too short for the leak scan is refused', () {
       // The leak scan searches TRANSFORMED forms — base64, reversed, the
@@ -1810,9 +1880,11 @@ exit 0
     // that would otherwise stand here.
     //
     // Scoping this rule across `test/guards/` is correct and it is what #220
-    // asked for. Doing it surfaced 20 raw process starts in six files —
-    // including `signing_guard_test.dart`, which runs real Flutter builds
-    // with the HS_* signing variables, so those genuinely need scanning.
+    // asked for. Doing it surfaced raw process starts in every other guard
+    // file (#222 carries the enumerated list; a count was stated three
+    // different ways and is not repeated here) — including
+    // `signing_guard_test.dart`, which runs real Flutter builds with the
+    // HS_* signing variables, so those genuinely need scanning.
     // Routing them through a shared chokepoint is a refactor of the test
     // infrastructure, not a line change, and writing 20 exemptions instead
     // would be precisely the self-granted exemption tightened below.

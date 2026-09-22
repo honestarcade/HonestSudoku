@@ -16,6 +16,7 @@ library;
 // job name; that lives in the repository ruleset and is recorded on the issue.
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:flutter_test/flutter_test.dart';
 
@@ -364,9 +365,17 @@ List<String> _swallowsFailure(String body) {
 
 /// The command each workflow step's success depends on.
 ///
-/// Top level because two tests need it: `a step fails when the command it
-/// runs fails` executes against it, and `every declared key link is actually
-/// wired` asserts each link a story promised is covered by that execution.
+/// Top level because three tests need it: `a step fails when the command it
+/// runs fails` executes against it, `every declared key link is actually
+/// wired` asserts each link a story promised is covered by that execution,
+/// and `every [] step is exercised by a named test` closes the exemptions.
+///
+/// `[]` means ONE thing: the step runs no command the propagation check can
+/// stub, so that check never executes it. It does not mean the step's
+/// failure is harmless — `secrets_present` exists to fail — and it is not a
+/// waiver. Every `[]` step must be named by another test that runs it
+/// (`_claims`, `_destroys` or `_preflight`), and the closure test asserts
+/// those two sets are the same.
 const _dependsOn = <String, Map<String, Map<String, List<String>>>>{
   '.github/workflows/ci.yml': {
     'gate': {
@@ -449,12 +458,6 @@ bool _isRateLimited(String status, String payload) {
   return body.contains('rate limit') || body.contains('secondary rate');
 }
 
-/// The credential files a workflow writes into `$RUNNER_TEMP`.
-///
-/// ONE list, used both to plant them before a body runs and to assert the
-/// steps that promise to remove them actually do. Two lists drift, and that
-/// drift is exactly what #224 was: the harness planted `upload.keystore`
-/// only, so "is `play-sa.json` gone?" was satisfied before the body ran.
 /// Secrets whose value is public by design.
 ///
 /// The keystore ALIAS is in `android/signing/README.md`, on keytool's command
@@ -481,7 +484,261 @@ Iterable<String> _leakShapes(String secret) sync* {
   yield secret.toUpperCase();
 }
 
+/// The credential files the harness plants in `$RUNNER_TEMP` before a body
+/// runs.
+///
+/// Planting ONLY. The steps that promise to remove them are named per step
+/// in `_destroys`, each with the files it removes, and that test asserts
+/// every named file EXISTS before the body runs. So a file named there and
+/// missing here is detected, not prevented: #224 was the harness planting
+/// `upload.keystore` alone, so "is `play-sa.json` gone?" was true before the
+/// body ran, and the precondition is what now refuses that.
 const _runnerCredentials = ['upload.keystore', 'play-sa.json'];
+
+/// A value nothing else could produce, in the base64 alphabet and padded to
+/// a length base64 accepts, so a body may run it through a real decoder.
+String _sentinel(String tag) {
+  final raw = 'HS0SENTINEL0${tag}0DONOTPUBLISH';
+  return raw.padRight((raw.length + 3) ~/ 4 * 4, 'A');
+}
+
+/// The stubs that run the real command rather than pretend to be it.
+///
+/// `base64` printed a fixed word, so a secret piped through it never came
+/// out encoded and `_leakShapes`' base64 form could not fire — the issue's
+/// own reproducer was green (#232). `sha256sum` printed the same word, so
+/// the summary's digest row said "stub". A succeeding stub must behave enough
+/// like the command for a correct step to produce real output, or the
+/// positive control passes while the property goes untested; `curl` and
+/// `keytool` learned that in round eight and keep synthetic output only
+/// because the real ones need a network and a keystore.
+const _runReal = {'base64', 'sha256sum'};
+
+/// Where the host keeps [command], for [_runReal].
+///
+/// By path, not by PATH: the harness PATH is `bin:/usr/bin:/bin`, and macOS
+/// keeps `sha256sum` in `/sbin`. Null when the host has no such command, and
+/// the caller falls back to the echoing stub — whose output then says "stub"
+/// where a digest should be, which is visible rather than wrong.
+String? _realBinary(String command) {
+  for (final dir in const ['/usr/bin', '/bin', '/sbin', '/usr/sbin']) {
+    final candidate = File('$dir/$command');
+    if (candidate.existsSync()) return candidate.path;
+  }
+  return null;
+}
+
+/// One step whose output must tell the truth, and the truth it must tell.
+///
+/// [completes] is the positive control: a body that cannot run says nothing,
+/// and "it did not say the wrong thing" is true of silence. `false` is for
+/// steps whose job on this input is to REFUSE, where completing is the lie.
+typedef _Claim = ({
+  String path,
+  String job,
+  String step,
+  Map<String, String> env,
+  Map<String, String> expressions,
+  Map<String, String> plant,
+  bool completes,
+  List<String> mustSay,
+  List<String> mustNotSay,
+});
+
+/// What `toJSON(steps)` holds after `build` failed: the shape GitHub renders,
+/// pretty-printed, because `name_failure` greps it with `-B2` to reach the
+/// step's name two lines above its outcome.
+const _stepsWithOneFailure = '''
+{
+  "version": {
+    "outputs": {},
+    "outcome": "success",
+    "conclusion": "success"
+  },
+  "build": {
+    "outputs": {},
+    "outcome": "failure",
+    "conclusion": "failure"
+  },
+  "scan": {
+    "outputs": {},
+    "outcome": "skipped",
+    "conclusion": "skipped"
+  }
+}''';
+
+/// The same object when nothing failed.
+const _stepsAllSucceeded = '''
+{
+  "version": {
+    "outputs": {},
+    "outcome": "success",
+    "conclusion": "success"
+  },
+  "build": {
+    "outputs": {},
+    "outcome": "success",
+    "conclusion": "success"
+  }
+}''';
+
+/// The `[]` steps that make a claim, and what each must and must not say.
+///
+/// Top level so `every [] step is exercised by a named test` can hold this
+/// map to the `[]` set in `_dependsOn` (#226).
+const _claims = <String, _Claim>{
+  'the failed-gate notice does not claim a release': (
+    path: '.github/workflows/release.yml',
+    job: 'report-gate-failure',
+    step: 'say',
+    env: {'TAG': 'v9.9.9'},
+    expressions: {},
+    plant: {},
+    completes: true,
+    mustSay: ['nothing shipped', 'v9.9.9'],
+    mustNotSay: ['shipped to', 'uploaded', 'succeeded'],
+  ),
+  'the failure diagnostic names the failing step, and only it': (
+    path: '.github/workflows/release.yml',
+    job: 'ship',
+    step: 'name_failure',
+    env: {},
+    // The value the runner would substitute, so the grep has something real
+    // to find. With the default placeholder the grep matched nothing and
+    // `|| true` kept the step green whatever it printed — "diagnostics
+    // disabled" passed (#226).
+    expressions: {'toJSON(steps)': _stepsWithOneFailure},
+    plant: {},
+    completes: true,
+    mustSay: ['"build"', '"outcome": "failure"'],
+    mustNotSay: ['"version"', '"scan"', 'no step failed'],
+  ),
+  'the failure diagnostic is silent when nothing failed': (
+    path: '.github/workflows/release.yml',
+    job: 'ship',
+    step: 'name_failure',
+    env: {},
+    expressions: {'toJSON(steps)': _stepsAllSucceeded},
+    plant: {},
+    completes: true,
+    mustSay: [],
+    mustNotSay: ['"outcome"', '"build"'],
+  ),
+  'the release summary names the real track and version': (
+    path: '.github/workflows/release.yml',
+    job: 'ship',
+    step: 'summary',
+    env: {'TAG': 'v9.9.9'},
+    expressions: {},
+    plant: {},
+    completes: true,
+    mustSay: [
+      '### Release v9.9.9',
+      '| track | internal |',
+      '| package | com.honestarcade.sudoku |',
+      '| bundle SHA-256 | ',
+    ],
+    mustNotSay: ['production', 'all checks passed'],
+  ),
+  'the release summary carries the no-release-note fallback': (
+    path: '.github/workflows/release.yml',
+    job: 'ship',
+    step: 'summary',
+    env: {'TAG': 'v9.9.9'},
+    expressions: {},
+    // What `asset` leaves behind when the GitHub release is missing (#180).
+    plant: {
+      'runner/no-release-note':
+          'NO0RELEASE0NOTE0SENTINEL: no GitHub release for this tag',
+    },
+    completes: true,
+    mustSay: ['NO0RELEASE0NOTE0SENTINEL'],
+    mustNotSay: [],
+  ),
+  'the promote refusal refuses production, by name': (
+    path: '.github/workflows/play-promote.yml',
+    job: 'promote',
+    step: 'refuse',
+    env: {'FROM_TRACK': 'internal', 'TO_TRACK': 'production'},
+    expressions: {},
+    plant: {},
+    completes: false,
+    mustSay: ['production is a human act'],
+    mustNotSay: ['accepted'],
+  ),
+  'the promote refusal accepts a testing track': (
+    path: '.github/workflows/play-promote.yml',
+    job: 'promote',
+    step: 'refuse',
+    env: {'FROM_TRACK': 'internal', 'TO_TRACK': 'alpha'},
+    expressions: {},
+    plant: {},
+    completes: true,
+    mustSay: ['internal -> alpha accepted'],
+    mustNotSay: ['is not one of', 'human act'],
+  ),
+  'the promote summary does not claim a promotion that did not happen': (
+    path: '.github/workflows/play-promote.yml',
+    job: 'promote',
+    step: 'summary',
+    env: {
+      'PROMOTE_OUTCOME': 'failure',
+      'FROM_TRACK': 'internal',
+      'TO_TRACK': 'alpha',
+    },
+    expressions: {},
+    plant: {},
+    completes: true,
+    mustSay: ['Nothing was promoted', 'internal -> alpha'],
+    mustNotSay: ['Promoted on Play'],
+  ),
+  'the promote summary reports the promotion that happened': (
+    path: '.github/workflows/play-promote.yml',
+    job: 'promote',
+    step: 'summary',
+    env: {
+      'PROMOTE_OUTCOME': 'success',
+      'FROM_TRACK': 'internal',
+      'TO_TRACK': 'alpha',
+    },
+    expressions: {},
+    plant: {'runner/promote.out': 'promoted=42\nstatus=completed\n'},
+    completes: true,
+    mustSay: [
+      'Promoted on Play: versionCode [42], internal -> alpha '
+          '(release status: completed)',
+    ],
+    mustNotSay: ['Nothing was promoted'],
+  ),
+};
+
+/// The `[]` steps that exist to destroy a credential, and the files each
+/// removes from `$RUNNER_TEMP`. Top level for the same closure test.
+const _destroys = <String, ({String job, String step, List<String> files})>{
+  '.github/workflows/release.yml': (
+    job: 'ship',
+    step: 'shred',
+    files: ['upload.keystore'],
+  ),
+  '.github/workflows/play-promote.yml': (
+    job: 'promote',
+    step: 'forget',
+    files: ['play-sa.json'],
+  ),
+  '.github/workflows/play-api-check.yml': (
+    job: 'check',
+    step: 'forget',
+    files: ['play-sa.json', 'upload.keystore'],
+  ),
+};
+
+/// The one `[]` step covered by `the secrets pre-flight refuses a missing
+/// secret`, named here so the closure test can count it.
+const _preflight = (
+  path: '.github/workflows/release.yml',
+  job: 'ship',
+  step: 'secrets_present',
+);
 
 /// Runs a workflow step's `run:` body the way the runner would.
 ///
@@ -506,6 +763,8 @@ _runStepBody(
   required Iterable<String> ambient,
   String? failing,
   Map<String, String> extraEnv = const {},
+  Map<String, String> expressions = const {},
+  Map<String, String> plant = const {},
   bool keepWorkspace = false,
   void Function(Directory workspace)? beforeRun,
 }) {
@@ -537,11 +796,36 @@ done
 printf '200'
 exit 0
 ''';
+      // `gh release download --dir D` must leave the asset in D: `asset`
+      // re-hashes the download with a REAL `sha256sum` now (#232), and a
+      // stub that downloaded nothing failed the step for want of a file. The
+      // copy is byte-identical to the built bundle, which is what a correct
+      // `gh` delivers; whether the two hashes AGREE is the step's own logic,
+      // and what is asked here is only whether `gh` failing reaches it.
+      const ghStub = '''
+#!/bin/sh
+dir=""
+prev=""
+verb=""
+for arg in "\$@"; do
+  [ "\$prev" = "--dir" ] && dir="\$arg"
+  [ "\$arg" = "download" ] && verb=download
+  prev="\$arg"
+done
+if [ "\$verb" = download ] && [ -n "\$dir" ]; then
+  mkdir -p "\$dir"
+  cp build/app/outputs/bundle/release/app-release.aab "\$dir/app-release.aab"
+fi
+echo "stub output for gh"
+exit 0
+''';
       final String script;
       if (fails) {
         script = '#!/bin/sh\necho "\$command: simulated failure" >&2\nexit 1\n';
       } else if (command == 'curl') {
         script = curlStub;
+      } else if (command == 'gh') {
+        script = ghStub;
       } else if (command == 'keytool') {
         // Both fingerprints a body compares come from keytool — one from the
         // keystore listing, one from `-printcert` on the committed PEM — so
@@ -554,6 +838,8 @@ exit 0
             'echo "Alias name: \${HS_KEY_ALIAS:-upload}"\n'
             'echo "SHA256: AA:BB:CC:DD:EE:FF"\n'
             'exit 0\n';
+      } else if (_runReal.contains(command) && _realBinary(command) != null) {
+        script = '#!/bin/sh\nexec "${_realBinary(command)}" "\$@"\n';
       } else {
         script = '#!/bin/sh\necho "stub output for \$command"\nexit 0\n';
       }
@@ -575,8 +861,8 @@ exit 0
       stub(command);
     }
     // Not in any `dependsOn` list, but bodies call them and the host may not
-    // have them (`sha256sum` is absent on macOS), which would make a result
-    // depend on who ran the suite.
+    // have them (`sha256sum` is absent on older macOS), which would make a
+    // result depend on who ran the suite.
     for (final command in const ['sha256sum', 'unzip', 'curl']) {
       if (!ambient.contains(command)) stub(command);
     }
@@ -589,13 +875,25 @@ exit 0
       ..createSync(recursive: true)
       ..writeAsStringSync('bundle');
 
-    // What the runner substitutes before the shell starts. The value is a
-    // plain word so the body stays valid shell; what each expression would
-    // really hold is asserted by the tests that pin the `env:` blocks.
-    final expanded = body.replaceAll(
-      RegExp(r'\$\{\{[^}]*\}\}'),
-      'workflow-expression',
+    // What the runner substitutes before the shell starts. By default a
+    // plain word, so the body stays valid shell and what each expression
+    // would really hold is left to the tests that pin the `env:` blocks. A
+    // caller asking about an expression's VALUE — `name_failure` greps
+    // `toJSON(steps)` — supplies it through [expressions] (#226).
+    final expanded = body.replaceAllMapped(
+      RegExp(r'\$\{\{([^}]*)\}\}'),
+      (m) => expressions[m.group(1)!.trim()] ?? 'workflow-expression',
     );
+
+    // Files the body reads that the fixed workspace does not have —
+    // `$RUNNER_TEMP/no-release-note` is written by an earlier step of the
+    // real job. Setup, declared by the caller; distinct from [beforeRun],
+    // which asserts and does not arrange.
+    plant.forEach((relative, content) {
+      File('${dir.path}/$relative')
+        ..createSync(recursive: true)
+        ..writeAsStringSync(content);
+    });
 
     // The caller's chance to assert the workspace is what it expects BEFORE
     // the body runs — a precondition check, not a hook for setup (#224).
@@ -644,6 +942,9 @@ exit 0
       if (entity is! File) continue;
       if (entity.path.startsWith('${bin.path}/')) continue;
       if (entity.path == script.path) continue;
+      // An input the caller planted is not something the body wrote; left in,
+      // "the summary carries the note" would be satisfied by the note itself.
+      if (plant.keys.any((p) => entity.path == '${dir.path}/$p')) continue;
       try {
         wrote.writeln(entity.readAsStringSync());
       } catch (_) {
@@ -2294,7 +2595,8 @@ void main() {
       final bypass = doc['bypass_actors'];
       if (bypass == null) {
         // Not a failure and not a silent pass: a skip, which the runner
-        // counts and prints, so a green run visibly says `~1`.
+        // counts and prints — `~1` in the compact reporter, `⏭️` and
+        // `1 skipped` in CI's expanded one.
         markTestSkipped(
           'bypass_actors is unreadable without repository administration, '
           'which GITHUB_TOKEN cannot hold. The enforcement, target, branch '
@@ -2481,52 +2783,23 @@ void main() {
     });
 
     test('a step that states something states the truth', () {
-      // #226. Nine steps are declared `[]` in `_dependsOn` — their failure
-      // does not stop the job — and a `[]` step is never executed by the
-      // propagation check. #224 covered the three that destroy a credential.
-      // These are the four that make a CLAIM, and every one could be replaced
-      // by an `echo` of the opposite with the suite green.
+      // #226. Nine steps are declared `[]` in `_dependsOn` — they run no
+      // command the propagation check stubs, so it never runs them; the
+      // definition is on `_dependsOn`. #216 covered the three that destroy a
+      // credential and `secrets_present` has its own test below. The rest
+      // make a CLAIM in a run summary or a log, and each could be replaced
+      // by an `echo` of the opposite with the suite green — `summary` and
+      // `name_failure` still could at round eleven, and play-promote's
+      // `refuse` and `summary` were run by nothing at all.
       //
       // `say` is the sharpest: on a failed gate it is the only thing that
       // says nothing shipped, and it could say the reverse.
       //
       // Each case runs the real body and asserts what it WROTE — the same
       // question #215 and #224 ask, pointed at honesty rather than secrecy.
-      const cases =
-          <
-            String,
-            ({
-              String path,
-              String job,
-              String step,
-              Map<String, String> env,
-              List<String> mustSay,
-              List<String> mustNotSay,
-            })
-          >{
-            'the failed-gate notice does not claim a release': (
-              path: '.github/workflows/release.yml',
-              job: 'report-gate-failure',
-              step: 'say',
-              env: {'TAG': 'v9.9.9'},
-              mustSay: ['nothing shipped', 'v9.9.9'],
-              mustNotSay: ['shipped to', 'uploaded', 'succeeded'],
-            ),
-            'the failure diagnostic names the failing step': (
-              path: '.github/workflows/release.yml',
-              job: 'ship',
-              step: 'name_failure',
-              env: {},
-              // It greps `toJSON(steps)`, which the harness expands to a literal,
-              // so the grep finds nothing and `|| true` keeps the step green.
-              // What can be asserted is that it still LOOKS: a body that stopped
-              // grepping for a failed outcome would not contain the pattern.
-              mustSay: <String>[],
-              mustNotSay: ['no step failed', 'all steps succeeded'],
-            ),
-          };
-
-      cases.forEach((what, spec) {
+      // The cases live in `_claims`, top level, because `every [] step is
+      // exercised by a named test` holds that map to the `[]` set.
+      _claims.forEach((what, spec) {
         final wf = Workflow.parse(spec.path, readFile(spec.path));
         expect(wf.problem, isNull, reason: '${spec.path}: ${wf.problem}');
         final step = wf
@@ -2544,21 +2817,27 @@ void main() {
           step.run!,
           ambient: _ambientCommands,
           extraEnv: spec.env,
+          expressions: spec.expressions,
+          plant: spec.plant,
         );
 
         // The positive control. A body that cannot run says nothing, and
         // "it did not say the wrong thing" would then be true of silence —
-        // which is how #224 and #225 were vacuous (#226).
+        // which is how #224 and #225 were vacuous (#226). For a step whose
+        // job on this input is to refuse, completing IS the wrong thing.
         expect(
           r.code,
-          0,
-          reason:
-              'honesty: ${spec.path} job `${spec.job}` step `${spec.step}` '
-              'did not complete, so what it says was never observed. '
-              'stderr: ${r.err}',
+          spec.completes ? 0 : isNot(0),
+          reason: spec.completes
+              ? 'honesty: ${spec.path} job `${spec.job}` step `${spec.step}` '
+                    'did not complete, so what it says was never observed. '
+                    'stderr: ${r.err}'
+              : 'honesty: ${spec.path} job `${spec.job}` step `${spec.step}` '
+                    'completed on an input it exists to refuse. $what',
         );
 
-        final said = '${r.out}\n${r.wrote}';
+        // stderr included: a refusal explains itself there.
+        final said = '${r.out}\n${r.err}\n${r.wrote}';
         for (final phrase in spec.mustSay) {
           expect(
             said,
@@ -2578,18 +2857,49 @@ void main() {
       });
     });
 
-    test('the secrets pre-flight refuses a missing secret', () {
-      // The other half of `secrets_present`: it is `[]` because its failure
-      // SHOULD stop the job, and nothing asserted it can fail. Gutted to
-      // `echo "all five secrets are present"` it was green — a step named
-      // "Assert every secret is present" announcing a check it no longer
-      // performs (#204's bullet at round eight, #216's at round nine, still
-      // true at round ten).
-      final wf = Workflow.parse(
-        '.github/workflows/release.yml',
-        readFile('.github/workflows/release.yml'),
+    test('every [] step is exercised by a named test', () {
+      // #226's "better still". Declaring a step `[]` in `_dependsOn` takes
+      // it out of the propagation check, and for nine steps that was the end
+      // of the story: three destroy a credential, six make a claim, and
+      // until #216 and #226 none was run by anything. The rationale for `[]`
+      // used to live in three comments that disagreed (#233); it lives on
+      // `_dependsOn` now, and this is the part of it that executes: the
+      // `[]` steps and the steps some test runs must be the SAME set. A `[]`
+      // step nothing names is uncovered; a named step that is not `[]` is a
+      // spec that has drifted from the map.
+      final exempt = <String>{
+        for (final wf in _dependsOn.entries)
+          for (final job in wf.value.entries)
+            for (final step in job.value.entries)
+              if (step.value.isEmpty) '${wf.key} ${job.key} ${step.key}',
+      };
+      final covered = <String>{
+        for (final c in _claims.values) '${c.path} ${c.job} ${c.step}',
+        for (final d in _destroys.entries)
+          '${d.key} ${d.value.job} ${d.value.step}',
+        '${_preflight.path} ${_preflight.job} ${_preflight.step}',
+      };
+      expect(
+        covered,
+        unorderedEquals(exempt),
+        reason:
+            'coverage: the `[]` steps of `_dependsOn` and the steps the '
+            'honesty, destroys and pre-flight tests run are not the same '
+            'set. A `[]` step no test names is exercised by nothing — the '
+            'state #216 found seven steps in and #226 found four',
       );
-      final body = wf.job('ship')!.stepById('secrets_present')!.run!;
+    });
+
+    test('the secrets pre-flight refuses a missing secret', () {
+      // The other half of `secrets_present`: it is `[]` because it runs no
+      // command the propagation check could stub — the check is five
+      // `[ -z ]` tests — so nothing exercised it, and nothing asserted it
+      // can fail. Gutted to `echo "all five secrets are present"` it was
+      // green — a step named "Assert every secret is present" announcing a
+      // check it no longer performs (#204's bullet at round eight, #216's at
+      // round nine, still true at round ten).
+      final wf = Workflow.parse(_preflight.path, readFile(_preflight.path));
+      final body = wf.job(_preflight.job)!.stepById(_preflight.step)!.run!;
 
       const names = [
         'PLAY_SERVICE_ACCOUNT_JSON',
@@ -2638,11 +2948,11 @@ void main() {
     });
 
     test('every step that promises to destroy a credential destroys it', () {
-      // #216. Nine steps were declared `[]` in `_dependsOn` — "this step's
-      // failure does not matter" — and a `[]` step is never run at all, so
-      // seven of them were exercised by nothing. Three of those exist solely
-      // to destroy a credential, and each could be replaced by `echo` with
-      // the whole suite green:
+      // #216. Nine steps were declared `[]` in `_dependsOn` — they run no
+      // command the propagation check stubs — and a `[]` step is never run
+      // by that check, so seven of them were exercised by nothing. Three of
+      // those exist solely to destroy a credential, and each could be
+      // replaced by `echo` with the whole suite green:
       //
       //   release.yml      ship    shred   -> the decoded signing keystore
       //   play-promote.yml promote forget  -> the service-account key
@@ -2652,27 +2962,9 @@ void main() {
       // its failure genuinely should not stop the job. What was missing is
       // the other half: saying what DOES cover it. This is that half, and it
       // asks the only question that matters for a step named "remove": run
-      // it, then look for the file.
-      const destroys =
-          <String, ({String job, String step, List<String> files})>{
-            '.github/workflows/release.yml': (
-              job: 'ship',
-              step: 'shred',
-              files: ['upload.keystore'],
-            ),
-            '.github/workflows/play-promote.yml': (
-              job: 'promote',
-              step: 'forget',
-              files: ['play-sa.json'],
-            ),
-            '.github/workflows/play-api-check.yml': (
-              job: 'check',
-              step: 'forget',
-              files: ['play-sa.json', 'upload.keystore'],
-            ),
-          };
-
-      destroys.forEach((path, spec) {
+      // it, then look for the file. The map is `_destroys`, top level, so the
+      // closure test can hold it to the `[]` set.
+      _destroys.forEach((path, spec) {
         final wf = Workflow.parse(path, readFile(path));
         expect(wf.problem, isNull, reason: '$path: ${wf.problem}');
         final step = wf
@@ -2798,7 +3090,12 @@ void main() {
                     .firstMatch(value)!
                     .group(1)!;
                 if (_publicSecrets.contains(secret)) return;
-                secretEnv[name] = 'HS-SENTINEL-${n++}-do-not-publish';
+                // Base64 alphabet, length a multiple of four: `keystore`
+                // runs its value through a REAL `base64 -d` now (#232), and
+                // a value it rejects fails the step before the line that
+                // would leak — the control below would be red for a reason
+                // that is not a leak.
+                secretEnv[name] = _sentinel('${n++}');
               });
             }
             if (secretEnv.isEmpty) continue;
@@ -2817,7 +3114,7 @@ void main() {
             // checks pass and the rest of the body actually runs. And
             // `expect(code, 0)` on the shared pass, because a body that
             // cannot complete proves nothing — the same control #224 needed.
-            const shared = 'HS-SENTINEL-SHARED-do-not-publish';
+            final shared = _sentinel('SHARED');
             final sharedEnv = {for (final name in secretEnv.keys) name: shared};
 
             final distinct = _runStepBody(
@@ -2902,9 +3199,10 @@ void main() {
       // on that script.
 
       // The map is closed against the files: every run-bodied step in every
-      // workflow must be named. A step whose failure genuinely does not
-      // matter is named with an empty list, so leaving one out is a
-      // deliberate act rather than an omission nobody sees.
+      // workflow must be named. A step that runs no stubbable command is
+      // named with an empty list, so leaving one out is a deliberate act
+      // rather than an omission nobody sees — and `every [] step is
+      // exercised by a named test` then demands the test that covers it.
       final actual = <String>{};
       for (final path in _workflowFiles()) {
         final wf = Workflow.parse(path, readFile(path));
@@ -3002,14 +3300,9 @@ void main() {
       // a rule calls internally, a document it cannot read must come back as
       // an offender rather than as an exception that takes the suite with it.
       //
-      // Honest limit, because this is the fifth attempt at this property and
-      // an overstated claim is what made the previous four look finished:
-      // this covers the errors a loader RETURNS on bad input. It does not
-      // reproduce a stack overflow — the depth needed to overflow the
-      // recursive loader also destabilises whatever test file runs beside it
-      // (#177, #191), so `Workflow.parse` keeps its own injected-loader test
-      // for that one. What changed is that the OTHER paths are no longer
-      // unguarded.
+      // Scope: the errors a loader RETURNS on bad input — every row below
+      // raises a `YamlException` or parses to the wrong type. The `Error`
+      // path, a real stack overflow in the loader, is the next test's.
       const rules = <String, List<WorkflowOffender> Function(String, String)>{
         'unpinnedUses': unpinnedUses,
         'permissionOffenders': permissionOffenders,
@@ -3018,29 +3311,6 @@ void main() {
         'untrustedInRunOffenders': untrustedInRunOffenders,
         'shellTraceOffenders': shellTraceOffenders,
       };
-
-      // NO OVERFLOW ROW HERE, and #217 carries why.
-      //
-      // The document that would close #217 must raise an `Error`, not an
-      // `Exception` — that distinction is the whole five-issue lineage, and
-      // only a stack overflow in the loader produces one. Measured: alias
-      // recursion and billion-laughs both raise `YamlException`, which the
-      // bypass catches, and pre-consuming the stack by 120000 frames does not
-      // overflow either.
-      //
-      // A real overflow is machine-dependent and expensive. On this macOS
-      // machine 32000 levels overflow; on the ubuntu runner they parse
-      // cleanly as a YamlList, so the row silently exercised ordinary control
-      // flow there — caught only because the row asserted it had overflowed.
-      // Cost climbs superlinearly per rule: 32000 -> 5s, 64000 -> 20s,
-      // 96000 -> 45s, and the runner needs more than 32000.
-      //
-      // So a fixed depth is wrong on one machine or the other, an adaptive
-      // search costs minutes on the deeper-stacked one, and skipping where it
-      // cannot overflow would make the #217 mutation survive in CI. None of
-      // those ships. The data and the likeliest real fix — run the parse in a
-      // subprocess under `ulimit -s`, which makes the depth small and the
-      // machine irrelevant — are on the issue.
 
       const unreadable = <String, String>{
         'unclosed flow sequence': 'jobs: [a, b',
@@ -3079,6 +3349,86 @@ void main() {
         });
       }
     });
+
+    test('every rule reports a document that overflows the loader', () async {
+      // #217, the sixth defeat of #177: a second parse path that catches
+      // `YamlException` but not `Error` passed the previous test, because
+      // none of its documents raises an `Error`. Only a real stack overflow
+      // in the recursive loader does — alias recursion and billion-laughs
+      // both raise `YamlException`; measured on the issue.
+      //
+      // A real overflow was unshippable for a round because its depth is a
+      // property of the STACK: 32000 levels overflow on macOS and parse on
+      // the ubuntu runner, and the cost climbs superlinearly (32000 -> 5s,
+      // 96000 -> 45s per rule). `ulimit -s` does not help; the VM ignores it
+      // (measured: 64000 frames at every limit from 256K to unlimited).
+      //
+      // What does help is that a WORKER isolate's stack is a VM constant and
+      // eight times smaller than the main isolate's: 4000 levels overflow
+      // there in about 80ms. So every parse here runs in `Isolate.run`, the
+      // depth is found by doubling until `Workflow.parse` itself reports the
+      // overflow — asserting it happened, which is the one thing the reverted
+      // row got right — and each rule then meets a document twice that deep.
+      // Cheap everywhere, and machine-independent for the right reason.
+      String deep(int n) => 'jobs: ${'[' * n}${']' * n}\n';
+      const cap = 1 << 16;
+
+      late final int depth;
+      try {
+        depth = await Isolate.run(() {
+          for (var n = 1000; n <= cap; n *= 2) {
+            final problem = Workflow.parse('deep.yml', deep(n)).problem;
+            if (problem != null && problem.contains('too deep')) return n;
+          }
+          return -1;
+        });
+      } on Object catch (e) {
+        fail(
+          'overflow: `Workflow.parse` THREW ${e.runtimeType} on a document '
+          'that overflows the loader, instead of reporting it. The '
+          '`StackOverflowError` handler #177 added is gone or unreached',
+        );
+      }
+      expect(
+        depth,
+        isNot(-1),
+        reason:
+            'overflow: no depth up to $cap overflowed the loader in a worker '
+            'isolate, so nothing below exercises the Error path. The worker '
+            'stack has grown; raise the cap',
+      );
+
+      const rules = <String, List<WorkflowOffender> Function(String, String)>{
+        'unpinnedUses': unpinnedUses,
+        'permissionOffenders': permissionOffenders,
+        'concurrencyOffenders': concurrencyOffenders,
+        'secretsInRunOffenders': secretsInRunOffenders,
+        'untrustedInRunOffenders': untrustedInRunOffenders,
+        'shellTraceOffenders': shellTraceOffenders,
+      };
+      final text = deep(depth * 2);
+      for (final rule in rules.entries) {
+        late final List<WorkflowOffender> offenders;
+        try {
+          offenders = await Isolate.run(() => rule.value('deep.yml', text));
+        } on Object catch (e) {
+          fail(
+            'overflow: rule `${rule.key}` THREW ${e.runtimeType} on a '
+            'document ${depth * 2} levels deep instead of reporting it. A '
+            'parse path that catches YamlException and not Error is #177 '
+            'again, reachable through whatever this rule calls — and it '
+            'takes the whole suite with it (#217)',
+          );
+        }
+        expect(
+          offenders.map((o) => o.message).join('\n'),
+          contains('too deep'),
+          reason:
+              'overflow: rule `${rule.key}` did not report the overflow as '
+              'the offender it is designed to be; it returned $offenders',
+        );
+      }
+    }, timeout: const Timeout(Duration(minutes: 2)));
 
     test('the rules parse through Workflow.parse and nothing else', () {
       // #203: `parse` and `parseWithLoader` were collapsed into one body so

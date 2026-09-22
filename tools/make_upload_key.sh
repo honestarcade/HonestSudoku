@@ -18,6 +18,12 @@
 #   ~/HonestArcadeApps/secrets/sudoku-signing-credentials.txt
 set -euo pipefail
 
+# Every relative path below is relative to the repository root, and the
+# refusal that protects the committed certificate is only a refusal if it
+# looks there: run from anywhere else, CERT_OUT named a file that did not
+# exist and the script carried on (#230).
+cd "$(dirname "$0")/.."
+
 # Overridable so the round-trip can be tested without touching the owner's
 # real secrets directory. #13's discretion specified this for exactly that
 # reason and it was never added, which is why the guard fixture has to fake
