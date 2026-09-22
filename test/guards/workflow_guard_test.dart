@@ -2858,6 +2858,77 @@ void main() {
       },
     );
 
+    test(
+      'the flag the workflow sets is the flag the guard reads',
+      () {
+        // The last unexercised wiring of #228, and #240 recorded it as
+        // untestable in-process, which it is: a test cannot set its own
+        // process environment, so hard-coding the argument at the call site
+        // was green. A CHILD can. This runs the ruleset test with the flag
+        // set and both tokens stripped, where an absent `bypass_actors` must
+        // be a FAILURE — with the argument hard-coded it becomes a skip,
+        // which is the silent downgrade #228 exists to prevent (#245).
+        //
+        // `slow`, and the first test to carry that tag. Measured on
+        // 2026-09-22 (`flutter test --no-pub --plain-name 'the flag the
+        // workflow sets'`): about 2s, because the child reuses the build the
+        // parent just made. The tag is for the multiplier rather than for
+        // that number — the battery would otherwise spawn one more full test
+        // process per mutation, and there are over a hundred.
+        final env = Map<String, String>.from(Platform.environment)
+          ..remove('GITHUB_TOKEN')
+          ..remove('GH_TOKEN')
+          ..['HS_RULESET_READ_EXPECTED'] = '1';
+        final child = Process.runSync(
+          'flutter',
+          [
+            'test',
+            '--no-pub',
+            '--plain-name',
+            'the required checks are still bound',
+            'test/guards/workflow_guard_test.dart',
+          ],
+          environment: env,
+          includeParentEnvironment: false,
+        );
+        final out = '${child.stdout}${child.stderr}';
+
+        // The three conditions under which the read cannot happen at all are
+        // the parent's own skips, and an anonymous read from a shared runner
+        // address can meet the third. A skip here says so out loud rather
+        // than passing for a reason that has nothing to do with the wiring.
+        for (final why in const [
+          'no network',
+          'curl is not installed',
+          'rate-limited',
+        ]) {
+          if (out.contains(why)) {
+            markTestSkipped('the child could not read the ruleset: $why');
+            return;
+          }
+        }
+
+        expect(
+          child.exitCode,
+          isNot(0),
+          reason:
+              'flag-wiring: with HS_RULESET_READ_EXPECTED=1 and no token, an '
+              'absent `bypass_actors` must fail. The child passed, so the '
+              'flag never reached the verdict — the guard is back to '
+              'skipping on a lapsed token. Child output:\n$out',
+        );
+        expect(
+          out,
+          contains('Rotate it (#228)'),
+          reason:
+              'flag-wiring: the child failed for some other reason than the '
+              'lapsed-token check. Child output:\n$out',
+        );
+      },
+      tags: ['slow'],
+      timeout: const Timeout(Duration(minutes: 5)),
+    );
+
     test('every declared key link is actually wired', () {
       // The scripts with the most thorough tests here are worth nothing if
       // no workflow invokes them — and nothing checked that. `release.yml`

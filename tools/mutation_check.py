@@ -981,6 +981,13 @@ MUTATIONS: list[Mutation] = [
     # Both GREEN at de58e85: the skip was by path shape, so a file the body
     # wrote inside `bin/` and the script overwritten under its own feet were
     # dropped from the channel entirely.
+    Mutation("#245", "the verdict is handed an empty environment",
+             "test/guards/workflow_guard_test.dart",
+             sub(r"        doc\['bypass_actors'\],\n        Platform\.environment,",
+                 "        doc['bypass_actors'],\n        const <String, String>{},", 1),
+             "the flag CI sets never reaches the verdict; a lapsed token skips again",
+             'flag-wiring',
+             slow=True),
     Mutation("#243", "a secret is written into the harness's own bin directory",
              ".github/workflows/release.yml",
              sub(r'(          test -s "\$RUNNER_TEMP/upload\.keystore")',
