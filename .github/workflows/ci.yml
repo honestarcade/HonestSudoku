@@ -118,7 +118,12 @@ jobs:
   # contributor runs locally before every commit.
   mutations:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Measured, not guessed: 92 mutations took 25m20s; 102 hit the old 30
+    # exactly and were cancelled with an empty log. Each mutation is one run
+    # of the guard suite (~15s), so the battery's cost is linear in its size
+    # and this number moves when the battery does. 45 is headroom for the
+    # current count, not a licence for a runaway.
+    timeout-minutes: 45
     env:
       FLUTTER_SUPPRESS_ANALYTICS: "true"
     steps:
@@ -153,4 +158,8 @@ jobs:
         # through and report the remainder as WRONG-REASON (#219).
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          # Python buffers stdout when it is not a terminal, so a cancelled
+          # job left NO progress lines — not one `[N/102]`. Unbuffered, the
+          # log shows how far it got and which entry was running.
+          PYTHONUNBUFFERED: "1"
         run: tools/mutation_check.py
