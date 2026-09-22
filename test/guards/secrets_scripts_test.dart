@@ -284,12 +284,12 @@ void _collectWorkspaceLeaks(
     if (entity is! File) continue;
     final name = entity.path.substring(repoRoot.path.length + 1);
     if (unmodified.contains(name)) continue;
-    String text;
-    try {
-      text = entity.readAsStringSync();
-    } catch (_) {
-      continue;
-    }
+    // latin1 over the bytes, like the `$RUNNER_TEMP` scan below and for the
+    // same reason: `readAsStringSync` throws on the first byte that is not
+    // valid UTF-8, and skipping the file then hides everything else in it —
+    // a secret plus one junk byte is invisible. The sibling scan learned
+    // this in #200; this one still had the swallow at #236.
+    final text = latin1.decode(entity.readAsBytesSync(), allowInvalid: true);
     channels.add((
       where: 'file \$GITHUB_WORKSPACE/$name',
       text: text,
