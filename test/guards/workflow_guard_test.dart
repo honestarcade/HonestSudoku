@@ -445,6 +445,14 @@ bool _isRateLimited(String status, String payload) {
   return body.contains('rate limit') || body.contains('secondary rate');
 }
 
+/// The credential files a workflow writes into `$RUNNER_TEMP`.
+///
+/// ONE list, used both to plant them before a body runs and to assert the
+/// steps that promise to remove them actually do. Two lists drift, and that
+/// drift is exactly what #224 was: the harness planted `upload.keystore`
+/// only, so "is `play-sa.json` gone?" was satisfied before the body ran.
+const _runnerCredentials = ['upload.keystore', 'play-sa.json'];
+
 /// Runs a workflow step's `run:` body the way the runner would.
 ///
 /// Every command in [ambient] is stubbed; the one named by [failing] exits 1
@@ -469,6 +477,7 @@ _runStepBody(
   String? failing,
   Map<String, String> extraEnv = const {},
   bool keepWorkspace = false,
+  void Function(Directory workspace)? beforeRun,
 }) {
   final dir = Directory.systemTemp.createTempSync('hs-stepbody');
   try {
@@ -543,7 +552,9 @@ exit 0
     }
 
     final runnerTemp = Directory('${dir.path}/runner')..createSync();
-    File('${runnerTemp.path}/upload.keystore').writeAsStringSync('x');
+    for (final name in _runnerCredentials) {
+      File('${runnerTemp.path}/$name').writeAsStringSync('x');
+    }
     File('${dir.path}/build/app/outputs/bundle/release/app-release.aab')
       ..createSync(recursive: true)
       ..writeAsStringSync('bundle');
@@ -555,6 +566,10 @@ exit 0
       RegExp(r'\$\{\{[^}]*\}\}'),
       'workflow-expression',
     );
+
+    // The caller's chance to assert the workspace is what it expects BEFORE
+    // the body runs — a precondition check, not a hook for setup (#224).
+    beforeRun?.call(dir);
 
     final script = File('${dir.path}/step.sh')..writeAsStringSync(expanded);
     final r = Process.runSync(
@@ -2468,10 +2483,34 @@ void main() {
               ),
             );
 
+        // THE POSITIVE CONTROL, and this test needed it twice over.
+        //
+        // Round eight learned that a test which cannot pass is as useless as
+        // one that cannot fail, added `expect(clean.code, 0)` to the
+        // propagation check, and wrote that up as the transferable lesson.
+        // This test was written two passes later with no control at all and
+        // was vacuous for `play-sa.json` from the day it shipped (#224).
+        //
+        // So the precondition is asserted rather than assumed: each file must
+        // EXIST before the body runs. If a future harness change stops
+        // planting one, this fails loudly instead of passing for nothing.
         final r = _runStepBody(
           step.run!,
           ambient: _ambientCommands,
           keepWorkspace: true,
+          beforeRun: (workspace) {
+            for (final name in spec.files) {
+              expect(
+                File('${workspace.path}/runner/$name').existsSync(),
+                isTrue,
+                reason:
+                    'destroys: precondition — `$name` must exist before '
+                    '$path job `${spec.job}` step `${spec.step}` runs, or '
+                    '"it is gone afterwards" asserts nothing. Add it to '
+                    '`_runnerCredentials`',
+              );
+            }
+          },
         );
         try {
           for (final name in spec.files) {
