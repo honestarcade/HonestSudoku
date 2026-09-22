@@ -637,13 +637,18 @@ MUTATIONS: list[Mutation] = [
              sub(r'(            echo "Tracks: \$\{names:-none yet[^\n]*\n)',
                  r'\1            echo "sa: $PLAY_SERVICE_ACCOUNT_JSON"\n'),
              "the whole private key lands in a rendered, retained, downloadable artifact",
-             'reached'),
+             # The step that publishes it, not the word `reached`: that word
+             # is in a conditional message `signing_guard_test.dart` prints
+             # where no Android SDK exists — true of CI's battery job and not
+             # of a developer's machine, so the audit refused in one place and
+             # passed in the other (#244, measured 2026-09-22).
+             'step `play` writes the value'),
     Mutation("#208", "the keystore base64 reaches the job summary",
              ".github/workflows/play-api-check.yml",
              sub(r'(            echo "\| committed certificate[^\n]*\n)',
                  r'\1            echo "| b64 | $HS_KEYSTORE_B64 |"\n'),
              "the base64 of the entire keystore lands in the summary",
-             'reached'),
+             'step `keystore` writes the value'),
     Mutation("#206", "release.yml stops calling ci_version.sh",
              ".github/workflows/release.yml",
              sub(r'tools/ci_version\.sh "\$GITHUB_REF_NAME"',
@@ -1145,6 +1150,15 @@ def main() -> int:
             if name and not name.startswith("loading "):
                 names.append(name)
         elif kind == "print":
+            # NOTE the environment-sensitivity, because it bit on the first
+            # CI run: a print can be CONDITIONAL. `signing_guard_test.dart`
+            # prints `... could not be reached` only where the Android SDK is
+            # missing, which is true of this battery's job and false on a
+            # developer's machine, so `'reached'` was vacuous in CI alone.
+            # That is the audit being right rather than flaky -- a marker
+            # that a run prints cannot discriminate IN THAT RUN -- and the
+            # remedy is a marker distinctive enough that no message contains
+            # it, never a looser check here.
             # What a test PRINTS is in a green run's output exactly as a test
             # name is, and a marker matching it is just as vacuous. This is
             # how `'permissions:'` shipped: `permissions_guard_test.dart`
