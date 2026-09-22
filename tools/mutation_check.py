@@ -200,7 +200,12 @@ MUTATIONS: list[Mutation] = [
              sub(r'(KEY_ALIAS="\$\(read_credential HS_KEY_ALIAS\)"\n)',
                  r'\1printf %s "$KEYSTORE_PASS" | base64\n'),
              "a literal scan is defeated by any encoding, trivially reversible",
-             'base64'),
+             # `(as base64)` — the transform the leak scan NAMES when it
+             # fires. `'base64'` alone was in the text this mutation inserts
+             # (`| base64`), so a guard echoing the offending line satisfied
+             # it; the inserted-text audit found that the day it was added
+             # (#244).
+             '(as base64)'),
     Mutation("#190", "the password moves onto keytool's argv", "tools/set_ci_secrets.sh",
              sub(r"-storepass:env HS_PASS_PROBE", '-storepass "$KEYSTORE_PASS"'),
              "the password becomes readable from the process table by anything on the machine",
