@@ -29,6 +29,7 @@ Exit:   0 every mutation was caught
 from __future__ import annotations
 
 import argparse
+import json
 import dataclasses
 import pathlib
 import re
@@ -1048,37 +1049,70 @@ def main() -> int:
 
     # THE MARKERS, BEFORE ANY MUTATION.
     #
-    # A marker that appears in the output of a GREEN run cannot tell "this
-    # guard fired" from "the suite went red somewhere"; every entry carrying
-    # it then scores `caught` whatever happens, and can never report
-    # WRONG-REASON. That is not hypothetical -- both #217 entries carried
-    # `'overflow'`, which is a substring of that test's own NAME, and the
-    # runner prints every name on every run (#238).
+    # A verdict here is "the suite went red AND the marker is in its output".
+    # A marker that is part of a TEST'S NAME is therefore no verdict at all:
+    # the runner prints the names of the tests it runs, so such a marker is
+    # present whatever happened, every entry carrying it scores `caught` for
+    # any red suite, and none of them can ever report WRONG-REASON. Both
+    # #217 entries carried `'overflow'` -- a substring of `every rule reports
+    # a document that overflows the loader` (#238).
     #
-    # It is mechanical, so it is checked rather than remembered. The same run
-    # is the baseline assertion the battery never had: a suite that is
-    # already red makes every verdict below meaningless.
+    # Checked against the NAMES, from the json reporter, and not against the
+    # run's printed output: the compact reporter truncates each line to a
+    # terminal width, CI's reporter does not truncate at all, and the path it
+    # prefixes differs between the two. Auditing the output would have made
+    # this refuse in CI and pass locally, which is the machine-dependence
+    # #217 was reverted for once already. Names come from the source.
+    #
+    # The same run is the baseline assertion the battery never had: a suite
+    # that is red before any mutation makes every verdict below meaningless.
     print("mutation_check: baseline and marker audit", flush=True)
-    base = run(SUITE)
-    baseline = base.stdout + base.stderr
+    base = run(SUITE + ["--reporter", "json"])
     if base.returncode != 0:
         print("mutation_check: the suite is RED before any mutation, so no "
               "verdict below would mean anything:", file=sys.stderr)
-        print(baseline[-3000:], file=sys.stderr)
+        print((base.stdout + base.stderr)[-3000:], file=sys.stderr)
         return 2
-    vacuous = sorted({m.expect for m in selected if m.expect and m.expect in baseline})
+    names: list[str] = []
+    for line in base.stdout.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if event.get("type") != "testStart":
+            continue
+        name = event.get("test", {}).get("name", "")
+        # `loading <path>` is the runner's own bookkeeping, not a test.
+        if name and not name.startswith("loading "):
+            names.append(name)
+    if len(names) < 100:
+        print(f"mutation_check: the json reporter yielded {len(names)} test "
+              f"names, which cannot be right -- the marker audit below would "
+              f"pass by reading nothing", file=sys.stderr)
+        return 2
+    vacuous = [
+        (m, name)
+        for m in selected
+        if m.expect
+        for name in names
+        if m.expect in name
+    ]
     if vacuous:
-        print("mutation_check: these markers appear in a GREEN run, so they "
-              "cannot discriminate:", file=sys.stderr)
-        for marker in vacuous:
-            for m in selected:
-                if m.expect == marker:
-                    print(f"  {marker!r}  ({m.issue} {m.name})", file=sys.stderr)
-        print("Use a prefix of the assertion's reason -- `leak:`, `overflow:` "
-              "-- which no test NAME contains.", file=sys.stderr)
+        print("mutation_check: these markers are part of a test's NAME, so "
+              "they are present whether or not the guard fired:",
+              file=sys.stderr)
+        for m, name in vacuous:
+            print(f"  {m.expect!r}  ({m.issue} {m.name})", file=sys.stderr)
+            print(f"      matches: {name}", file=sys.stderr)
+        print("Use a prefix of the assertion's own reason -- `leak:`, "
+              "`overflow:` -- which no name contains.", file=sys.stderr)
         return 2
     if args.audit:
-        print(f"{len(selected)} markers, none of them present in a green run")
+        print(f"{len(selected)} markers audited against {len(names)} test "
+              f"names; none is part of one")
         return 0
 
     print(f"mutation_check: {len(selected)} mutations\n")
