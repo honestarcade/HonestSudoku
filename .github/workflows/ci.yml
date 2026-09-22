@@ -140,14 +140,22 @@ jobs:
   # contributor runs locally before every commit.
   mutations:
     runs-on: ubuntu-latest
-    # Measured, not guessed, and re-measured when the battery grows: 123
-    # mutations took 32m43s locally and 42m in this job on 2026-09-22; 102
-    # hit the old 30-minute limit exactly and were cancelled with an empty
-    # log. Each mutation is one run of the guard suite, so the cost is linear
-    # in the battery's size — `tools/mutation_check.py --list` gives the
-    # current count. 45 is headroom for that count, not a licence for a
-    # runaway, and a pass that adds entries re-reads this line.
-    timeout-minutes: 45
+    # Measured, not guessed, and the number it is measured against is
+    # `tools/mutation_check.py --list` rather than one written here — a count
+    # in this comment was stale within the same commit that wrote it (#251).
+    #
+    # The history this budget exists for: 102 entries hit a 30-minute limit
+    # exactly and were cancelled with an empty log; 45 minutes then held
+    # until the battery reached 127, where this job took 42m52s on one run
+    # (35770339392) and 45m22s on the next (35783678379) — the second was
+    # cancelled at the limit and took the first release with it (#252).
+    #
+    # Each mutation is one run of the guard suite, so the cost is linear in
+    # the battery's size and the run-to-run variance is minutes, not seconds.
+    # 60 is headroom for the current count; a pass that adds entries re-reads
+    # this line, and when the headroom is gone the answer is to split the
+    # battery across jobs rather than to keep raising the ceiling.
+    timeout-minutes: 60
     env:
       FLUTTER_SUPPRESS_ANALYTICS: "true"
     steps:
