@@ -835,6 +835,16 @@ _runStepBody(
   try {
     final bin = Directory('${dir.path}/bin')..createSync(recursive: true);
 
+    // Every file the HARNESS writes, with the exact text it wrote.
+    //
+    // The `wrote` channel skips these, and it skips them by CONTENT: a file
+    // whose bytes still match what was put there is not something the body
+    // wrote. Skipping by path shape instead — `bin/**`, `step.sh`, any
+    // planted path — meant a body could write a secret into one of them and
+    // the channel dropped it, with the suite green (#243). `$GITHUB_WORKSPACE`
+    // is this directory, and on a runner that is what upload-artifact sweeps.
+    final harnessWrote = <String, String>{};
+
     void stub(String command) {
       final fails = command == failing;
       // A succeeding stub writes a byte, because several bodies redirect a
@@ -916,16 +926,16 @@ exit 0
       } else {
         script = '#!/bin/sh\necho "stub output for \$command"\nexit 0\n';
       }
-      File('${bin.path}/${command.split('/').last}').writeAsStringSync(script);
-      Process.runSync('chmod', [
-        '+x',
-        '${bin.path}/${command.split('/').last}',
-      ]);
+      final stubPath = '${bin.path}/${command.split('/').last}';
+      File(stubPath).writeAsStringSync(script);
+      harnessWrote[stubPath] = script;
+      Process.runSync('chmod', ['+x', stubPath]);
       // A project script is invoked by path, so shadow it there too.
       if (command.contains('/')) {
         final asPath = File('${dir.path}/$command');
         asPath.parent.createSync(recursive: true);
         asPath.writeAsStringSync(script);
+        harnessWrote[asPath.path] = script;
         Process.runSync('chmod', ['+x', asPath.path]);
       }
     }
@@ -966,6 +976,7 @@ exit 0
       File('${dir.path}/$relative')
         ..createSync(recursive: true)
         ..writeAsStringSync(content);
+      harnessWrote['${dir.path}/$relative'] = content;
     });
 
     // The caller's chance to assert the workspace is what it expects BEFORE
@@ -973,6 +984,7 @@ exit 0
     beforeRun?.call(dir);
 
     final script = File('${dir.path}/step.sh')..writeAsStringSync(expanded);
+    harnessWrote[script.path] = expanded;
     final r = Process.runSync(
       '/bin/bash',
       [script.path],
@@ -1013,19 +1025,19 @@ exit 0
     final wrote = StringBuffer();
     for (final entity in dir.listSync(recursive: true)) {
       if (entity is! File) continue;
-      if (entity.path.startsWith('${bin.path}/')) continue;
-      if (entity.path == script.path) continue;
-      // An input the caller planted is not something the body wrote; left in,
-      // "the summary carries the note" would be satisfied by the note itself.
-      if (plant.keys.any((p) => entity.path == '${dir.path}/$p')) continue;
       // latin1 over the BYTES, and no `catch`. `readAsStringSync` throws on
       // the first byte that is not valid UTF-8, and the catch that stood
       // here dropped the whole file — so `printf '%s\377' "$HS_KEYSTORE_B64"`
       // put the keystore in the run summary with the suite green (#236).
       // A total decoding leaves every ASCII byte of a secret searchable.
-      wrote.writeln(
-        latin1.decode(entity.readAsBytesSync(), allowInvalid: true),
-      );
+      final text = latin1.decode(entity.readAsBytesSync(), allowInvalid: true);
+      // Unchanged since the harness wrote it — a stub, the script, a planted
+      // input — so the body did not write it. Anything else in this tree it
+      // DID write, including a file it put inside `bin/`, the script
+      // overwritten under its own feet, and a planted file it appended to:
+      // all three were skipped by path and all three were green (#243).
+      if (harnessWrote[entity.path] == text) continue;
+      wrote.writeln(text);
     }
 
     return (
