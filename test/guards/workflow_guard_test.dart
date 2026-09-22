@@ -451,6 +451,32 @@ bool _isRateLimited(String status, String payload) {
 /// steps that promise to remove them actually do. Two lists drift, and that
 /// drift is exactly what #224 was: the harness planted `upload.keystore`
 /// only, so "is `play-sa.json` gone?" was satisfied before the body ran.
+/// Secrets whose value is public by design.
+///
+/// The keystore ALIAS is in `android/signing/README.md`, on keytool's command
+/// line, and play-api-check reports it in its summary on purpose.
+/// `secrets_scripts_test.dart` excludes it from sentinel derivation for the
+/// same reason; naming it here by the SECRET rather than by whatever env key
+/// it is bound to is what keeps the two honest (#225).
+const _publicSecrets = {'HS_KEY_ALIAS'};
+
+/// The shapes a value can take on its way into a log.
+///
+/// A step that pipes a secret through `rev` or `base64` has published it as
+/// surely as one that echoes it, and a reader of the run summary reverses
+/// either instantly. Searching the literal only let both through (#225).
+///
+/// Deliberately smaller than `secrets_scripts_test.dart`'s `_leakForms`: this
+/// runs over every step of every workflow, and it carries the transforms a
+/// shell reaches for without thinking.
+Iterable<String> _leakShapes(String secret) sync* {
+  yield secret;
+  yield secret.split('').reversed.join();
+  yield base64.encode(utf8.encode(secret));
+  yield secret.toLowerCase();
+  yield secret.toUpperCase();
+}
+
 const _runnerCredentials = ['upload.keystore', 'play-sa.json'];
 
 /// Runs a workflow step's `run:` body the way the runner would.
@@ -2581,30 +2607,87 @@ void main() {
                 // purpose. `secrets_scripts_test.dart` already excludes it
                 // from sentinel derivation for the same reason; the two must
                 // agree or one of them is wrong.
-                if (name.toUpperCase().endsWith('ALIAS')) return;
+                // Exempt by the SECRET, not by the env name.
+                //
+                // `endsWith('ALIAS')` keyed on the left-hand side, so any env
+                // key spelled `*ALIAS` was exempt whatever it held —
+                // `HS_KEYSTORE_ALIAS: ${{ secrets.HS_KEYSTORE_PASS }}` plus a
+                // leak of it was green (#225). The keystore alias really is
+                // public (it is in the signing README, on keytool's command
+                // line, and play-api-check reports it on purpose); the
+                // password is not, and only the right-hand side says which
+                // is which.
+                final secret = RegExp(r'secrets\.(\w+)')
+                    .firstMatch(value)!
+                    .group(1)!;
+                if (_publicSecrets.contains(secret)) return;
                 secretEnv[name] = 'HS-SENTINEL-${n++}-do-not-publish';
               });
             }
             if (secretEnv.isEmpty) continue;
 
-            final r = _runStepBody(
+            // TWO passes, and the second is the positive control.
+            //
+            // With one distinct sentinel per secret, a body that begins
+            // `if [ "$HS_KEY_PASS" != "$HS_KEYSTORE_PASS" ]; then … exit 1`
+            // — which `keystore_check` and play-api-check's `keystore` both
+            // do — exits at that line and everything after it is
+            // unreachable. The leak went green not because it was absent but
+            // because the body never reached it (#225).
+            //
+            // So: one pass with distinct values, to catch a step that echoes
+            // a particular secret; one with a SHARED value, so equality
+            // checks pass and the rest of the body actually runs. And
+            // `expect(code, 0)` on the shared pass, because a body that
+            // cannot complete proves nothing — the same control #224 needed.
+            const shared = 'HS-SENTINEL-SHARED-do-not-publish';
+            final sharedEnv = {for (final name in secretEnv.keys) name: shared};
+
+            final distinct = _runStepBody(
               body,
               ambient: _ambientCommands,
               extraEnv: secretEnv,
             );
+            final same = _runStepBody(
+              body,
+              ambient: _ambientCommands,
+              extraEnv: sharedEnv,
+            );
+            expect(
+              same.code,
+              0,
+              reason:
+                  'published-secret: $path job `${job.name}` step '
+                  '`${step.id}` cannot complete even with every secret equal '
+                  'and every command succeeding, so the search below covers '
+                  'only the lines it reached. stderr: ${same.err}',
+            );
 
-            for (final entry in secretEnv.entries) {
+            // Every form the value could take, not the literal only. `rev`
+            // and `base64` are ordinary commands and a reader of the summary
+            // reverses either instantly; searching verbatim let both through
+            // (#225).
+            final hunted = <String, String>{
+              for (final entry in secretEnv.entries)
+                for (final form in _leakShapes(entry.value)) form: entry.key,
+              for (final form in _leakShapes(shared)) form: 'a shared secret',
+            };
+
+            for (final entry in hunted.entries) {
               for (final channel in <(String, String)>[
-                ('stdout', r.out),
-                ('stderr', r.err),
-                ('a file it wrote (the run summary is one)', r.wrote),
+                ('stdout', '${distinct.out}\n${same.out}'),
+                ('stderr', '${distinct.err}\n${same.err}'),
+                (
+                  'a file it wrote (the run summary is one)',
+                  '${distinct.wrote}\n${same.wrote}',
+                ),
               ]) {
                 expect(
                   channel.$2,
-                  isNot(contains(entry.value)),
+                  isNot(contains(entry.key)),
                   reason:
                       'published-secret: $path job `${job.name}` step '
-                      '`${step.id}` writes the value of `${entry.key}` to '
+                      '`${step.id}` writes the value of `${entry.value}` to '
                       '${channel.$1}. A step set pins which steps exist, not '
                       r'what they do — and `$GITHUB_STEP_SUMMARY` is '
                       'rendered, '

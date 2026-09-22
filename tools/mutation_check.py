@@ -325,6 +325,41 @@ MUTATIONS: list[Mutation] = [
                  'echo "credentials forgotten"', 1),
              "the service-account key and the keystore both survive the job",
              'destroys'),
+    # ---- #224/#225: the positive controls ---------------------------------
+    # Every one of these was GREEN at b80cf0f, and each is a test that could
+    # not fail for a different reason: a file that was never planted, a body
+    # that exited before the leak, a transform nobody searched for, and an
+    # exemption keyed on the wrong side of the assignment.
+    Mutation("#224", "play-promote's forget stops deleting the key",
+             ".github/workflows/play-promote.yml",
+             sub(r'(          )rm -f "\$RUNNER_TEMP/play-sa\.json"',
+                 r'\1echo "credentials forgotten"', 1),
+             "the service-account key survives the job",
+             'destroys'),
+    Mutation("#224", "play-api-check's forget drops the key from its rm",
+             ".github/workflows/play-api-check.yml",
+             sub(r'rm -f "\$RUNNER_TEMP/play-sa\.json" "\$RUNNER_TEMP/upload\.keystore"',
+                 'rm -f "$RUNNER_TEMP/upload.keystore"', 1),
+             "half the assertion was load-bearing and half asserted nothing",
+             'destroys'),
+    Mutation("#224", "the harness stops planting one of the credentials",
+             "test/guards/workflow_guard_test.dart",
+             sub(r"const _runnerCredentials = \['upload\.keystore', 'play-sa\.json'\];",
+                 "const _runnerCredentials = ['upload.keystore'];", 1),
+             "the precondition is what stops the assertion going vacuous again",
+             'precondition'),
+    Mutation("#225", "a secret is published after the password compare",
+             ".github/workflows/release.yml",
+             sub(r'(          echo "the keystore opens, and holds the configured alias"\n)',
+                 r'\1          echo "$HS_KEYSTORE_PASS" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"\n', 1),
+             "distinct sentinels made the body exit before ever reaching this line",
+             'published-secret'),
+    Mutation("#225", "a secret is published reversed",
+             ".github/workflows/release.yml",
+             sub(r"(          flutter build appbundle)",
+                 r'          printf %s "$HS_KEY_PASS" | rev >> "$GITHUB_STEP_SUMMARY"\n\1', 1),
+             "rev is one command and the reader reverses it instantly",
+             'published-secret'),
     # ---- #202: the ruleset, compared as whole tokens ---------------------
     # All three were GREEN at round eight: `contains('active')` is satisfied
     # by `inactive`, and `contains('gate:15368')` by `CI / gate:15368` --
