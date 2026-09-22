@@ -77,14 +77,18 @@ jobs:
 
       - id: guards
         name: Invariant guards
-        # The ruleset guard reads the public rulesets endpoint. Anonymous
-        # reads are 60/hr per IP and runners share addresses, so the read is
-        # authenticated where a token exists — `github.token` is read-only and
-        # already available to every job (#219).
+        # The ruleset guard reads the public rulesets endpoint, and one
+        # field of it — `bypass_actors` — only for a token with repository
+        # Administration (#228). Anonymous reads are also 60/hr per IP and
+        # runners share addresses, which is why every guard run below is
+        # authenticated whichever token it gets (#219).
         env:
           # HS_RULESET_READ_TOKEN can read `bypass_actors`; `github.token`
-          # cannot (#228). The fallback keeps a fork or a lapsed secret on
-          # the anonymous-plus-skip path rather than failing to start.
+          # cannot (#228). The fallback is for a fork, whose PRs cannot see
+          # the secret: it keeps them on `github.token` and the skip path
+          # rather than failing to start. A LAPSED token is not that case —
+          # the secret is still non-empty, so the flag below is set, the
+          # dead token goes to GitHub and the 401 is a failure (#239).
           GITHUB_TOKEN: ${{ secrets.HS_RULESET_READ_TOKEN || github.token }}
           # And the guard is TOLD the token is there, so that an absent
           # field then fails instead of skipping: a lapsed secret must be
@@ -100,8 +104,11 @@ jobs:
         # one most likely to eat the 403 the token exists to avoid (#230).
         env:
           # HS_RULESET_READ_TOKEN can read `bypass_actors`; `github.token`
-          # cannot (#228). The fallback keeps a fork or a lapsed secret on
-          # the anonymous-plus-skip path rather than failing to start.
+          # cannot (#228). The fallback is for a fork, whose PRs cannot see
+          # the secret: it keeps them on `github.token` and the skip path
+          # rather than failing to start. A LAPSED token is not that case —
+          # the secret is still non-empty, so the flag below is set, the
+          # dead token goes to GitHub and the 401 is a failure (#239).
           GITHUB_TOKEN: ${{ secrets.HS_RULESET_READ_TOKEN || github.token }}
           # And the guard is TOLD the token is there, so that an absent
           # field then fails instead of skipping: a lapsed secret must be
@@ -173,8 +180,11 @@ jobs:
         # through and report the remainder as WRONG-REASON (#219).
         env:
           # HS_RULESET_READ_TOKEN can read `bypass_actors`; `github.token`
-          # cannot (#228). The fallback keeps a fork or a lapsed secret on
-          # the anonymous-plus-skip path rather than failing to start.
+          # cannot (#228). The fallback is for a fork, whose PRs cannot see
+          # the secret: it keeps them on `github.token` and the skip path
+          # rather than failing to start. A LAPSED token is not that case —
+          # the secret is still non-empty, so the flag below is set, the
+          # dead token goes to GitHub and the 401 is a failure (#239).
           GITHUB_TOKEN: ${{ secrets.HS_RULESET_READ_TOKEN || github.token }}
           # And the guard is TOLD the token is there, so that an absent
           # field then fails instead of skipping: a lapsed secret must be

@@ -467,15 +467,25 @@ bool _isRateLimited(String status, String payload) {
 /// everywhere; the same branch inside the network test was testable nowhere
 /// (#228).
 ///
-/// [expected] is CI's statement that the token it passed can read the
-/// field — `HS_RULESET_READ_EXPECTED=1`, set only when the secret is
-/// non-empty. With it, an absent field is a FAILURE, not a skip: the token
-/// has lapsed or lost its permission, and a skip on a required check is how
-/// a control degrades without anyone noticing.
+/// [env] is the process environment, and the key that matters in it is
+/// `HS_RULESET_READ_EXPECTED` — CI's statement that the token it passed can
+/// read the field, set only when the secret is non-empty. With it, an absent
+/// field is a FAILURE, not a skip: the token has lapsed or lost its
+/// permission, and a skip on a required check is how a control degrades
+/// without anyone noticing.
+///
+/// The map is a parameter rather than a read of `Platform.environment` in
+/// here, so that the KEY and the comparison sit inside what the test
+/// exercises: a pre-computed `expected:` flag left both untested, and
+/// hard-coding it `false` at the call site was green (#240). What stays
+/// untestable in-process is the one line that passes the real environment
+/// in — a test cannot set its own process environment — and that line, not
+/// the branch, is the residue.
 ({bool skip, String? problem}) _bypassVerdict(
-  Object? bypass, {
-  required bool expected,
-}) {
+  Object? bypass,
+  Map<String, String> env,
+) {
+  final expected = env['HS_RULESET_READ_EXPECTED'] == '1';
   if (bypass == null) {
     if (expected) {
       return (
@@ -515,6 +525,13 @@ const _publicSecrets = {'HS_KEY_ALIAS'};
 /// Deliberately smaller than `secrets_scripts_test.dart`'s `_leakForms`: this
 /// runs over every step of every workflow, and it carries the transforms a
 /// shell reaches for without thinking.
+///
+/// Open by decision, not by oversight: hex, rot13, a value split across two
+/// writes, reversed-then-base64, and a DIGEST of the secret. The last is a
+/// real leak for a human-chosen password and catching it needs a sha256
+/// implementation, which means a dependency this project would have to
+/// justify against invariant 3 — so it is recorded here and on #241 rather
+/// than implied to be covered.
 Iterable<String> _leakShapes(String secret) sync* {
   yield secret;
   yield secret.split('').reversed.join();
@@ -556,9 +573,10 @@ const _runReal = {'base64', 'sha256sum'};
 /// Where the host keeps [command], for [_runReal].
 ///
 /// By path, not by PATH: the harness PATH is `bin:/usr/bin:/bin`, and macOS
-/// keeps `sha256sum` in `/sbin`. Null when the host has no such command, and
-/// the caller falls back to the echoing stub — whose output then says "stub"
-/// where a digest should be, which is visible rather than wrong.
+/// keeps `sha256sum` in `/sbin`. Null when the host has no such command, at
+/// which point the caller fails rather than substituting an echo: the
+/// fallback that stood there was silent, and with it the base64 hole #232
+/// closed would have reopened on any host missing the binary, green (#240).
 String? _realBinary(String command) {
   for (final dir in const ['/usr/bin', '/bin', '/sbin', '/usr/sbin']) {
     final candidate = File('$dir/$command');
@@ -675,7 +693,13 @@ const _claims = <String, _Claim>{
       '### Release v9.9.9',
       '| track | internal |',
       '| package | com.honestarcade.sudoku |',
-      '| bundle SHA-256 | ',
+      // The digest, not the prefix. `| bundle SHA-256 | ` alone was
+      // satisfied by `stub output for sha256sum`, so half of #232's fix —
+      // that the stub runs the real binary — was asserted by nothing
+      // (#240). This is sha256 of the six bytes `_runStepBody` plants as
+      // the bundle; change that content and this row is what tells you.
+      '| bundle SHA-256 | '
+          '1e6ed65d77d6364eeaed5a745ba5c4985ae2b700dd85d7cf7f027bdf294a33fc |',
     ],
     mustNotSay: ['production', 'all checks passed'],
   ),
@@ -877,8 +901,18 @@ exit 0
             'echo "Alias name: \${HS_KEY_ALIAS:-upload}"\n'
             'echo "SHA256: AA:BB:CC:DD:EE:FF"\n'
             'exit 0\n';
-      } else if (_runReal.contains(command) && _realBinary(command) != null) {
-        script = '#!/bin/sh\nexec "${_realBinary(command)}" "\$@"\n';
+      } else if (_runReal.contains(command)) {
+        final real = _realBinary(command);
+        if (real == null) {
+          fail(
+            'stub-fidelity: this host has no `$command`, and the harness '
+            'will not put an echo in its place. The leak scan needs a real '
+            'encoder for an encoded secret to reach it, and a summary row '
+            'reading "stub output" where a digest belongs is a test passing '
+            'for the wrong reason (#232, #240)',
+          );
+        }
+        script = '#!/bin/sh\nexec "$real" "\$@"\n';
       } else {
         script = '#!/bin/sh\necho "stub output for \$command"\nexit 0\n';
       }
@@ -984,11 +1018,14 @@ exit 0
       // An input the caller planted is not something the body wrote; left in,
       // "the summary carries the note" would be satisfied by the note itself.
       if (plant.keys.any((p) => entity.path == '${dir.path}/$p')) continue;
-      try {
-        wrote.writeln(entity.readAsStringSync());
-      } catch (_) {
-        // A binary the body produced; not a channel prose can hide in.
-      }
+      // latin1 over the BYTES, and no `catch`. `readAsStringSync` throws on
+      // the first byte that is not valid UTF-8, and the catch that stood
+      // here dropped the whole file — so `printf '%s\377' "$HS_KEYSTORE_B64"`
+      // put the keystore in the run summary with the suite green (#236).
+      // A total decoding leaves every ASCII byte of a secret searchable.
+      wrote.writeln(
+        latin1.decode(entity.readAsBytesSync(), allowInvalid: true),
+      );
     }
 
     return (
@@ -1988,10 +2025,10 @@ void main() {
       // fails in the scanner before recursion — so it exercises the refusal
       // path, not the `Error` path.
       //
-      // Balanced brackets DO overflow, at 32000 here and at some larger and
-      // unknown depth on the CI runner, which is why asserting an overflow
-      // from a fixed depth is not shippable. That is #217, open, with the
-      // measurements.
+      // Balanced brackets DO overflow, at a depth that differs between
+      // machines — which is why asserting one from a FIXED depth is not
+      // shippable, and why `every rule reports a document that overflows the
+      // loader` searches for the depth in a worker isolate instead (#217).
       expect(
         Workflow.parse('x.yml', 'a:\n    ${'[' * 6000}').problem,
         isNotNull,
@@ -2641,13 +2678,14 @@ void main() {
       // be reached for real in CI.
       //
       // Without the token — a maintainer's shell — the skip stands, and the
-      // runner counts and prints it: `~1` in the compact reporter, `⏭️` and
-      // `1 skipped` in CI's expanded one. Reported, not silent:
+      // runner counts and prints it: `~1` from the compact reporter, and
+      // `⏭️` with `N passed, 1 skipped` from the one CI selects on GitHub
+      // Actions. Reported, not silent:
       // `printOnFailure` was used for that once and emits only when the
       // test FAILS.
       final verdict = _bypassVerdict(
         doc['bypass_actors'],
-        expected: Platform.environment['HS_RULESET_READ_EXPECTED'] == '1',
+        Platform.environment,
       );
       if (verdict.skip) {
         markTestSkipped(
@@ -2672,15 +2710,36 @@ void main() {
         // Recorded shapes, not a network read — the branch a token with
         // Administration reaches is otherwise untestable on any machine
         // without one, which is every local run and the battery (#228).
+        const unset = <String, String>{};
+        const set = {'HS_RULESET_READ_EXPECTED': '1'};
         expect(
-          _bypassVerdict(null, expected: false).skip,
+          _bypassVerdict(null, unset).skip,
           isTrue,
           reason:
               'bypass-verdict: without a token that can read the field, an '
               'absent field is a skip, and it must stay one — a maintainer '
               'without an admin token must not see a red suite for it',
         );
-        final lapsed = _bypassVerdict(null, expected: true);
+        // The key and its value are asserted, not only the branch: `''` and
+        // `'0'` are what ci.yml writes when the secret is absent, and either
+        // one read as "the token can see the field" turns every fork's PR
+        // red for a field nobody there can read (#240).
+        for (final other in const [
+          {'HS_RULESET_READ_EXPECTED': ''},
+          {'HS_RULESET_READ_EXPECTED': '0'},
+          {'HS_RULESET_READ_TOKEN': '1'},
+        ]) {
+          expect(
+            _bypassVerdict(null, other).skip,
+            isTrue,
+            reason:
+                'bypass-verdict: $other was read as "the token can see the '
+                'field", so a fork PR — where ci.yml writes exactly this — '
+                'would go red for a field nobody can read',
+          );
+        }
+
+        final lapsed = _bypassVerdict(null, set);
         expect(
           lapsed.skip,
           isFalse,
@@ -2695,7 +2754,7 @@ void main() {
           reason: 'bypass-verdict: the failure does not say what to rotate',
         );
         expect(
-          _bypassVerdict(<dynamic>[], expected: true).problem,
+          _bypassVerdict(<dynamic>[], set).problem,
           isNull,
           reason:
               'bypass-verdict: an empty bypass list is the state this guard '
@@ -2707,7 +2766,7 @@ void main() {
             'actor_type': 'RepositoryRole',
             'bypass_mode': 'always',
           },
-        ], expected: true);
+        ], set);
         expect(
           actor.problem,
           isNotNull,
@@ -2719,6 +2778,70 @@ void main() {
           actor.skip,
           isFalse,
           reason: 'bypass-verdict: a bypass actor was skipped over',
+        );
+      },
+    );
+
+    test(
+      'every step that runs the guard suite is handed the ruleset token',
+      () {
+        // #240. `_bypassVerdict` decides correctly and the ruleset test reads
+        // the flag, and neither of those says ci.yml still SETS them:
+        // deleting `HS_RULESET_READ_EXPECTED` from the `gate` step left the
+        // suite green, and what it costs — CI back to skipping the bypass
+        // check on a lapsed token — is invisible until the day it matters.
+        //
+        // Which env a step declares is a property of the DOCUMENT, so it is
+        // read as one, through `Workflow.parse` (#205). Closed against the
+        // files in both directions: a step that runs the suite must carry
+        // both keys, and a fourth such step must be written down here.
+        const runsTheSuite = [
+          'flutter test',
+          'tools/gate.sh',
+          'tools/mutation_check.py',
+        ];
+        const expected = [
+          '.github/workflows/ci.yml gate guards',
+          '.github/workflows/ci.yml gate gate',
+          '.github/workflows/ci.yml mutations mutations',
+        ];
+
+        final found = <String>{};
+        for (final path in _workflowFiles()) {
+          final wf = Workflow.parse(path, readFile(path));
+          expect(wf.problem, isNull, reason: '$path: ${wf.problem}');
+          for (final job in wf.jobs) {
+            for (final step in job.steps) {
+              final body = step.run;
+              if (body == null) continue;
+              if (!runsTheSuite.any(body.contains)) continue;
+              found.add('$path ${job.name} ${step.id}');
+              for (final key in const [
+                'GITHUB_TOKEN',
+                'HS_RULESET_READ_EXPECTED',
+              ]) {
+                expect(
+                  step.env[key],
+                  contains('secrets.HS_RULESET_READ_TOKEN'),
+                  reason:
+                      'ruleset-token: $path job `${job.name}` step '
+                      '`${step.id}` runs the guard suite without `$key` from '
+                      '`HS_RULESET_READ_TOKEN`. Without the token the ruleset '
+                      'guard cannot read `bypass_actors`; without the flag it '
+                      'SKIPS instead of failing when the token has lapsed, '
+                      'which is the silent downgrade #228 exists to prevent',
+                );
+              }
+            }
+          }
+        }
+        expect(
+          found,
+          unorderedEquals(expected),
+          reason:
+              'ruleset-token: the steps that run the guard suite are not the '
+              'ones named here. A new one is unguarded until it is added; a '
+              'missing one means the suite stopped running where it did',
         );
       },
     );
@@ -2895,8 +3018,10 @@ void main() {
       // credential and `secrets_present` has its own test below. The rest
       // make a CLAIM in a run summary or a log, and each could be replaced
       // by an `echo` of the opposite with the suite green — `summary` and
-      // `name_failure` still could at round eleven, and play-promote's
-      // `refuse` and `summary` were run by nothing at all.
+      // `name_failure` still could at round eleven. play-promote's `refuse`
+      // is also exercised by `play_promote_args_test.dart`, which runs its
+      // body and asserts the exit codes; what was missing here is the same
+      // question asked of what it SAYS. Its `summary` was run by nothing.
       //
       // `say` is the sharpest: on a failed gate it is the only thing that
       // says nothing shipped, and it could say the reverse.
@@ -2965,9 +3090,10 @@ void main() {
 
     test('every [] step is exercised by a named test', () {
       // #226's "better still". Declaring a step `[]` in `_dependsOn` takes
-      // it out of the propagation check, and for nine steps that was the end
-      // of the story: three destroy a credential, six make a claim, and
-      // until #216 and #226 none was run by anything. The rationale for `[]`
+      // it out of the propagation check, and for the steps declared `[]`
+      // that was the end of the story until #216 and #226. No count is
+      // written here: the assertion below is over the sets themselves, and a
+      // number in a comment is one more thing to keep true by hand. The rationale for `[]`
       // used to live in three comments that disagreed (#233); it lives on
       // `_dependsOn` now, and this is the part of it that executes: the
       // `[]` steps and the steps some test runs must be the SAME set. A `[]`
@@ -3463,19 +3589,23 @@ void main() {
       // in the recursive loader does — alias recursion and billion-laughs
       // both raise `YamlException`; measured on the issue.
       //
-      // A real overflow was unshippable for a round because its depth is a
-      // property of the STACK: 32000 levels overflow on macOS and parse on
-      // the ubuntu runner, and the cost climbs superlinearly (32000 -> 5s,
-      // 96000 -> 45s per rule). `ulimit -s` does not help; the VM ignores it
-      // (measured: 64000 frames at every limit from 256K to unlimited).
+      // A real overflow was unshippable for a round because the depth that
+      // produces one is a property of the stack the parse runs on, and the
+      // MAIN isolate's stack differs between machines and settings — which
+      // is why a fixed depth passed here and parsed cleanly on the runner.
       //
-      // What does help is that a WORKER isolate's stack is a VM constant and
-      // eight times smaller than the main isolate's: 4000 levels overflow
-      // there in about 80ms. So every parse here runs in `Isolate.run`, the
-      // depth is found by doubling until `Workflow.parse` itself reports the
-      // overflow — asserting it happened, which is the one thing the reverted
-      // row got right — and each rule then meets a document twice that deep.
-      // Cheap everywhere, and machine-independent for the right reason.
+      // A WORKER isolate's does not: `Isolate.run` overflows the loader at a
+      // far smaller depth, and at the same one under every stack limit tried.
+      // So every parse here runs in a worker, the depth is found by doubling
+      // until `Workflow.parse` itself reports the overflow — asserting it
+      // happened, which is the one thing the reverted row got right — and
+      // each rule then meets a document twice that deep.
+      //
+      // The measurements behind that paragraph, including the `ulimit -s`
+      // one that was quoted here wrongly, are on #217 and #239 with the date
+      // and the command that produced them. None of them is asserted; what
+      // is asserted is below, and it needs no number: some depth under the
+      // cap overflows, and every rule reports it.
       String deep(int n) => 'jobs: ${'[' * n}${']' * n}\n';
       const cap = 1 << 16;
 

@@ -17,12 +17,15 @@ than a pass. It refuses to run on a dirty tree and restores through a
 accident is the failure this project keeps finding, and a green suite is not
 evidence that the suite can fail. Adding a guard means adding its mutation.
 
-A comment may say *why*; what the code does *now* belongs in the `reason:` of
-an assertion, where it is executed. Three passes in a row added comments
-describing mechanisms the code beside them did not have (#218, #229, #233), and
-every one would have been caught had the sentence been the `reason:` of an
-`expect` that then had to exist. When a change is reverted or narrowed, the
-comments it added are part of the revert.
+A comment may say *why*. A claim about what the code does *now* belongs in the
+`reason:` of an assertion, where it is executed; a claim about anything else —
+history, a measurement, another tool's output, a count — carries a date and a
+source in the same sentence, or is cut. Four passes running added sentences the
+code did not back (#218, #229, #233, #239), and the second half of that rule is
+what round twelve cost: every false sentence it found was of the kind a
+`reason:` cannot hold. One of them had its `expect` already and passed
+vacuously, so only a mutation could find it. When a change is reverted or
+narrowed, the comments it added are part of the revert.
 
 ## Project invariants
 

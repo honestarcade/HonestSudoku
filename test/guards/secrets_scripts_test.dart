@@ -284,12 +284,12 @@ void _collectWorkspaceLeaks(
     if (entity is! File) continue;
     final name = entity.path.substring(repoRoot.path.length + 1);
     if (unmodified.contains(name)) continue;
-    String text;
-    try {
-      text = entity.readAsStringSync();
-    } catch (_) {
-      continue;
-    }
+    // latin1 over the bytes, like the `$RUNNER_TEMP` scan below and for the
+    // same reason: `readAsStringSync` throws on the first byte that is not
+    // valid UTF-8, and skipping the file then hides everything else in it —
+    // a secret plus one junk byte is invisible. The sibling scan learned
+    // this in #200; this one still had the swallow at #236.
+    final text = latin1.decode(entity.readAsBytesSync(), allowInvalid: true);
     channels.add((
       where: 'file \$GITHUB_WORKSPACE/$name',
       text: text,
@@ -1072,11 +1072,16 @@ exit 0
       final short = attempt('elevenchars');
       expect(
         short.code,
-        isNot(0),
+        // 2, not `isNot(0)`: the fixture hands the script a keytool that
+        // does not exist, so a script with NO length check still exits
+        // non-zero — this assertion passed either way and only the message
+        // check below was load-bearing (#241).
+        2,
         reason:
-            'password-length: an 11-character password was accepted. The leak '
-            'scan can only search it verbatim, so a base64 copy of it in a '
-            'job summary would not be found',
+            'password-length: an 11-character password was not refused with '
+            'the exit code the refusal uses. The leak scan can only search a '
+            'short password verbatim, so a base64 copy of it in a job '
+            'summary would not be found',
       );
       expect(
         short.err,
@@ -1880,14 +1885,17 @@ exit 0
     // that would otherwise stand here.
     //
     // Scoping this rule across `test/guards/` is correct and it is what #220
-    // asked for. Doing it surfaced raw process starts in every other guard
-    // file (#222 carries the enumerated list; a count was stated three
-    // different ways and is not repeated here) — including
-    // `signing_guard_test.dart`, which runs real Flutter builds with the
-    // HS_* signing variables, so those genuinely need scanning.
-    // Routing them through a shared chokepoint is a refactor of the test
-    // infrastructure, not a line change, and writing 20 exemptions instead
-    // would be precisely the self-granted exemption tightened below.
+    // asked for. Doing it surfaced raw process starts in most of the other
+    // guard files — including `signing_guard_test.dart`, which runs real
+    // Flutter builds with the HS_* signing variables, so those genuinely
+    // need scanning. #222 carries the enumerated list; it is not restated
+    // here, and neither is a count, because four different ones have been
+    // written down so far and none of them was checked (#239).
+    //
+    // Routing those calls through a shared chokepoint is a refactor of the
+    // test infrastructure, not a line change, and writing an exemption for
+    // each instead would be precisely the self-granted exemption tightened
+    // below.
     //
     // So the scope stays as it is, the gap is filed with the enumerated list,
     // and this comment exists so the next reader knows the limit is known
