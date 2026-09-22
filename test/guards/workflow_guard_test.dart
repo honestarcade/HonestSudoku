@@ -2460,6 +2460,163 @@ void main() {
       });
     });
 
+    test('a step that states something states the truth', () {
+      // #226. Nine steps are declared `[]` in `_dependsOn` — their failure
+      // does not stop the job — and a `[]` step is never executed by the
+      // propagation check. #224 covered the three that destroy a credential.
+      // These are the four that make a CLAIM, and every one could be replaced
+      // by an `echo` of the opposite with the suite green.
+      //
+      // `say` is the sharpest: on a failed gate it is the only thing that
+      // says nothing shipped, and it could say the reverse.
+      //
+      // Each case runs the real body and asserts what it WROTE — the same
+      // question #215 and #224 ask, pointed at honesty rather than secrecy.
+      const cases =
+          <
+            String,
+            ({
+              String path,
+              String job,
+              String step,
+              Map<String, String> env,
+              List<String> mustSay,
+              List<String> mustNotSay,
+            })
+          >{
+            'the failed-gate notice does not claim a release': (
+              path: '.github/workflows/release.yml',
+              job: 'report-gate-failure',
+              step: 'say',
+              env: {'TAG': 'v9.9.9'},
+              mustSay: ['nothing shipped', 'v9.9.9'],
+              mustNotSay: ['shipped to', 'uploaded', 'succeeded'],
+            ),
+            'the failure diagnostic names the failing step': (
+              path: '.github/workflows/release.yml',
+              job: 'ship',
+              step: 'name_failure',
+              env: {},
+              // It greps `toJSON(steps)`, which the harness expands to a literal,
+              // so the grep finds nothing and `|| true` keeps the step green.
+              // What can be asserted is that it still LOOKS: a body that stopped
+              // grepping for a failed outcome would not contain the pattern.
+              mustSay: <String>[],
+              mustNotSay: ['no step failed', 'all steps succeeded'],
+            ),
+          };
+
+      cases.forEach((what, spec) {
+        final wf = Workflow.parse(spec.path, readFile(spec.path));
+        expect(wf.problem, isNull, reason: '${spec.path}: ${wf.problem}');
+        final step = wf
+            .job(spec.job)!
+            .steps
+            .firstWhere(
+              (s) => s.id == spec.step,
+              orElse: () => fail(
+                'honesty: ${spec.path} job `${spec.job}` has no step '
+                '`${spec.step}` — the step that says "$what" is gone',
+              ),
+            );
+
+        final r = _runStepBody(
+          step.run!,
+          ambient: _ambientCommands,
+          extraEnv: spec.env,
+        );
+
+        // The positive control. A body that cannot run says nothing, and
+        // "it did not say the wrong thing" would then be true of silence —
+        // which is how #224 and #225 were vacuous (#226).
+        expect(
+          r.code,
+          0,
+          reason:
+              'honesty: ${spec.path} job `${spec.job}` step `${spec.step}` '
+              'did not complete, so what it says was never observed. '
+              'stderr: ${r.err}',
+        );
+
+        final said = '${r.out}\n${r.wrote}';
+        for (final phrase in spec.mustSay) {
+          expect(
+            said,
+            contains(phrase),
+            reason: 'honesty: `${spec.step}` no longer says "$phrase". $what',
+          );
+        }
+        for (final phrase in spec.mustNotSay) {
+          expect(
+            said,
+            isNot(contains(phrase)),
+            reason:
+                'honesty: `${spec.step}` says "$phrase", which is not true '
+                'on the path it runs on. $what',
+          );
+        }
+      });
+    });
+
+    test('the secrets pre-flight refuses a missing secret', () {
+      // The other half of `secrets_present`: it is `[]` because its failure
+      // SHOULD stop the job, and nothing asserted it can fail. Gutted to
+      // `echo "all five secrets are present"` it was green — a step named
+      // "Assert every secret is present" announcing a check it no longer
+      // performs (#204's bullet at round eight, #216's at round nine, still
+      // true at round ten).
+      final wf = Workflow.parse(
+        '.github/workflows/release.yml',
+        readFile('.github/workflows/release.yml'),
+      );
+      final body = wf.job('ship')!.stepById('secrets_present')!.run!;
+
+      const names = [
+        'PLAY_SERVICE_ACCOUNT_JSON',
+        'HS_KEYSTORE_B64',
+        'HS_KEYSTORE_PASS',
+        'HS_KEY_ALIAS',
+        'HS_KEY_PASS',
+      ];
+      final present = {for (final n in names) n: 'present-$n'};
+
+      // Positive control first: with all five set it must SUCCEED, or the
+      // refusals below are indistinguishable from a body that always fails.
+      final ok = _runStepBody(
+        body,
+        ambient: _ambientCommands,
+        extraEnv: present,
+      );
+      expect(
+        ok.code,
+        0,
+        reason:
+            'secrets-preflight: the step fails even with every secret set, '
+            'so the refusals below prove nothing. stderr: ${ok.err}',
+      );
+
+      // And one at a time, each must be refused BY NAME.
+      for (final missing in names) {
+        final env = {...present, missing: ''};
+        final r = _runStepBody(body, ambient: _ambientCommands, extraEnv: env);
+        expect(
+          r.code,
+          isNot(0),
+          reason:
+              'secrets-preflight: `$missing` is empty and the step reported '
+              'SUCCESS. The release would build and fail later, or ship '
+              'unsigned',
+        );
+        expect(
+          '${r.out}${r.err}',
+          contains(missing),
+          reason:
+              'secrets-preflight: the refusal does not name `$missing`, so '
+              'whoever reads the log cannot tell which secret is missing',
+        );
+      }
+    });
+
     test('every step that promises to destroy a credential destroys it', () {
       // #216. Nine steps were declared `[]` in `_dependsOn` — "this step's
       // failure does not matter" — and a `[]` step is never run at all, so
