@@ -2,7 +2,7 @@ name: honest_sudoku
 description: "Honest Sudoku — a fully offline Sudoku game for Android."
 publish_to: 'none' # never published to pub.dev
 
-version: 1.0.0+1
+version: 0.1.0+1
 
 environment:
   sdk: ^3.13.4
