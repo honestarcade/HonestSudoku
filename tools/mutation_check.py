@@ -322,6 +322,23 @@ MUTATIONS: list[Mutation] = [
                  r"\1      doc['target'] = 'tag';\n", 1),
              "the branch condition then guards nothing",
              'not branches'),
+    # ---- #228: the bypass list, decided by a predicate the battery can reach --
+    # The branch that reads `bypass_actors` needs a token with Administration,
+    # which no local run has, so the logic lives in `_bypassVerdict` and is
+    # fed recorded shapes. Both GREEN before the predicate existed, because
+    # nothing could reach the branch to test it.
+    Mutation("#228", "a lapsed admin token turns the bypass check into a skip",
+             "test/guards/workflow_guard_test.dart",
+             sub(r"  if \(bypass == null\) \{\n    if \(expected\) \{",
+                 "  if (bypass == null) {\n    if (false) {", 1),
+             "HS_RULESET_READ_TOKEN expires and the required check quietly stops reading the list",
+             'bypass-verdict'),
+    Mutation("#228", "a bypass actor is accepted",
+             "test/guards/workflow_guard_test.dart",
+             sub(r"  if \(bypass is List && bypass\.isEmpty\) return \(skip: false, problem: null\);",
+                 "  if (bypass is List) return (skip: false, problem: null);", 1),
+             "whoever is on the list can push to main past both checks",
+             'bypass-verdict'),
     Mutation("#219", "the pull_request rule is removed from the ruleset",
              "test/guards/workflow_guard_test.dart",
              sub(r"(final doc = jsonDecode\(payload\) as Map<String, dynamic>;\n)",
