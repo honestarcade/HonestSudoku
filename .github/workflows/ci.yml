@@ -19,9 +19,10 @@ permissions:
   # NOT `administration: read`. It was added here for #228 so the ruleset
   # guard could read `bypass_actors` in CI, and it is not a permission
   # GITHUB_TOKEN can be granted at all: the workflow failed validation, zero
-  # jobs ran, and the required-check binding refused the merge. Reading that
-  # field needs a PAT with admin scope — a secret to store and rotate, which
-  # is the owner's call and not this file's. The guard says so instead.
+  # jobs ran, and the required-check binding refused the merge. That field
+  # is read with HS_RULESET_READ_TOKEN instead — a fine-grained PAT with
+  # repository Administration read-only, the owner's decision of 2026-09-22
+  # — handed to each guard run below in place of `github.token`.
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -81,7 +82,14 @@ jobs:
         # authenticated where a token exists — `github.token` is read-only and
         # already available to every job (#219).
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          # HS_RULESET_READ_TOKEN can read `bypass_actors`; `github.token`
+          # cannot (#228). The fallback keeps a fork or a lapsed secret on
+          # the anonymous-plus-skip path rather than failing to start.
+          GITHUB_TOKEN: ${{ secrets.HS_RULESET_READ_TOKEN || github.token }}
+          # And the guard is TOLD the token is there, so that an absent
+          # field then fails instead of skipping: a lapsed secret must be
+          # loud, because a skip on a required check is a silent downgrade.
+          HS_RULESET_READ_EXPECTED: ${{ secrets.HS_RULESET_READ_TOKEN != '' && '1' || '' }}
         run: flutter test --no-pub --tags guard
 
       - id: gate
@@ -91,7 +99,14 @@ jobs:
         # token it is an anonymous call per PR from a shared runner IP — the
         # one most likely to eat the 403 the token exists to avoid (#230).
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          # HS_RULESET_READ_TOKEN can read `bypass_actors`; `github.token`
+          # cannot (#228). The fallback keeps a fork or a lapsed secret on
+          # the anonymous-plus-skip path rather than failing to start.
+          GITHUB_TOKEN: ${{ secrets.HS_RULESET_READ_TOKEN || github.token }}
+          # And the guard is TOLD the token is there, so that an absent
+          # field then fails instead of skipping: a lapsed secret must be
+          # loud, because a skip on a required check is a silent downgrade.
+          HS_RULESET_READ_EXPECTED: ${{ secrets.HS_RULESET_READ_TOKEN != '' && '1' || '' }}
         run: tools/gate.sh
 
       # Only on a pull request: a workflow_call from the release workflow
@@ -157,7 +172,14 @@ jobs:
         # that endpoint. Anonymous it would exhaust the hourly limit partway
         # through and report the remainder as WRONG-REASON (#219).
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          # HS_RULESET_READ_TOKEN can read `bypass_actors`; `github.token`
+          # cannot (#228). The fallback keeps a fork or a lapsed secret on
+          # the anonymous-plus-skip path rather than failing to start.
+          GITHUB_TOKEN: ${{ secrets.HS_RULESET_READ_TOKEN || github.token }}
+          # And the guard is TOLD the token is there, so that an absent
+          # field then fails instead of skipping: a lapsed secret must be
+          # loud, because a skip on a required check is a silent downgrade.
+          HS_RULESET_READ_EXPECTED: ${{ secrets.HS_RULESET_READ_TOKEN != '' && '1' || '' }}
           # Python buffers stdout when it is not a terminal, so a cancelled
           # job left NO progress lines — not one `[N/102]`. Unbuffered, the
           # log shows how far it got and which entry was running.

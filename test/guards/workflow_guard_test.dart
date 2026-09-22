@@ -458,6 +458,45 @@ bool _isRateLimited(String status, String payload) {
   return body.contains('rate limit') || body.contains('secondary rate');
 }
 
+/// What the ruleset guard concludes from `bypass_actors`.
+///
+/// Separated from the HTTP read for the same reason as `_isRateLimited`:
+/// the branch where the field IS readable needs a token with repository
+/// Administration, which a maintainer's shell may lack and the battery's
+/// local run certainly does. A predicate fed recorded shapes is testable
+/// everywhere; the same branch inside the network test was testable nowhere
+/// (#228).
+///
+/// [expected] is CI's statement that the token it passed can read the
+/// field — `HS_RULESET_READ_EXPECTED=1`, set only when the secret is
+/// non-empty. With it, an absent field is a FAILURE, not a skip: the token
+/// has lapsed or lost its permission, and a skip on a required check is how
+/// a control degrades without anyone noticing.
+({bool skip, String? problem}) _bypassVerdict(
+  Object? bypass, {
+  required bool expected,
+}) {
+  if (bypass == null) {
+    if (expected) {
+      return (
+        skip: false,
+        problem:
+            'ruleset: HS_RULESET_READ_TOKEN was expected to read '
+            '`bypass_actors` and the field is absent — the token has lapsed '
+            'or lost Administration read. Rotate it (#228)',
+      );
+    }
+    return (skip: true, problem: null);
+  }
+  if (bypass is List && bypass.isEmpty) return (skip: false, problem: null);
+  return (
+    skip: false,
+    problem:
+        'ruleset: $bypass can push to `main` without the checks. A bypass '
+        'actor is the gate not applying to whoever matters most',
+  );
+}
+
 /// Secrets whose value is public by design.
 ///
 /// The keystore ALIAS is in `android/signing/README.md`, on keytool's command
@@ -2497,6 +2536,12 @@ void main() {
           '`mutations` before a merge',
         );
       }
+      if (status == '401') {
+        fail(
+          'ruleset: GitHub rejected the token (HTTP 401). In CI that is '
+          'HS_RULESET_READ_TOKEN lapsed or revoked — rotate it (#228)',
+        );
+      }
       expect(
         status,
         '200',
@@ -2585,37 +2630,98 @@ void main() {
       // validation, zero jobs ran, and the required-check binding refused
       // the merge (#228).
       //
-      // So in CI this field is unreadable BY CONSTRUCTION, not by omission.
-      // Reading it needs a PAT with admin scope — a secret to store and
-      // rotate, which is the owner's decision. Until one exists the bypass
-      // list is checked wherever such a token is present (a maintainer's
-      // shell) and reported as unchecked everywhere else. Reported, not
-      // silent: `printOnFailure` was used for that once and emits only when
-      // the test FAILS, so on this passing path it said nothing at all.
-      final bypass = doc['bypass_actors'];
-      if (bypass == null) {
-        // Not a failure and not a silent pass: a skip, which the runner
-        // counts and prints — `~1` in the compact reporter, `⏭️` and
-        // `1 skipped` in CI's expanded one.
+      // So in CI this field is unreadable by `github.token` BY CONSTRUCTION.
+      // The owner's decision (#228, 2026-09-22): a fine-grained PAT with
+      // repository Administration read-only, stored as
+      // `HS_RULESET_READ_TOKEN`, which `ci.yml` hands to every guard run
+      // in place of `github.token` — and, because a secret can lapse,
+      // `HS_RULESET_READ_EXPECTED=1` beside it, so that an absent field
+      // with the token present is red rather than a skip. `_bypassVerdict`
+      // holds that logic and has its own test, because this branch can only
+      // be reached for real in CI.
+      //
+      // Without the token — a maintainer's shell — the skip stands, and the
+      // runner counts and prints it: `~1` in the compact reporter, `⏭️` and
+      // `1 skipped` in CI's expanded one. Reported, not silent:
+      // `printOnFailure` was used for that once and emits only when the
+      // test FAILS.
+      final verdict = _bypassVerdict(
+        doc['bypass_actors'],
+        expected: Platform.environment['HS_RULESET_READ_EXPECTED'] == '1',
+      );
+      if (verdict.skip) {
         markTestSkipped(
           'bypass_actors is unreadable without repository administration, '
-          'which GITHUB_TOKEN cannot hold. The enforcement, target, branch '
+          'which this token does not hold. The enforcement, target, branch '
           'condition, pull_request rule and required checks were verified; '
-          'the bypass list was not. Closing that needs an admin PAT (#228)',
+          'the bypass list was not. CI reads it with HS_RULESET_READ_TOKEN '
+          '(#228)',
         );
         return;
       }
-      if (bypass != null) {
-        expect(
-          bypass,
-          isEmpty,
-          reason:
-              'ruleset: $bypass can push to `main` without the checks. A '
-              'bypass actor is the gate not applying to whoever matters '
-              'most',
-        );
-      }
+      expect(
+        verdict.problem,
+        isNull,
+        reason: verdict.problem ?? 'ruleset: bypass list acceptable',
+      );
     });
+
+    test(
+      'the bypass verdict is decided the same with or without the token',
+      () {
+        // Recorded shapes, not a network read — the branch a token with
+        // Administration reaches is otherwise untestable on any machine
+        // without one, which is every local run and the battery (#228).
+        expect(
+          _bypassVerdict(null, expected: false).skip,
+          isTrue,
+          reason:
+              'bypass-verdict: without a token that can read the field, an '
+              'absent field is a skip, and it must stay one — a maintainer '
+              'without an admin token must not see a red suite for it',
+        );
+        final lapsed = _bypassVerdict(null, expected: true);
+        expect(
+          lapsed.skip,
+          isFalse,
+          reason:
+              'bypass-verdict: the field is absent although the token was '
+              'expected to read it, and the guard SKIPPED. A lapsed '
+              'HS_RULESET_READ_TOKEN would degrade this control silently',
+        );
+        expect(
+          lapsed.problem,
+          contains('lapsed'),
+          reason: 'bypass-verdict: the failure does not say what to rotate',
+        );
+        expect(
+          _bypassVerdict(<dynamic>[], expected: true).problem,
+          isNull,
+          reason:
+              'bypass-verdict: an empty bypass list is the state this guard '
+              'exists to confirm, and it was reported as a problem',
+        );
+        final actor = _bypassVerdict([
+          {
+            'actor_id': 5,
+            'actor_type': 'RepositoryRole',
+            'bypass_mode': 'always',
+          },
+        ], expected: true);
+        expect(
+          actor.problem,
+          isNotNull,
+          reason:
+              'bypass-verdict: a bypass actor was accepted. That actor can '
+              'push to `main` past both required checks',
+        );
+        expect(
+          actor.skip,
+          isFalse,
+          reason: 'bypass-verdict: a bypass actor was skipped over',
+        );
+      },
+    );
 
     test('every declared key link is actually wired', () {
       // The scripts with the most thorough tests here are worth nothing if

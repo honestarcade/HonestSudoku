@@ -324,11 +324,13 @@ echo "GATE PASSED $BUNDLE"
 #
 # (#196)
 echo "note: tools/mutation_check.py is not part of this gate — run it before changing a guard"
-# The ruleset check reads the PUBLIC rulesets endpoint anonymously, so it runs
-# here and in CI alike and skips only without network. The note this replaces
-# said it needed an admin-scoped token CI should not be given; that was never
-# true of this repository, and it was the stated reason for leaving the merge
-# gate's own binding unverified in CI (#202, #211).
+# The ruleset check reads the PUBLIC rulesets endpoint, so it runs here and in
+# CI alike and skips only without network. One field, `bypass_actors`, needs a
+# token with repository Administration: CI passes HS_RULESET_READ_TOKEN and
+# asserts it; a shell without one sees that single check skipped, and the
+# runner prints the skip (#228). The note this replaces said the whole check
+# needed an admin token CI should not be given; that was never true of this
+# repository (#202, #211).
 # The gate reads the WORKING TREE. A defect that is committed and corrected
 # only in the tree therefore passes here and fails in CI, which reads the
 # commit — that is not hypothetical: an interrupted mutation run put an
