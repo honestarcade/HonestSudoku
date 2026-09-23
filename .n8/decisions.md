@@ -999,3 +999,8 @@ than per-story.
 - **Decision:** The cancel test polls `Isolate.ping` until it goes unanswered and requires that within 100 ms.
   **Why:** A ping sent in the same instant as `Isolate.kill(priority: immediate)` was still answered (4 ms after), and one sent 50 ms later was not (local probe, 2026-09-23). A single immediate ping tested the wrong thing.
   **Issue:** #27
+- **Decision:** The five `#26` engine mutations run `ENGINE_SUITE` (the four engine guard files) through a new per-entry `suite` field in `tools/mutation_check.py`, instead of `slow=True` and the whole slow suite.
+  **Why:** #26 requires the battery to fit its 60-minute job with margin. Before M2 the CI `mutations` job already took 44 to 51 minutes (CI runs 35877061156, 35898299127, 35907570513, read 2026-09-23 with `gh api .../actions/runs/<id>/jobs`). The first M2 local battery, with the engine entries on the slow suite, took 2 752 s, about 46 minutes (local run, 2026-09-23). An engine mutation is judged by the engine guards, and each still names the assertion it must trip. With the narrower suite all nine engine-related entries were caught in 365 s, including the baseline (local run, 2026-09-23). The CI measurement is recorded in #26's completion comment.
+  **Issue:** #26
+- **Finding (pre-existing, not from this run):** `#245 the verdict is handed an empty environment` SURVIVED in the local battery, and also survives on unchanged `main` locally (`tools/mutation_check.py --only 'empty environment'` against `origin/main`, 2026-09-23). It depends on the token environment the CI job provides; the CI battery has passed it on every recent run.
+  **Issue:** #245

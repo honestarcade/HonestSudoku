@@ -49,6 +49,16 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 SUITE = ["flutter", "test", "--no-pub", "--tags", "guard",
          "--exclude-tags", "slow"]
 SUITE_SLOW = ["flutter", "test", "--no-pub", "--tags", "guard"]
+# The engine property guards alone. A mutation of the engine is judged by
+# the guards written for the engine: running the whole slow suite for each
+# one cost about three minutes a mutation, in a job that already used 44 to
+# 51 of its 60 minutes before they arrived (CI runs 35877061156, 35898299127,
+# 35907570513, read 2026-09-23 with `gh api .../actions/runs/<id>/jobs`).
+ENGINE_SUITE = ["flutter", "test", "--no-pub",
+                "test/guards/engine_guard_4x4_test.dart",
+                "test/guards/engine_guard_6x6_test.dart",
+                "test/guards/engine_guard_9x9_test.dart",
+                "test/guards/engine_guard_16x16_test.dart"]
 IN_FLIGHT = ROOT / ".mutation_check_in_flight"
 
 
@@ -63,6 +73,7 @@ class Mutation:
     also: tuple = ()
     slow: bool = False
     creates: tuple = ()
+    suite: tuple = ()
     """A substring of the reason the RIGHT assertion prints when it fires.
 
     Without this the battery measures "the suite went red", which is not the
@@ -1115,8 +1126,9 @@ MUTATIONS: list[Mutation] = [
              "an unseeded PRNG breaks same-seed-same-board (invariant 4)",
              'engine-random: 1 offender'),
     # ---- #26: the engine property guards (invariants 2 and 4) ------------
-    # `slow=True`: the property guards are tagged `slow`, so the per-mutation
-    # SUITE leaves them out and these entries run SUITE_SLOW.
+    # The property guards are tagged `slow`, so the per-mutation SUITE leaves
+    # them out; these entries run ENGINE_SUITE, the four files that judge the
+    # engine, rather than the whole slow suite.
     Mutation("#26", "carving keeps a removal that breaks uniqueness",
              "lib/engine/generator.dart",
              chain(sub(r"if \(counter\(shape, values\) == 1\) \{",
@@ -1124,14 +1136,14 @@ MUTATIONS: list[Mutation] = [
                    sub(r"      if \(_counter\(shape, values\) != 1\) \{\n"
                        r"        throw StateError\([^;]*\);\n      \}\n", "")),
              "boards with two solutions ship as puzzles (invariant 2)",
-             'engine-unique: ', slow=True),
+             'engine-unique: ', suite=tuple(ENGINE_SUITE)),
     Mutation("#26", "a board is labelled a band it does not grade to",
              "lib/engine/generator.dart",
              chain(sub(r"if \(band != difficulty \|\| given > ceilingCount\) "
                        r"return null;", "if (given > ceilingCount) return null;"),
                    sub(r"\n      if \(g\.band != difficulty\) continue;", "")),
              "a Hard label on a board singles can finish",
-             'engine-band: ', slow=True),
+             'engine-band: ', suite=tuple(ENGINE_SUITE)),
     # Two edits, because the floor alone never binds on a supported pair:
     # uniqueness stops every carve above it (a first version that only lowered
     # the floor SURVIVED, which is how that was learned). What the floor
@@ -1143,20 +1155,20 @@ MUTATIONS: list[Mutation] = [
                    sub(r"if \(given <= target && band == difficulty\) break;",
                        "if (given <= floor && band == difficulty) break;")),
              "boards emptier than the design's n + n/2 floor",
-             'engine-floor: ', slow=True),
+             'engine-floor: ', suite=tuple(ENGINE_SUITE)),
     Mutation("#26", "generation depends on how often it has run",
              "lib/engine/generator.dart",
              chain(sub(r"(Puzzle generate\([^{]*\{(?:.|\n)*?)final rng = Rng\(seed\);",
                        r"\1final rng = Rng(seed + _generateCalls++);"),
                    append("\nint _generateCalls = 0;\n")),
              "the same seed stops giving the same board (invariant 4)",
-             'engine-determinism: ', slow=True),
+             'engine-determinism: ', suite=tuple(ENGINE_SUITE)),
     Mutation("#26", "the ladder tries pairs before locked candidates",
              "lib/engine/human_solver.dart",
              chain(sub(r"  Pointing\(\),\n", ""),
                    sub(r"(  NakedSubset\.pair\(\),\n)", r"\1  Pointing(),\n")),
              "grades, and so the pinned graded boards, change silently",
-             'engine-golden: ', slow=True),
+             'engine-golden: ', suite=tuple(ENGINE_SUITE)),
     Mutation("#26", "the engine reads the clock", "lib/engine/solver.dart",
              append("\nfinal startedAt = DateTime.now();\n"),
              "generation that depends on when it runs is not deterministic",
@@ -1480,7 +1492,7 @@ def main() -> int:
                 broken.append((m, "left the Dart unanalyzable — it would fail for the wrong reason"))
                 print(f"  BROKEN  {label}\n          does not compile after mutation")
                 continue
-            suite = SUITE_SLOW if m.slow else SUITE
+            suite = list(m.suite) or (SUITE_SLOW if m.slow else SUITE)
             result = run(suite)
             output = result.stdout + result.stderr
             if result.returncode == 0:
