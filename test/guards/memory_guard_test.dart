@@ -6,6 +6,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'repo_files.dart';
+import 'secret_shapes.dart';
 
 /// `.n8/memory/` is the project's own record of things like the Play Console
 /// account, and `play-console.md` says of itself, in bold, that credentials
@@ -27,44 +28,28 @@ void main() {
     /// NAMES a key — the service account's key id is in `play-console.md` on
     /// purpose, and says so — is not a secret, which is why the base64 rule
     /// needs a length no human identifier reaches.
-    final shapes = <String, RegExp>{
-      'a PEM private key block': RegExp(r'-----BEGIN [A-Z ]*PRIVATE KEY-----'),
-      'a JSON private_key field': RegExp(r'"private_key"\s*:'),
-      'a 60-character unbroken base64 run': RegExp(r'[A-Za-z0-9+/]{60,}={0,2}'),
-      'a 64-character unbroken hex run': RegExp(r'\b[0-9a-fA-F]{64,}\b'),
-      // `caseSensitive: false`, not an inline `(?i)` — Dart's RegExp rejects
-      // the inline form with `FormatException: Invalid group`, and every
-      // assertion here threw before the first file was read.
-      // No leading `\b`, deliberately. The shape this project would actually
-      // paste by accident is `HS_KEYSTORE_PASS=…` or `PLAY_TOKEN=…`, and an
-      // underscore is a word character, so `\bpass\b` never matches inside
-      // `HS_KEYSTORE_PASS`. Probed: with the boundary, planting
-      // `export HS_KEYSTORE_PASS: hunter2seventeen` in a memory file was
-      // GREEN. Prose is still safe — `password manager` has no `:` or `=`
-      // after it, and a colon followed by ordinary words has no 8-character
-      // run immediately after it.
-      'an assignment of something named like a secret': RegExp(
-        r'(password|passwd|pass|secret|token|api[_-]?key)\s*[:=]\s*\S{8,}',
-        caseSensitive: false,
-      ),
-    };
+    // Both documents that claim it, not only the memory files. `README.md`'s
+    // Release section is what AC6's "documented by name only" is about, and
+    // it was outside every content scan: a password and PEM-shaped key
+    // material pasted into its secrets table left the suite green (#261).
+    final files = [
+      ...Directory('${repoRoot.path}/.n8/memory')
+          .listSync(recursive: true)
+          .whereType<File>()
+          .where((f) => f.path.endsWith('.md')),
+      File('${repoRoot.path}/README.md'),
+    ];
 
-    final files = Directory('${repoRoot.path}/.n8/memory')
-        .listSync(recursive: true)
-        .whereType<File>()
-        .where((f) => f.path.endsWith('.md'))
-        .toList();
-
-    test('there are memory files to check', () {
+    test('there are documents to check', () {
       // The positive control. A glob that matches nothing makes every
       // assertion below vacuously true, which is how a guard becomes
       // decoration (#226's lesson, applied at the point it bites here).
       expect(
-        files,
-        isNotEmpty,
+        files.length,
+        greaterThan(1),
         reason:
-            'memory-guard: no `.md` under `.n8/memory/`, so the scan below '
-            'asserts nothing. If the directory moved, move this with it',
+            'memory-guard: the document list is empty, so the scan below '
+            'asserts nothing. If `.n8/memory/` moved, move this with it',
       );
     });
 
@@ -72,8 +57,29 @@ void main() {
       final name = file.path.substring(repoRoot.path.length + 1);
       test('$name carries no secret-shaped content', () {
         final text = file.readAsStringSync();
-        shapes.forEach((what, pattern) {
-          final match = pattern.firstMatch(text);
+        secretShapes.forEach((what, pattern) {
+          // A match on a line that DECLARES itself is allowed, with a reason
+          // of real length — the same mechanism as the chokepoint rule's
+          // `chokepoint-exempt:`, and for the same reason: the alternative
+          // was weakening the pattern until the honest case passed, which is
+          // how the base64 floor reached 60 and let a whole 32-byte key
+          // through (#263).
+          //
+          // The case this exists for: `play-console.md` records the service
+          // account's key ID, which is a 40-character hex run and is public
+          // by design — it names the key rather than being the key.
+          final match = pattern.allMatches(text).where((m) {
+            final line = text.substring(
+              text.lastIndexOf('\n', m.start) + 1,
+              () {
+                final end = text.indexOf('\n', m.start);
+                return end == -1 ? text.length : end;
+              }(),
+            );
+            final declared = RegExp(r'not-a-secret:\s*(.{20,})')
+                .firstMatch(line);
+            return declared == null;
+          }).firstOrNull;
           expect(
             match,
             isNull,

@@ -107,6 +107,9 @@ api() {
     return 1
   fi
   if [ "${status:0:1}" != "2" ]; then
+    # The caller matches on the body AND on this: a 4xx that happens to
+    # mention a draft app is not the draft-app rule (#260).
+    API_STATUS="$status"
     echo "play_promote: $method $path returned $status" >&2
     sed -n '1,20p' "$out" >&2
     # The body stays in $API_BODY_FILE for the caller to match on (#129).
@@ -190,6 +193,7 @@ EDIT_ID=""
 # refused commit also spends the edit, so the retry needs a fresh one rather
 # than reusing the one that just failed.
 REFUSAL=""
+API_STATUS=""
 last_refusal() {
   REFUSAL=""
   if [ -n "$API_BODY_FILE" ] && [ -r "$API_BODY_FILE" ]; then
@@ -198,8 +202,24 @@ last_refusal() {
 }
 
 is_draft_app_rule() {
+  # The PHRASE, not a bare "draft app" substring, and a 4xx with it.
+  #
+  # The loose version was defended on the grounds that a wording change would
+  # break the real path. That trade is the wrong way round, and #260 shows
+  # why: a 403 whose message merely mentions a draft app, retried and
+  # succeeding, exits 0 with `status=draft` — a permission denial reported as
+  # a success, which is #129 in its own words. A wording change instead makes
+  # the retry stop firing, which dies loudly with the message below. Loud
+  # beats silent.
+  #
+  # The live refusal this exists for, from run 35797055235 on 2026-09-22:
+  #   400 "Only releases with status draft may be created on draft app."
+  case "$API_STATUS" in
+  4*) ;;
+  *) return 1 ;;
+  esac
   case "$REFUSAL" in
-  *"draft app"* | *"draft_app"* | *"only releases with status draft"*) return 0 ;;
+  *"only releases with status draft"*) return 0 ;;
   *) return 1 ;;
   esac
 }

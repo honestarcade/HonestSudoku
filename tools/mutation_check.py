@@ -980,6 +980,49 @@ MUTATIONS: list[Mutation] = [
     # The first is #129 verbatim, green at be84231 because nothing reached the
     # retry branch. The second is a secret used as a FILE NAME, which
     # upload-artifact publishes as surely as the bytes.
+    # ---- #260/#261/#263: what round sixteen found -------------------------
+    # Every one of these was GREEN at a360810.
+    Mutation("#260", "the draft retry promotes a completed release",
+             "tools/play_promote.sh",
+             sub(r"    attempt_promotion draft \|\| die_api",
+                 "    attempt_promotion completed || die_api", 1),
+             "the retry asks for the status Play just refused, and calls it a draft",
+             'draft-retry: the RETRY did not ask'),
+    Mutation("#260", "an attempt commits without promoting anything",
+             "tools/play_promote.sh",
+             sub(r"  api PUT \"\$API/\$PACKAGE/edits/\$EDIT_ID/tracks/\$TO\".*?\n  \}\n",
+                 "", 1, flags=re.S),
+             "an edit that commits nothing reads back the track that was already there",
+             'draft-retry: expected two track PUTs'),
+    Mutation("#261", "a release cancels the build it was asked to make",
+             ".github/workflows/release.yml",
+             sub(r"^  cancel-in-progress: false$", "  cancel-in-progress: true", 1,
+                 flags=re.M),
+             "#252 is what this costs: a cancelled gate and no release",
+             'concurrency-values:'),
+    Mutation("#261", "the gate takes write on contents",
+             ".github/workflows/ci.yml",
+             sub(r"^permissions:\n  contents: read$",
+                 "permissions:\n  contents: write", 1, flags=re.M),
+             "this file is workflow_called with secrets: inherit",
+             'permission-values:'),
+    Mutation("#261", "a Flutter setup stops reading the pin",
+             ".github/workflows/ci.yml",
+             sub(r"          channel: stable\n          flutter-version-file: \.fvmrc\n",
+                 "          channel: stable\n", 1),
+             "the gate then builds with whatever the channel holds that day",
+             'flutter-pin:'),
+    Mutation("#261", "the version code leaves the release summary",
+             ".github/workflows/release.yml",
+             sub(r'            echo "\| version code \| \$\{\{ steps\.version\.outputs\.code \}\} \|"\n',
+                 "", 1),
+             "the one number that finds the build on Play",
+             'no longer says "| version code'),
+    Mutation("#263", "a credential is pasted into the README's secrets table",
+             "README.md",
+             append('HS_KEYSTORE_PASS = Hunter2Seventeen'),
+             "the file AC6's 'by name only' is actually about",
+             'memory-guard: README.md'),
     Mutation("#258", "a credential is pasted into a memory file",
              ".n8/memory/pages.md",
              append('export HS_KEYSTORE_PASS: hunter2seventeen'),
@@ -987,8 +1030,13 @@ MUTATIONS: list[Mutation] = [
              'memory-guard:'),
     Mutation("#256", "the draft-app retry fires on any refusal",
              "tools/play_promote.sh",
-             sub(r'is_draft_app_rule\(\) \{\n  case "\$REFUSAL" in\n.*?\n  esac\n\}',
-                 'is_draft_app_rule() {\n  return 0\n}', 1, flags=re.S),
+             # Anchored on the function's whole body rather than on the
+             # single `case` it used to hold: the sixteenth pass gave it a
+             # status check and a second `case`, and this entry went BROKEN
+             # on its first full run after that (#260).
+             sub(r"^is_draft_app_rule\(\) \{\n.*?^\}\n",
+                 "is_draft_app_rule() {\n  return 0\n}\n", 1,
+                 flags=re.S | re.M),
              "a permission denial is downgraded to a draft and called a success (#129)",
              'draft-retry: a 403 must fail'),
     Mutation("#249", "a secret is used as a file name",
@@ -1240,10 +1288,37 @@ def main() -> int:
     # And the runner's own chrome, which is in every run's output and in
     # none of the sources above: the file path before each name, the loading
     # lines, the counter and the closing line (#250).
-    chrome = suites + [
+    #
+    # Both halves of the run, not only the green one. The verdict this audit
+    # protects is read from a RED run, so the failure formatter's own
+    # vocabulary is the half that matters and was missing: `'Expected:'`
+    # passed the audit and then scored `caught` for a mutation it had nothing
+    # to do with (#262). These come from package:test's expect formatter and
+    # its reporters — a fixed list, written down once with where it came
+    # from, rather than discovered one instance per round.
+    #
+    # Paths are compared RELATIVE to the repository root: the absolute form
+    # refuses a marker here and passes it on a runner, which is the
+    # machine-dependence the paragraph above says this avoids.
+    chrome = [str(pathlib.Path(p).relative_to(ROOT))
+              if str(p).startswith(str(ROOT)) else str(p)
+              for p in suites] + [
+        # package:test's reporters
         "loading ",
         "All tests passed!",
         "Some tests failed.",
+        "Skipped tests",
+        # package:matcher's failure formatter, present in every red run
+        "Expected:",
+        "Actual:",
+        "Which:",
+        "package:matcher",
+        "package:flutter_test",
+        "Test failed. See exception logs above.",
+        # the compact reporter's counter and clock
+        "00:0",
+        "+0",
+        "-1",
     ]
 
     haystack = [("a test's NAME", n) for n in names]

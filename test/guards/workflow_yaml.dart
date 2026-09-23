@@ -88,6 +88,7 @@ class WorkflowJob {
   const WorkflowJob({
     required this.name,
     required this.steps,
+    this.permissions = const {},
     this.line = 0,
     this.uses,
     this.needs = const [],
@@ -133,6 +134,9 @@ class WorkflowJob {
   /// `permissions:` on the job, as a scalar. See [Workflow.permissionsScalar].
   final String? permissionsScalar;
 
+  /// `permissions:` on the job, as a map. See [Workflow.permissions].
+  final Map<String, String> permissions;
+
   /// `env:` on the job, flattened to strings.
   ///
   /// Unmodelled until now, at every level. #168's Fix line said to "add
@@ -166,6 +170,9 @@ class Workflow {
     this.hasPermissions = false,
     this.permissionsScalar,
     this.hasConcurrency = false,
+    this.concurrencyGroup,
+    this.concurrencyCancelInProgress,
+    this.permissions = const {},
     this.dispatchInputs = const {},
     this.env = const {},
   });
@@ -202,6 +209,24 @@ class Workflow {
   final String? permissionsScalar;
 
   final bool hasConcurrency;
+
+  /// `concurrency.group` and `concurrency.cancel-in-progress`, as written.
+  ///
+  /// The presence flag above was all the model carried, and
+  /// `concurrencyOffenders` only asks whether a key exists — so flipping a
+  /// release to cancel in progress, or a pull request to stop cancelling,
+  /// was green in both directions (#261). This repository has already lost a
+  /// release to a cancelled job (#252), which is what makes the VALUE the
+  /// thing worth modelling.
+  final String? concurrencyGroup;
+  final String? concurrencyCancelInProgress;
+
+  /// `permissions:` as a map, when it is one.
+  ///
+  /// `hasPermissions` and `permissionsScalar` answer "is there a block" and
+  /// "is it `write-all`". Neither notices `contents: write` on the job that
+  /// is `workflow_call`ed with `secrets: inherit` (#261).
+  final Map<String, String> permissions;
 
   /// Workflow-level `env:`. See [WorkflowJob.env].
   final Map<String, String> env;
@@ -416,6 +441,7 @@ class Workflow {
             runsOn: _stringOr(jobMap, 'runs-on'),
             environment: _environment(jobMap),
             permissionsScalar: _permissionsScalar(jobMap),
+            permissions: _stringMap(jobMap, 'permissions'),
             env: _stringMap(jobMap, 'env'),
           ),
         );
@@ -468,6 +494,13 @@ class Workflow {
       hasPermissions: _lookup(doc, 'permissions') != null,
       permissionsScalar: _permissionsScalar(doc),
       hasConcurrency: _lookup(doc, 'concurrency') != null,
+      concurrencyGroup: _nested(doc, 'concurrency', 'group'),
+      concurrencyCancelInProgress: _nested(
+        doc,
+        'concurrency',
+        'cancel-in-progress',
+      ),
+      permissions: _stringMap(doc, 'permissions'),
       dispatchInputs: _dispatchInputs(doc),
       env: _stringMap(doc, 'env'),
     );
@@ -566,6 +599,14 @@ String? _rawOr(YamlMap map, String key) {
   final node = map.nodes[key];
   if (node == null) return null;
   return '${node.value}';
+}
+
+/// A scalar two levels down, as written — `concurrency.group` and the like.
+String? _nested(YamlMap map, String outer, String inner) {
+  final node = map.nodes[outer];
+  if (node is! YamlMap) return null;
+  final value = node.nodes[inner]?.value;
+  return value == null ? null : '$value';
 }
 
 Map<String, String> _stringMap(YamlMap map, String key) {
