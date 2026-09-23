@@ -3,15 +3,22 @@
 //
 // The rules are the design's prototype (`place`, `erase`, `undo`, `redo`,
 // `check`, `hint`, `restart` in Honest Sudoku.dc.html), with the divergences
-// the plan recorded: a pencil-mark toggle on a filled cell does nothing, and
-// Zen's grid-full message does not point at red cells. Widgets render these
-// states and forward taps; they hold no rule logic.
+// the plan recorded: a pencil-mark toggle on a filled cell does nothing,
+// Zen's grid-full message does not point at red cells, redo re-derives won
+// and lost (so redoing a fatal entry loses again), and nothing but the pause
+// card's own actions works while paused. Widgets render these states and
+// forward taps; they hold no rule logic.
 
 import 'package:honest_sudoku/engine/engine.dart';
 
+import 'format.dart';
 import 'game_settings.dart';
 import 'lists.dart';
 import 'notice.dart';
+import 'snapshot.dart';
+
+/// Undo steps kept, as the design's history keeps them.
+const int kHistoryCap = 120;
 
 /// One game in progress.
 final class GameState {
@@ -30,10 +37,16 @@ final class GameState {
     this.revealed = false,
     this.noteMode = false,
     this.notice,
+    this.paused = false,
+    this.hintedCell,
+    List<Snapshot> history = const [],
+    List<Snapshot> future = const [],
   }) : values = List.unmodifiable(values),
        notes = List.unmodifiable([
          for (final list in notes) List<int>.unmodifiable(list),
-       ]) {
+       ]),
+       history = List.unmodifiable(history),
+       future = List.unmodifiable(future) {
     if (puzzle.difficulty == null) {
       throw ArgumentError.value(puzzle, 'puzzle', 'must be graded');
     }
@@ -99,6 +112,26 @@ final class GameState {
 
   /// The banner under the grid, if any.
   final Notice? notice;
+
+  /// Play is suspended: the board is hidden and only the pause card's own
+  /// actions work.
+  final bool paused;
+
+  /// The cell a hint pointed at, whose ring and notes show yellow. Cleared by
+  /// any change of selection or notice.
+  final int? hintedCell;
+
+  /// Undo steps, oldest first.
+  final List<Snapshot> history;
+
+  /// Redo steps, the next one last.
+  final List<Snapshot> future;
+
+  /// There is a step to undo.
+  bool get canUndo => history.isNotEmpty;
+
+  /// There is a step to redo.
+  bool get canRedo => future.isNotEmpty;
 
   /// The grid's shape.
   GridShape get shape => puzzle.shape;
@@ -171,6 +204,7 @@ final class GameState {
   /// notice alone.
   GameState select(int index) {
     checkIndex(shape, index);
+    if (paused) return this;
     return selected == index
         ? copyWith(clearSelected: true)
         : copyWith(selected: index);
@@ -178,7 +212,7 @@ final class GameState {
 
   /// Flips note mode. Allowed while auto-notes is on (the pad then still
   /// places values; see [effectiveNoteMode]) and after the game is over.
-  GameState toggleNoteMode() => copyWith(noteMode: !noteMode);
+  GameState toggleNoteMode() => paused ? this : copyWith(noteMode: !noteMode);
 
   /// Applies [settings] mid-game. Turning auto-notes on fills every empty
   /// cell's candidates at once; turning it off keeps them as hand notes.
@@ -194,18 +228,21 @@ final class GameState {
       throw ArgumentError.value(value, 'value', 'outside 1..$n');
     }
     final i = selected;
-    if (i == null || isGiven(i) || won || lost) return this;
+    if (paused || i == null || isGiven(i) || won || lost) return this;
 
     if (effectiveNoteMode) {
       if (values[i] != 0) return this;
       final marks = [...notes[i]];
       marks.contains(value) ? marks.remove(value) : marks.add(value);
       marks.sort();
-      return copyWith(notes: _replace(notes, i, marks), clearNotice: true);
+      return _snapshotted().copyWith(
+        notes: _replace(notes, i, marks),
+        clearNotice: true,
+      );
     }
 
     if (values[i] == value) {
-      final cleared = copyWith(
+      final cleared = _snapshotted().copyWith(
         values: _replace(values, i, 0),
         clearNotice: true,
       );
@@ -262,7 +299,7 @@ final class GameState {
       }
     }
 
-    final next = copyWith(
+    final next = _snapshotted().copyWith(
       values: nextValues,
       notes: nextNotes,
       moves: moves + 1,
@@ -275,6 +312,97 @@ final class GameState {
     );
     return settings.autoNotes ? next._autoNoted() : next;
   }
+
+  /// Clears the selected cell's value and pencil marks. The design's
+  /// `erase`: a no-op on a given, with nothing selected, or when the game is
+  /// over. Does not count a move.
+  GameState erase() {
+    final i = selected;
+    if (paused || i == null || isGiven(i) || won || lost) return this;
+    final next = _snapshotted().copyWith(
+      values: _replace(values, i, 0),
+      notes: _replace(notes, i, const <int>[]),
+      clearNotice: true,
+    );
+    return settings.autoNotes ? next._autoNoted() : next;
+  }
+
+  /// Steps back one change. Clears won, lost and the notice: the design's
+  /// `undo`.
+  GameState undo() {
+    if (paused || history.isEmpty) return this;
+    final back = history.last;
+    return copyWith(
+      values: back.values,
+      notes: back.notes,
+      mistakes: back.mistakes,
+      moves: back.moves,
+      history: history.sublist(0, history.length - 1),
+      future: [...future, _snapshot],
+      won: false,
+      lost: false,
+      clearNotice: true,
+    );
+  }
+
+  /// Replays one undone change. Won, lost and revealed are derived again
+  /// from the restored grid, so redoing a fatal entry loses again.
+  GameState redo() {
+    if (paused || future.isEmpty) return this;
+    final forward = future.last;
+    final full = !forward.values.contains(0);
+    var clean = full;
+    for (var j = 0; clean && j < forward.values.length; j++) {
+      if (forward.values[j] != solution[j]) clean = false;
+    }
+    final limit = settings.strikeMode.limit;
+    return copyWith(
+      values: forward.values,
+      notes: forward.notes,
+      mistakes: forward.mistakes,
+      moves: forward.moves,
+      history: _capped([...history, _snapshot]),
+      future: future.sublist(0, future.length - 1),
+      won: full && clean,
+      lost: limit != null && forward.mistakes >= limit,
+      revealed: revealed || (full && !clean),
+      clearNotice: true,
+    );
+  }
+
+  /// Suspends play. Allowed on a finished game, so every state is
+  /// constructible.
+  GameState pause() => copyWith(paused: true);
+
+  /// Resumes play.
+  GameState resume() => copyWith(paused: false);
+
+  /// One second of play: counted only while not paused and not over. Whether
+  /// the board is on screen is the controller's business.
+  GameState tick() => paused || won || lost
+      ? this
+      : copyWith(elapsedSeconds: elapsedSeconds + 1);
+
+  /// The pause card's line, e.g. `40 of 81 cells filled · 12 entries ·
+  /// 2 mistakes` (or `zen mode`), the design's grammar kept (`1 entries`).
+  String get pauseFill =>
+      '$filledCount of ${shape.cellCount} cells filled · $moves entries · '
+      '${settings.strikeMode == StrikeMode.zen ? 'zen mode' : '$mistakes mistakes'}';
+
+  /// The pause card's meta: `SIZE · DIFFICULTY · M:SS`, upper-cased.
+  String get pauseMeta =>
+      '${shape.label} · ${difficulty.label} · ${fmt(elapsedSeconds)}'
+          .toUpperCase();
+
+  Snapshot get _snapshot => Snapshot(values, notes, mistakes, moves);
+
+  /// This state with its current values pushed onto the history and the
+  /// redo stack emptied: what every changing verb does first.
+  GameState _snapshotted() =>
+      copyWith(history: _capped([...history, _snapshot]), future: const []);
+
+  static List<Snapshot> _capped(List<Snapshot> h) =>
+      h.length > kHistoryCap ? h.sublist(h.length - kHistoryCap) : h;
 
   /// Every empty cell's notes set to its candidates; filled cells none.
   GameState _autoNoted() => copyWith(
@@ -304,21 +432,40 @@ final class GameState {
     bool? noteMode,
     Notice? notice,
     bool clearNotice = false,
-  }) => GameState(
-    puzzle: puzzle,
-    settings: settings ?? this.settings,
-    values: values ?? this.values,
-    notes: notes ?? this.notes,
-    selected: clearSelected ? null : (selected ?? this.selected),
-    mistakes: mistakes ?? this.mistakes,
-    moves: moves ?? this.moves,
-    elapsedSeconds: elapsedSeconds ?? this.elapsedSeconds,
-    won: won ?? this.won,
-    lost: lost ?? this.lost,
-    revealed: revealed ?? this.revealed,
-    noteMode: noteMode ?? this.noteMode,
-    notice: clearNotice ? null : (notice ?? this.notice),
-  );
+    bool? paused,
+    int? hintedCell,
+    List<Snapshot>? history,
+    List<Snapshot>? future,
+  }) {
+    final nextSelected = clearSelected ? null : (selected ?? this.selected);
+    final nextNotice = clearNotice ? null : (notice ?? this.notice);
+    // The hinted cell lasts only as long as the selection and notice the
+    // hint set; any change to either clears it.
+    final nextHinted =
+        hintedCell ??
+        (nextSelected == this.selected && nextNotice == this.notice
+            ? this.hintedCell
+            : null);
+    return GameState(
+      puzzle: puzzle,
+      settings: settings ?? this.settings,
+      values: values ?? this.values,
+      notes: notes ?? this.notes,
+      selected: nextSelected,
+      mistakes: mistakes ?? this.mistakes,
+      moves: moves ?? this.moves,
+      elapsedSeconds: elapsedSeconds ?? this.elapsedSeconds,
+      won: won ?? this.won,
+      lost: lost ?? this.lost,
+      revealed: revealed ?? this.revealed,
+      noteMode: noteMode ?? this.noteMode,
+      notice: nextNotice,
+      paused: paused ?? this.paused,
+      hintedCell: nextHinted,
+      history: history ?? this.history,
+      future: future ?? this.future,
+    );
+  }
 
   @override
   bool operator ==(Object other) =>
@@ -335,7 +482,11 @@ final class GameState {
       other.lost == lost &&
       other.revealed == revealed &&
       other.noteMode == noteMode &&
-      other.notice == notice;
+      other.notice == notice &&
+      other.paused == paused &&
+      other.hintedCell == hintedCell &&
+      listEquals(other.history, history) &&
+      listEquals(other.future, future);
 
   @override
   int get hashCode => Object.hash(
@@ -352,6 +503,10 @@ final class GameState {
     revealed,
     noteMode,
     notice,
+    paused,
+    hintedCell,
+    Object.hashAll(history),
+    Object.hashAll(future),
   );
 
   @override
