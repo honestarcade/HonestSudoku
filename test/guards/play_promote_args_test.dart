@@ -870,6 +870,49 @@ exit 0
             'is #129 verbatim',
       );
     });
+
+    test(
+      'a 4xx that merely mentions "draft" is not the draft-app rule either',
+      () {
+        // #260 narrowed the matcher from any 4xx to the PHRASE, and nothing
+        // told the two apart: `is_draft_app_rule` weakened back to a bare
+        // `*"draft"*` substring left this whole file green (#266). This is a
+        // 4xx whose message contains the word without the sentence — the
+        // near miss the phrase match exists to refuse.
+        stubCurl(
+          status: '400',
+          body:
+              '{"error":{"code":400,"status":"FAILED_PRECONDITION","message":'
+              '"The release is a draft release and cannot be committed '
+              'until required store listing fields are set."}}',
+        );
+        final r = run();
+        expect(
+          r.code,
+          5,
+          reason:
+              'draft-retry: a 4xx that mentions "draft" without the exact '
+              'phrase must fail the run, not be retried. Exit ${r.code}: '
+              '${r.err}',
+        );
+        expect(
+          r.err,
+          contains('not for the draft-app rule'),
+          reason:
+              'draft-retry: a near-miss message must be refused by name, '
+              'the same as any other non-matching refusal',
+        );
+        expect(
+          r.commits,
+          1,
+          reason:
+              'draft-retry: expected exactly ONE commit attempt — a bare '
+              '"draft" substring match would retry here and report success, '
+              'which is the #266 regression this test exists to catch; saw '
+              '${r.commits}',
+        );
+      },
+    );
   });
 
   group('the promote summary, as the workflow writes it', () {
