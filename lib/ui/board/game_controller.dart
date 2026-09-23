@@ -15,7 +15,7 @@ import 'package:honest_sudoku/engine/engine.dart';
 import 'package:honest_sudoku/game/game.dart';
 import 'package:honest_sudoku/store/app_store.dart';
 
-import '../strings.dart';
+import '../copy.dart';
 import '../theme/board_theme.dart';
 import 'random_seed_source.dart';
 import 'save_scheduler.dart';
@@ -93,12 +93,13 @@ final class GameSummary {
 class GameController extends ChangeNotifier with WidgetsBindingObserver {
   /// Creates the controller and starts listening to the app's lifecycle.
   ///
-  /// [store] opens the store; without one nothing is persisted (tests of
-  /// play alone). [generator], [seeds] and [log] replace the real ones.
+  /// [store] opens the store; without one, or when it yields null, nothing
+  /// is persisted (tests of play alone). [generator], [seeds] and [log]
+  /// replace the real ones.
   GameController({
     BoardGenerator? generator,
     SeedSource? seeds,
-    Future<AppStore> Function()? store,
+    Future<AppStore?> Function()? store,
     this._settings = const AppSettings(),
     void Function(String message)? log,
   }) : _generator = generator ?? _isolateGenerator,
@@ -112,7 +113,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
   final BoardGenerator _generator;
   final SeedSource _seeds;
-  final Future<AppStore> Function()? _storeFactory;
+  final Future<AppStore?> Function()? _storeFactory;
   final void Function(String) _log;
   late final Timer _clock;
   late final SaveScheduler _saver;
@@ -212,6 +213,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     final factory = _storeFactory;
     if (factory == null) return;
     final store = _store = await factory();
+    if (store == null) return;
 
     switch (await store.readSettings()) {
       case Present(:final value):
@@ -390,8 +392,8 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     _loadingStatus = null;
     _fail(
       const GenerationFailureView(
-        UiStrings.generationCancelled,
-        UiStrings.cancelled,
+        Copy.generationCancelled,
+        Copy.cancelled,
         null,
       ),
     );
@@ -442,10 +444,10 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
           _generation = null;
           _loadingStatus = null;
           _fail(
-            GenerationFailureView(UiStrings.generationFailed, switch (reason) {
-              GenerationTimeout() => UiStrings.failedTimeout,
-              AttemptsExhausted() => UiStrings.failedAttempts,
-              UnexpectedError() => UiStrings.failedUnexpected,
+            GenerationFailureView(Copy.generationFailed, switch (reason) {
+              GenerationTimeout() => Copy.failedTimeout,
+              AttemptsExhausted() => Copy.failedAttempts,
+              UnexpectedError() => Copy.failedUnexpected,
             }, reason),
           );
       }

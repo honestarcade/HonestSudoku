@@ -59,3 +59,33 @@ final class CountingSeeds implements SeedSource {
   @override
   int next() => _next++;
 }
+
+/// A generator the test drives by hand: every request opens a stream the
+/// test feeds with [emit].
+final class ManualGenerator {
+  final _streams = <StreamController<GenerationEvent>>[];
+
+  /// Requests seen.
+  final requests = <GenerationRequest>[];
+
+  /// The generator function.
+  Stream<GenerationEvent> call(GenerationRequest r) {
+    requests.add(r);
+    final c = StreamController<GenerationEvent>();
+    _streams.add(c);
+    return c.stream;
+  }
+
+  /// Sends [event] on the latest request's stream.
+  void emit(GenerationEvent event) => _streams.last.add(event);
+
+  /// Finishes the latest request with a fixture board.
+  void finish() {
+    final r = requests.last;
+    emit(
+      GenerationDone(
+        fixturePuzzle(r.shape, difficulty: r.difficulty, seed: r.seed),
+      ),
+    );
+  }
+}

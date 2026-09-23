@@ -134,6 +134,80 @@ abstract final class HsColors {
   /// Game-over scrim, `rgba(3,14,32,.88)`.
   static const overScrim = Color.fromRGBO(3, 14, 32, .88);
 
+  // The other screens (M4).
+
+  /// Dim mono labels: the loading phase, the unselected difficulty meta.
+  static const labelDim = Color(0xFF5C7FB0);
+
+  /// Descriptions under a card's title.
+  static const desc = Color(0xFF87A9D0);
+
+  /// The version line and the MADE BY row.
+  static const versionText = Color(0xFF4E739F);
+
+  /// The studio screen's body text.
+  static const studioText = Color(0xFFC6DAF0);
+
+  /// Promise tick: blue.
+  static const promiseBlue = Color(0xFF6FB4FF);
+
+  /// Promise tick: violet.
+  static const promiseViolet = Color(0xFFB48CFF);
+
+  /// The reset button's confirm fill.
+  static const danger = Color(0xFFE05A4E);
+
+  /// The app mark's lower-left corner.
+  static const markNavy = Color(0xFF0F3E86);
+
+  /// The loading bar's and statistics bars' track, `rgba(255,255,255,.12)`.
+  static const track = Color.fromRGBO(255, 255, 255, .12);
+
+  /// A statistics bar's track, `rgba(255,255,255,.09)`.
+  static const barTrack = Color.fromRGBO(255, 255, 255, .09);
+
+  /// `rgba(255,255,255,.2)`
+  static const edge20 = Color.fromRGBO(255, 255, 255, .2);
+
+  /// Selected choice fill, `rgba(0,214,180,.14)`.
+  static const tealFill14 = Color.fromRGBO(0, 214, 180, .14);
+
+  /// Teal panel fill, `rgba(0,214,180,.1)`.
+  static const tealFill10 = Color.fromRGBO(0, 214, 180, .1);
+
+  /// Teal panel edge, `rgba(0,214,180,.35)`.
+  static const tealEdge35 = Color.fromRGBO(0, 214, 180, .35);
+
+  /// Teal ring, `rgba(0,214,180,.32)`.
+  static const tealEdge32 = Color.fromRGBO(0, 214, 180, .32);
+
+  /// Teal outline, `rgba(0,214,180,.4)`.
+  static const tealEdge40 = Color.fromRGBO(0, 214, 180, .4);
+
+  /// The first rule card, `rgba(0,214,180,.11)`.
+  static const tealFill11 = Color.fromRGBO(0, 214, 180, .11);
+
+  /// The first rule card's ring, `rgba(0,214,180,.34)`.
+  static const tealEdge34 = Color.fromRGBO(0, 214, 180, .34);
+
+  /// Reset button edge, `rgba(224,90,78,.5)`.
+  static const dangerEdge = Color.fromRGBO(224, 90, 78, .5);
+
+  /// Reset button fill, `rgba(224,90,78,.12)`.
+  static const dangerFill = Color.fromRGBO(224, 90, 78, .12);
+
+  /// Reset confirmation scrim, `rgba(3,14,32,.82)`.
+  static const confirmScrim = Color.fromRGBO(3, 14, 32, .82);
+
+  /// NO TRACKING chip, `rgba(0,118,241,.16)`.
+  static const blueChip = Color.fromRGBO(0, 118, 241, .16);
+
+  /// OPEN SOURCE chip, `rgba(132,72,252,.16)`.
+  static const violetChip = Color.fromRGBO(132, 72, 252, .16);
+
+  /// Link underline, `rgba(127,166,216,.4)`.
+  static const linkUnderline = Color.fromRGBO(127, 166, 216, .4);
+
   /// Won card ring, `rgba(0,214,180,.3)`.
   static const wonRing = Color.fromRGBO(0, 214, 180, .3);
 

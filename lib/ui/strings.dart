@@ -1,6 +1,6 @@
-// The board screen's own copy, verbatim from the design file's templates
-// (the pause card, the win and out-of-strikes cards) and the generation
-// failure messages the plan wrote for the loading path.
+// The board screen's own copy, verbatim from the design file's templates:
+// the pause card, and the win and out-of-strikes cards. Every other screen's
+// words are in copy.dart.
 
 import 'package:honest_sudoku/engine/engine.dart' show GenerationPhase;
 
@@ -78,29 +78,6 @@ abstract final class UiStrings {
 
   /// Tile key.
   static const difficulty = 'DIFFICULTY';
-
-  /// Generation failure kicker.
-  static const generationFailed = 'GENERATION FAILED';
-
-  /// Generation cancelled kicker.
-  static const generationCancelled = 'GENERATION CANCELLED';
-
-  /// The time ceiling passed.
-  static const failedTimeout = "Couldn't build a board in time. Try again.";
-
-  /// Attempts ran out.
-  static const failedAttempts =
-      "Couldn't find a board for this seed. Try again.";
-
-  /// Anything else.
-  static const failedUnexpected =
-      'Something went wrong building the board. Try again.';
-
-  /// The player backed out.
-  static const cancelled = 'Board building was cancelled.';
-
-  /// The retry action.
-  static const tryAgain = 'TRY AGAIN';
 
   /// The loading label for [phase]: the design's `loadLabel`.
   static String phaseLabel(GenerationPhase phase) => switch (phase) {
