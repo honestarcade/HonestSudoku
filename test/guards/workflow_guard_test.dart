@@ -690,13 +690,23 @@ const _claims = <String, _Claim>{
     job: 'ship',
     step: 'summary',
     env: {'TAG': 'v9.9.9'},
-    expressions: {},
+    // The version step's real outputs, so the rows that carry them can be
+    // asserted rather than expanded to a placeholder (#261).
+    expressions: {
+      'steps.version.outputs.name': '0.1.0',
+      'steps.version.outputs.code': '1021',
+    },
     plant: {},
     completes: true,
     mustSay: [
       '### Release v9.9.9',
       '| track | internal |',
       '| package | com.honestarcade.sudoku |',
+      // The two version rows, which AC7 names and nothing asserted: deleting
+      // either from the summary was green, so the one number a reader needs
+      // to find the build on Play could vanish silently (#261).
+      '| version name | 0.1.0 |',
+      '| version code | 1021 |',
       // The digest, not the prefix. `| bundle SHA-256 | ` alone was
       // satisfied by `stub output for sha256sum`, so half of #232's fix —
       // that the stub runs the real binary — was asserted by nothing

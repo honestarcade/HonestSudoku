@@ -1240,10 +1240,37 @@ def main() -> int:
     # And the runner's own chrome, which is in every run's output and in
     # none of the sources above: the file path before each name, the loading
     # lines, the counter and the closing line (#250).
-    chrome = suites + [
+    #
+    # Both halves of the run, not only the green one. The verdict this audit
+    # protects is read from a RED run, so the failure formatter's own
+    # vocabulary is the half that matters and was missing: `'Expected:'`
+    # passed the audit and then scored `caught` for a mutation it had nothing
+    # to do with (#262). These come from package:test's expect formatter and
+    # its reporters — a fixed list, written down once with where it came
+    # from, rather than discovered one instance per round.
+    #
+    # Paths are compared RELATIVE to the repository root: the absolute form
+    # refuses a marker here and passes it on a runner, which is the
+    # machine-dependence the paragraph above says this avoids.
+    chrome = [str(pathlib.Path(p).relative_to(ROOT))
+              if str(p).startswith(str(ROOT)) else str(p)
+              for p in suites] + [
+        # package:test's reporters
         "loading ",
         "All tests passed!",
         "Some tests failed.",
+        "Skipped tests",
+        # package:matcher's failure formatter, present in every red run
+        "Expected:",
+        "Actual:",
+        "Which:",
+        "package:matcher",
+        "package:flutter_test",
+        "Test failed. See exception logs above.",
+        # the compact reporter's counter and clock
+        "00:0",
+        "+0",
+        "-1",
     ]
 
     haystack = [("a test's NAME", n) for n in names]
