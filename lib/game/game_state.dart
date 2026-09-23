@@ -10,11 +10,13 @@
 // forward taps; they hold no rule logic.
 
 import 'package:honest_sudoku/engine/engine.dart';
+import 'package:honest_sudoku/engine/engine.dart' as engine show check;
 
 import 'format.dart';
 import 'game_settings.dart';
 import 'lists.dart';
 import 'notice.dart';
+import 'seed_source.dart';
 import 'snapshot.dart';
 
 /// Undo steps kept, as the design's history keeps them.
@@ -367,6 +369,54 @@ final class GameState {
       lost: limit != null && forward.mistakes >= limit,
       revealed: revealed || (full && !clean),
       clearNotice: true,
+    );
+  }
+
+  /// Marks every wrong entry and says how things stand, through the engine's
+  /// `check`: the design's Check. A no-op when the game is over or paused.
+  GameState check() {
+    if (paused || won || lost) return this;
+    final result = engine.check(shape, values, solution);
+    return copyWith(
+      revealed: true,
+      notice: Notice(result.banner, result.tag, result.body),
+    );
+  }
+
+  /// Finds the easiest next step through the engine's `nextHint`, selects
+  /// its cell and explains it (or just names it, with explanations off). A
+  /// no-op when the game is over or paused, or the board is full. Note mode
+  /// is untouched.
+  GameState hint() {
+    if (paused || won || lost || isFull) return this;
+    final h = nextHint(shape, values, solution, explain: settings.hintWhy);
+    if (h == null) return this;
+    return copyWith(
+      selected: h.cellIndex,
+      hintedCell: h.cellIndex,
+      notice: Notice(h.banner, h.tag, h.body),
+    );
+  }
+
+  /// The same board from the start: same seed and givens, no entries,
+  /// mistakes, moves, time, history, notice or selection; auto-notes
+  /// applied; unpaused. Settings are kept. Works while paused, because the
+  /// pause card offers it.
+  GameState restart() => GameState.start(puzzle, settings);
+
+  /// A new board with the same settings: this state unpaused with its notice
+  /// and hinted cell cleared, and the request for the next board — same
+  /// size and difficulty, a fresh seed from [seeds] that differs from this
+  /// one (redrawn up to [kSeedRedraws] times; the last draw is kept). The
+  /// caller generates the board. Works while paused.
+  (GameState, GenerationRequest) newDeal(SeedSource seeds) {
+    var seed = seeds.next();
+    for (var k = 0; k < kSeedRedraws && seed == puzzle.seed; k++) {
+      seed = seeds.next();
+    }
+    return (
+      copyWith(paused: false, clearNotice: true),
+      GenerationRequest(shape, seed, difficulty),
     );
   }
 

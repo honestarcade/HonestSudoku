@@ -8,4 +8,5 @@ export 'format.dart';
 export 'game_settings.dart';
 export 'game_state.dart';
 export 'notice.dart';
+export 'seed_source.dart';
 export 'snapshot.dart';
