@@ -993,3 +993,9 @@ than per-story.
 - **Decision:** The weekly 200-seed tier is tagged `weekly`, not `slow` as #26's AC says, and the gate and CI exclude `weekly,bench`, not `slow,bench`.
   **Why:** `slow` already tags #245's guard `the flag the workflow sets is the flag the guard reads`, which runs in the gate and in CI's guards step today. Excluding `slow` there would have removed that guard from every pull request without anyone deciding to. `slow` keeps its meaning (kept out of the battery's per-mutation suite, run everywhere else), and the engine PR tier carries it too. That is exactly the battery treatment #26's Discretion prescribes.
   **Issue:** #26
+- **Decision:** The wrapper's test hooks are plain documented top-level variables, not `@visibleForTesting`. `generateOverride` replaces the generate call *inside* the real worker, so a throwing test generator exercises the worker's own error handling.
+  **Why:** `@visibleForTesting` comes from `package:meta`, which the app does not declare (`depend_on_referenced_packages` flags the import), and declaring a package for one annotation is not a lean dependency (invariant 3). A first version replaced the whole entry point, which bypassed the worker's `try/catch`, so a thrown `GenerationFailed` could only arrive as `UnexpectedError`, not the `AttemptsExhausted` #27's Discretion specifies.
+  **Issue:** #27
+- **Decision:** The cancel test polls `Isolate.ping` until it goes unanswered and requires that within 100 ms.
+  **Why:** A ping sent in the same instant as `Isolate.kill(priority: immediate)` was still answered (4 ms after), and one sent 50 ms later was not (local probe, 2026-09-23). A single immediate ping tested the wrong thing.
+  **Issue:** #27
