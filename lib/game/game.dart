@@ -10,3 +10,4 @@ export 'game_state.dart';
 export 'notice.dart';
 export 'seed_source.dart';
 export 'snapshot.dart';
+export 'stats_source.dart';
