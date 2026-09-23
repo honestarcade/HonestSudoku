@@ -35,8 +35,16 @@ void main() {
       // `caseSensitive: false`, not an inline `(?i)` — Dart's RegExp rejects
       // the inline form with `FormatException: Invalid group`, and every
       // assertion here threw before the first file was read.
+      // No leading `\b`, deliberately. The shape this project would actually
+      // paste by accident is `HS_KEYSTORE_PASS=…` or `PLAY_TOKEN=…`, and an
+      // underscore is a word character, so `\bpass\b` never matches inside
+      // `HS_KEYSTORE_PASS`. Probed: with the boundary, planting
+      // `export HS_KEYSTORE_PASS: hunter2seventeen` in a memory file was
+      // GREEN. Prose is still safe — `password manager` has no `:` or `=`
+      // after it, and a colon followed by ordinary words has no 8-character
+      // run immediately after it.
       'an assignment of something named like a secret': RegExp(
-        r'\b(password|passwd|secret|token|api[_-]?key)\b\s*[:=]\s*\S{8,}',
+        r'(password|passwd|pass|secret|token|api[_-]?key)\s*[:=]\s*\S{8,}',
         caseSensitive: false,
       ),
     };

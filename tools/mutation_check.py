@@ -980,6 +980,11 @@ MUTATIONS: list[Mutation] = [
     # The first is #129 verbatim, green at be84231 because nothing reached the
     # retry branch. The second is a secret used as a FILE NAME, which
     # upload-artifact publishes as surely as the bytes.
+    Mutation("#258", "a credential is pasted into a memory file",
+             ".n8/memory/pages.md",
+             append('export HS_KEYSTORE_PASS: hunter2seventeen'),
+             "these files are committed and readable by anyone with the repository",
+             'memory-guard:'),
     Mutation("#256", "the draft-app retry fires on any refusal",
              "tools/play_promote.sh",
              sub(r'is_draft_app_rule\(\) \{\n  case "\$REFUSAL" in\n.*?\n  esac\n\}',
