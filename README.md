@@ -86,9 +86,16 @@ it against the committed upload certificate, attaches it to the GitHub release
 with a `.sha256` sidecar, and uploads it to the Play **internal** track. The
 Play upload is the last step, so a failure anywhere earlier ships nothing.
 
-**Never re-tag a version; ship the next one.** A moved tag would produce a
-second build claiming to be the same release, and Play will not accept a
-version code it has already seen.
+**Never re-tag a version that shipped; ship the next one.** A moved tag
+would produce a second build claiming to be the same release, and Play will
+not accept a version code it has already seen.
+
+A tag whose run failed *before* the `ship` job is a different case, and it has
+a precedent: `v0.1.0` was first cut at a commit whose gate was cancelled by the
+battery's timeout, so no bundle was built and no version code was consumed. The
+release object held no assets, the tag was deleted, and it was re-cut at the
+commit carrying the fix. Check both — no assets on the release, `ship` skipped
+in the run — before moving a tag, and say so where you record it.
 
 **Version codes.** `tools/ci_version.sh <ref> <run_number> <run_attempt>`
 derives them: the name is the tag without its `v`, and the code is

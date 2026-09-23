@@ -527,11 +527,15 @@ const _publicSecrets = {'HS_KEY_ALIAS'};
 /// shell reaches for without thinking.
 ///
 /// Open by decision, not by oversight: hex, rot13, a value split across two
-/// writes, reversed-then-base64, and a DIGEST of the secret. The last is a
-/// real leak for a human-chosen password and catching it needs a sha256
-/// implementation, which means a dependency this project would have to
-/// justify against invariant 3 — so it is recorded here and on #241 rather
-/// than implied to be covered.
+/// writes, reversed-then-base64, and a DIGEST of the secret. All five were
+/// tested open on 2026-09-22 — the verbatim control is caught at the same
+/// injection point, each of these is not.
+///
+/// The digest is the interesting one and the reason given for it here was
+/// wrong: it does NOT need a new dependency, because `_runReal` already runs
+/// the host's `sha256sum` and fails without it. What it costs is one more
+/// form per secret in a scan that runs over every step of every workflow,
+/// which is a judgement rather than an impossibility (#241, #251).
 Iterable<String> _leakShapes(String secret) sync* {
   yield secret;
   yield secret.split('').reversed.join();

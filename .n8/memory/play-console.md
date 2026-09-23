@@ -7,7 +7,17 @@ metadata:
 
 # Play Console (Honest Sudoku)
 
-**Never store credentials here.** This file holds identifiers, constraints and
+**Never store credentials here.**
+
+*(Asserted, as of 2026-09-22: `test/guards/memory_guard_test.dart` scans every
+file under `.n8/memory/` for a PEM block, a `private_key` field, a long base64
+or hex run, and an assignment of anything named like a password or token. The
+sentence above used to rest on whoever edited this file last — #258.)*
+
+**Where App Signing lives in the Console, because it moved twice during one
+verification on 2026-09-22:** *Test and release → Play Store protection*. It
+was under *Setup*, then *App integrity*, which now redirects. Check the path
+before quoting it. This file holds identifiers, constraints and
 the permission set. Secret values live in the repository's Actions secrets and
 in the owner's password manager, nowhere else.
 
@@ -41,7 +51,7 @@ green (#180).
 ## Setup status (2026-09-20)
 
 Steps 1-6 of `play-console-runbook.md` are done and verified end to end by
-run 35547107665 of `play-api-check`: the service account opened and deleted a
+run 35616217452 of `play-api-check`: the service account opened and deleted a
 real edit against `com.honestarcade.sudoku`, and the keystore in the secrets
 matches `android/signing/upload_certificate.pem`. Tracks were empty, which is
 correct before the first upload.

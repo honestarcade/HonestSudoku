@@ -39,9 +39,9 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 # The guard suite, minus any `slow`-tagged test.
 #
-# NOTHING carries that tag today — the expensive test that carried it was
-# reverted, and #217 was later closed by a cheap one that does not need it —
-# so this currently excludes nothing, and `dart_test.yaml` says so too. The
+# ONE test carries it: `the flag the workflow sets is the flag the guard
+# reads`, which spawns a child `flutter test` (#245). So this excludes
+# exactly that one, and the entry that needs it sets `slow=True`. The
 # machinery stays because the reason for it is real and was measured: a guard
 # whose input is expensive is run once per mutation, and a 45s test turns a
 # 20-minute battery into 90. When the next expensive guard arrives it tags
@@ -1134,7 +1134,9 @@ def main() -> int:
     # Read from the json stream rather than from a run's printed output,
     # because that output is machine-dependent in a way this check must not
     # be. Measured 2026-09-22, `flutter test --no-pub --tags guard` piped to
-    # a file: no CR bytes, and every line still capped near 198 characters,
+    # a file: no CR bytes, and a longest line that moves with the tree and
+    # the checkout path — 199 characters one day, 205 another, with a name
+    # visibly cut in one run and whole in the next,
     # so whether a given test's name survives depends on the length of the
     # absolute path printed before it — which differs between this checkout
     # and a runner's. CI's reporter prints them whole. An output-based audit

@@ -13,9 +13,12 @@ library;
 // change it; this script is the barrier that lives in the repository, where a
 // change to it shows up in a diff.
 //
-// What this does NOT cover: anything past the argument checks. A fake token
-// proves the script reaches the API and stops there; it proves nothing about
-// the edits flow, which needs real credentials and is verified by dispatch.
+// What this does NOT cover: the real API. A fake token proves the script
+// reaches it and stops there, and a stub `curl` drives the rest — the edits
+// flow, the failed-edit deletion, the completed-release requirement, the
+// draft-app retry and the summary's honesty are all exercised here without
+// credentials. What only a dispatch can show is Google's own behaviour: the
+// wording of its refusals, and whether a track accepts what was sent.
 import 'dart:convert';
 import 'dart:io';
 
