@@ -875,3 +875,30 @@ No story rewrites, no closures beyond #205, no re-wired dependencies. The plan f
   **Owner's words:** *"let's make an M1a for this. I want to extract the reusable parts now before developing the game."* … *"I want it to get me to a very solid starting point for any apps that use android studio and flutter. I plan to make several apps/games this way. I want this starter template to include the play console steps that I have to do, and setup needed. So that after starting from the template and doing documented steps, we can move right into game development without spending time on this infra/CI stuff every app."*
   **Created:** milestone #10 (M1a), epic #273, five stories (#274–#278: guard machinery, CI/CD + n8SDLC scaffolding, README setup runbook, Play Console runbook, end-to-end proof against a placeholder app).
   **Blocked on:** the owner creating the empty `android-studio-app-template` repository. Execution cannot start until it exists.
+
+## /n8-exec M1a — 2026-09-23
+
+- **Decision:** all five stories (#274-278) executed in one continuous pass rather than
+  story-by-story with separate commits/PRs, because the deliverable is a single coherent
+  repository where each piece needed the others to be genuinely testable (S1's guards need
+  S5's placeholder app to run against; S2's workflows need S1's tools to call). Commits in
+  `android-studio-app-template` are still one-per-logical-change, and each story's completion
+  comment cites the exact commit/PR that closes it.
+  **Issue:** #273 (epic), #274-278
+- **Decision:** two placeholder-genericization bugs were found only by a real CI run on a
+  real PR, after every local check had passed — `tools/mutation_check.py`'s lost executable
+  bit, and `tools/check_aab.sh`'s `APP_PACKAGE_ID` fallback not matching the actual scaffold
+  package id. Both fixed in the same PR, re-verified green, merged. Logged because it's the
+  same lesson this project's own history keeps teaching: a local pass is not a green run
+  until something that isn't the author's own machine has checked it.
+  **Issue:** #278
+- **Decision:** branch-protection (ruleset or classic) could not be configured on
+  `android-studio-app-template` — GitHub returns 403 "Upgrade to GitHub Pro or make this
+  repository public" for both APIs on a private repo under a personal account. Documented in
+  the template's own README rather than worked around; the PR gate itself still runs and
+  reports red/green correctly, it just isn't yet a hard merge requirement.
+  **Issue:** #278
+- **Decision:** stories closed with evidence and epic #273 / milestone M1a left open for
+  `/n8-verify M1a` — matching this session's own established discipline (M0, M1) that
+  execution does not close what it built.
+  **Issue:** #273
