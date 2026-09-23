@@ -2,6 +2,8 @@
 // (the pause card, the win and out-of-strikes cards) and the generation
 // failure messages the plan wrote for the loading path.
 
+import 'package:honest_sudoku/engine/engine.dart' show GenerationPhase;
+
 /// Board-screen copy.
 abstract final class UiStrings {
   /// Pause card title.
@@ -99,4 +101,11 @@ abstract final class UiStrings {
 
   /// The retry action.
   static const tryAgain = 'TRY AGAIN';
+
+  /// The loading label for [phase]: the design's `loadLabel`.
+  static String phaseLabel(GenerationPhase phase) => switch (phase) {
+    GenerationPhase.generating => 'GENERATING',
+    GenerationPhase.carving => 'CARVING GIVENS',
+    GenerationPhase.ready => 'READY',
+  };
 }

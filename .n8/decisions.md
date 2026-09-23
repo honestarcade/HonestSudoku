@@ -1004,6 +1004,27 @@ than per-story.
   **Issue:** #26
 - **Finding (pre-existing, not from this run):** `#245 the verdict is handed an empty environment` SURVIVED in the local battery, and also survives on unchanged `main` locally (`tools/mutation_check.py --only 'empty environment'` against `origin/main`, 2026-09-23). It depends on the token environment the CI job provides; the CI battery has passed it on every recent run.
   **Issue:** #245
+- **Decision (Rule 3):** The `mutations` job's limit is raised from 60 to 90 minutes.
+  **Why:** PR #285's `mutations` job (run 35932979896) was cancelled at its 60-minute `timeout-minutes` after 131 of 147 entries, every one caught (about 26 s each). Raised to 90 as a stopgap. Splitting across jobs is the lasting fix, but the required `mutations` check would then need an `if: always()` aggregator, which ci-shape refuses by design; that guard exception is an owner call, filed as #286 (needs-triage). Every later milestone adds entries, so M3–M5's PRs each wait roughly 65–75 minutes on this job.
+  **Issue:** #26, #286
 
-### 2026-09-24 — #26 (Rule 3): the mutations job's limit raised to 90 minutes
-PR #285's `mutations` job (run 35932979896) was cancelled at its 60-minute `timeout-minutes` after 131 of 147 entries, every one caught (about 26 s each). Raised to 90 as a stopgap. Splitting across jobs is the lasting fix, but the required `mutations` check would then need an `if: always()` aggregator, which ci-shape refuses by design; that guard exception is an owner call, filed as #286 (needs-triage). Every later milestone adds entries, so M3–M5's PRs each wait roughly 65–75 minutes on this job.
+## /n8-exec M3 — 2026-09-23
+
+- **Decision:** M3 was built on a local branch cut from the M2 head while PR #285's `mutations` job ran, to be rebased onto `main` after the squash merge.
+  **Why:** The battery job takes most of an hour. The M3 stories depend only on M2's code, and the trees are identical, so `rebase --onto` applies the M3 commits cleanly.
+  **Issue:** #28–#36
+- **Decision:** #31's open question: the board theme restyles only the grid. The top bar, pad, tools, notice and cards keep fixed colours in both themes.
+  **Why:** The design file's `isBoard` template (lines 293–393) uses literal colours for every piece of chrome and reads `th.*` only inside the grid. THEMES' `screen` gradient is the same in both themes. This is what #32–#35 already assumed.
+  **Issue:** #31
+- **Decision:** `RandomSeedSource` lives in `lib/ui/board/`, not beside the `SeedSource` interface in `lib/game/`.
+  **Why:** The game-imports guard refuses `dart:math` in `lib/game/`, so the model stays free of randomness and takes seeds from outside.
+  **Issue:** #30, #36
+- **Decision:** `HS_LAUNCH_SIZE=4` launches 4×4 at Easy, not Medium.
+  **Why:** 4×4 Medium is not a supported pair since #25; the launch path takes Medium where offered, otherwise the hardest band the size offers.
+  **Issue:** #36
+- **Decision:** A generation failure shown over an existing board clears on the player's next action (any verb), as well as on a retry.
+  **Why:** #36 says a failed `newDeal` keeps the previous board behind the error banner but not when the banner goes. Leaving it up indefinitely would cover every later notice.
+  **Issue:** #36
+- **Decision:** Leaving the board for a placeholder route (Rules, Settings, Main menu, Change size) pauses a live game first.
+  **Why:** The timer already stops while another route covers the board. Pausing also means the player comes back to the pause card rather than a board that silently stopped counting.
+  **Issue:** #36

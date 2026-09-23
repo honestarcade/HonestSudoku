@@ -11,12 +11,13 @@ Puzzle fixturePuzzle(
   GridShape shape, {
   Difficulty difficulty = Difficulty.medium,
   bool Function(int index)? given,
+  int seed = 1,
 }) {
   final isGiven = given ?? (int i) => i.isEven;
   final givens = [for (var i = 0; i < shape.cellCount; i++) isGiven(i)];
   return Puzzle(
     shape: shape,
-    seed: 1,
+    seed: seed,
     solution: basePattern(shape),
     givens: givens,
     givenCount: givens.where((g) => g).length,
