@@ -1132,8 +1132,16 @@ MUTATIONS: list[Mutation] = [
                    sub(r"\n      if \(g\.band != difficulty\) continue;", "")),
              "a Hard label on a board singles can finish",
              'engine-band: ', slow=True),
-    Mutation("#26", "the givens floor drops to n", "lib/engine/generator.dart",
-             sub(r"=> shape\.n \+ shape\.n ~/ 2;", "=> shape.n;"),
+    # Two edits, because the floor alone never binds on a supported pair:
+    # uniqueness stops every carve above it (a first version that only lowered
+    # the floor SURVIVED, which is how that was learned). What the floor
+    # guards against is a carve that no longer stops at its target: 4×4
+    # then runs on toward its uniqueness limit, below n + n/2.
+    Mutation("#26", "the floor drops and carving runs past the target",
+             "lib/engine/generator.dart",
+             chain(sub(r"=> shape\.n \+ shape\.n ~/ 2;", "=> shape.n ~/ 2;"),
+                   sub(r"if \(given <= target && band == difficulty\) break;",
+                       "if (given <= floor && band == difficulty) break;")),
              "boards emptier than the design's n + n/2 floor",
              'engine-floor: ', slow=True),
     Mutation("#26", "generation depends on how often it has run",
