@@ -1,7 +1,9 @@
 // A generated board: its full solution and which cells are given.
 
+import 'difficulty.dart';
 import 'grid.dart';
 import 'list_equality.dart';
+import 'techniques/technique.dart';
 
 /// A generated puzzle.
 final class Puzzle {
@@ -12,6 +14,9 @@ final class Puzzle {
     required List<int> solution,
     required List<bool> givens,
     required this.givenCount,
+    this.difficulty,
+    this.technique,
+    this.attempts,
   }) : solution = List.unmodifiable(solution),
        givens = List.unmodifiable(givens) {
     checkValues(shape, this.solution, 'solution');
@@ -46,6 +51,16 @@ final class Puzzle {
   /// How many cells are given.
   final int givenCount;
 
+  /// The band the board was generated and graded to; null for an ungraded
+  /// carve.
+  final Difficulty? difficulty;
+
+  /// The hardest technique the board needs; null for an ungraded carve.
+  final Technique? technique;
+
+  /// Which attempt produced the board, 1-based; null for an ungraded carve.
+  final int? attempts;
+
   /// The board the player starts from: givens filled, the rest 0. A fresh
   /// mutable list on every call.
   List<int> startingValues() => [
@@ -58,6 +73,9 @@ final class Puzzle {
       other.shape == shape &&
       other.seed == seed &&
       other.givenCount == givenCount &&
+      other.difficulty == difficulty &&
+      other.technique == technique &&
+      other.attempts == attempts &&
       listEquals(other.solution, solution) &&
       listEquals(other.givens, givens);
 
@@ -66,6 +84,9 @@ final class Puzzle {
     shape,
     seed,
     givenCount,
+    difficulty,
+    technique,
+    attempts,
     Object.hashAll(solution),
     Object.hashAll(givens),
   );

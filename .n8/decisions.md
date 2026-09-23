@@ -958,3 +958,27 @@ than per-story.
 - **Decision:** The golden hash is printed as two zero-padded 32-bit halves.
   **Why:** `int.toUnsigned(64)` on the VM returns a signed value, so the first recording produced hashes with a leading `-`. The published FNV-1a vectors (`''` → `cbf29ce484222325`, `'a'` → `af63dc4c8601ec8c`) are asserted in the test.
   **Issue:** #23
+- **Decision (owner review requested):** `supportedDifficulties` is 4×4 → Easy only and 6×6 → Easy, Medium, Hard, narrower than #25's AC table (4×4 Easy–Hard, 6×6 Easy–Expert, taken from the design's statistics breakdown).
+  **Why:** The AC also requires that a band be proven by the grader, and the grader cannot prove these three pairs:
+  - *4×4:* every one of the 4 618 710 unique 4×4 boards with at least the design's floor of 6 givens, over 95 distinct full grids, falls to naked singles alone (exhaustive enumeration, local `dart` probe, 2026-09-23). A 4×4 Medium or Hard board does not exist on this ladder.
+  - *6×6 Expert:* 0 of 20 000 minimal 6×6 carves needed a triple or an X-wing, and 0 of 5 000 attempts of the specified carve-to-band reached Expert (same probe).
+  - *The alternatives,* labelling by givens count or keeping pairs that always fail, contradict the owner's own calls on #25 ("technique-graded", "unsupported pairs unavailable").
+
+  `test/engine/difficulty_test.dart` carries a one-grid exhaustive 4×4 check and a 2 000-carve 6×6 check, so the evidence is executed rather than asserted. The pairs that stay out are greyed on the setup screen by M4 #41's existing mechanism. Reversing this is one table and its test.
+  **Issue:** #25; affects M4 #41 (setup greying), #43 (statistics breakdown rows)
+- **Decision:** `maxAttempts` (Claude's Discretion) is 50 for 4×4, 10 000 for 6×6, 2 000 for 9×9 and 200 for 16×16, not the planner's 50/50/50/200.
+  **Why:** Measured success per attempt of the specified carve (local probe, 2026-09-23):
+  - 6×6 Medium 23/5000 and Hard 8/5000, at 0.2 ms per attempt;
+  - 9×9 Expert 14/2000, at 1.8 ms per attempt.
+
+  At 50 attempts, 3 of 5 9×9 Expert seeds and 4 of 5 6×6 Medium and Hard seeds failed. With the new limits all 20 seeds of every supported pair succeed, the 9×9 Expert median is 151 ms and 6×6 Hard 67 ms, and the chance of running out falls below roughly 1e-6 at the measured rates. A carve-then-fill-back strategy was measured too and was no better (9×9 Expert 12/2000).
+  **Issue:** #25
+- **Decision:** Each retry's progress takes half of the carving span still unused, instead of an equal slice of `maxAttempts`.
+  **Why:** With 10 000 attempts, equal slices would leave the loading bar frozen at 45 % for the whole search.
+  **Issue:** #25, #27
+- **Decision:** When nothing on the ladder applies, the grader confirms a solution exists (`countSolutions(limit: 1)`) instead of calling `solve()`.
+  **Why:** `solve()` must rule out a second solution, which on a sparse 16×16 took about 3 s per grade. The ladder itself took 12 ms. A minimal 16×16 carve plus grade fell from about 4.3 s to about 1.4 s (local probe). The generator has already proved uniqueness before it grades, and a board with no solution still throws `InvalidBoard`.
+  **Issue:** #25
+- **Decision:** The technique enum keeps the name `Technique`, and the rule interface is `TechniqueRule`. The Discretion called both `Technique`.
+  **Why:** #26 pins `technique.name` in its goldens, which needs the enum.
+  **Issue:** #25
