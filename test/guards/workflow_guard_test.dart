@@ -1019,11 +1019,27 @@ exit 0
       stdoutEncoding: utf8,
       stderrEncoding: utf8,
     );
-    // Everything the body WROTE, not only what it returned. A step's exit
-    // code says nothing about what it published, and #215 is a step that
-    // exits 0 and puts the signing keystore in the run summary.
+    // What the body left in the workspace: the name and the current bytes of
+    // everything under `$GITHUB_WORKSPACE` that the harness did not put
+    // there. Not literally everything it wrote — a file it created and then
+    // deleted is gone by the time this runs, as it would be for the sinks
+    // this models — and the harness's own files are skipped while their
+    // bytes are unchanged. A step's exit code says nothing about what it
+    // published, and #215 is a step that exits 0 and puts the signing
+    // keystore in the run summary.
     final wrote = StringBuffer();
     for (final entity in dir.listSync(recursive: true)) {
+      // THE NAME, not only the content. `upload-artifact` publishes the paths
+      // of what it sweeps as surely as the bytes, so `touch
+      // "$GITHUB_WORKSPACE/$HS_KEYSTORE_B64"` put the keystore in an artifact
+      // listing while this channel — which read bytes and used the path only
+      // as a map key — stayed silent (#249). Directories count: a directory
+      // name is listed too.
+      final relative = entity.path.substring(dir.path.length + 1);
+      if (entity is Directory) {
+        wrote.writeln(relative);
+        continue;
+      }
       if (entity is! File) continue;
       // latin1 over the BYTES, and no `catch`. `readAsStringSync` throws on
       // the first byte that is not valid UTF-8, and the catch that stood
@@ -1037,6 +1053,7 @@ exit 0
       // overwritten under its own feet, and a planted file it appended to:
       // all three were skipped by path and all three were green (#243).
       if (harnessWrote[entity.path] == text) continue;
+      wrote.writeln(relative);
       wrote.writeln(text);
     }
 
