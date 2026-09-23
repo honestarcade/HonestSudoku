@@ -20,12 +20,19 @@ evidence that the suite can fail. Adding a guard means adding its mutation.
 A comment may say *why*. A claim about what the code does *now* belongs in the
 `reason:` of an assertion, where it is executed; a claim about anything else —
 history, a measurement, another tool's output, a count — carries a date and a
-source in the same sentence, or is cut. Five passes running added sentences the
-code did not back (#218, #229, #233, #239, #246), so neither half is optional:
-a `reason:` cannot hold a fact about history or a measurement, and a sentence
-with no date and no source is the one nothing re-reads. Where a count can be
-computed, cut it and name the command instead. When a change is reverted or
-narrowed, the comments it added are part of the revert.
+source in the same sentence, or is cut. Neither half is optional: a `reason:`
+cannot hold a fact about history or a measurement, and a sentence with no date
+and no source is the one nothing re-reads. Where a count can be computed, cut
+it and name the command. When a change is reverted or narrowed, the comments it
+added are part of the revert.
+
+Every round of verification since #218 has found new instances, including in
+the passes fixing the old ones, so treat this as a standing hazard rather than
+a solved problem. The one thing that has worked is moving a claim into
+something executed — `dependency_guard_test.dart` holds CLAUDE.md's exemption
+list to `pubspec.yaml`, and `memory_guard_test.dart` holds the memory files'
+and README's "no credentials here"; neither has rotted. Prefer that to a better
+sentence.
 
 ## Project invariants
 

@@ -9,10 +9,17 @@ metadata:
 
 **Never store credentials here.**
 
-*(Asserted, as of 2026-09-22: `test/guards/memory_guard_test.dart` scans every
-file under `.n8/memory/` for a PEM block, a `private_key` field, a long base64
-or hex run, and an assignment of anything named like a password or token. The
-sentence above used to rest on whoever edited this file last — #258.)*
+*(Checked, as of 2026-09-23, and the scope is stated because a guard believed
+to be stronger than it is, is worse than the habit it replaced:
+`test/guards/memory_guard_test.dart` scans every `.md` under `.n8/memory/` —
+and `README.md` — for the shapes in `test/guards/secret_shapes.dart`: a PEM
+block, a `private_key` field, a hex run of 40+, a mixed-case base64 or
+base64url run of 32+, an assignment or prose statement of something named like
+a credential, and a URL with an embedded password. **Not** covered: a value
+split across lines, a short token with no keyword near it, and anything
+encoded in a form not listed there. A match may declare itself with
+`not-a-secret: <reason>` on the same line, which is why the key ID below
+passes (#258, #263).)*
 
 **Where App Signing lives in the Console, because it moved twice during one
 verification on 2026-09-22:** *Test and release → Play Store protection*. It
