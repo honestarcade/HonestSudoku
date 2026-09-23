@@ -902,3 +902,44 @@ No story rewrites, no closures beyond #205, no re-wired dependencies. The plan f
   `/n8-verify M1a` — matching this session's own established discipline (M0, M1) that
   execution does not close what it built.
   **Issue:** #273
+
+## Plan verification, M2-M5 — 2026-09-23
+
+Triggered by the owner: "verify the plan again... solid enough that I can execute them all
+without my intervention." Four fresh `general-purpose` subagents (never `fork`), one per
+milestone, ran `/n8-plan`'s own executor-simulation discipline against all 36 already-planned
+stories in M2-M5 -- not creating anything, just checking whether the plan itself would stall
+an autonomous executor or lead it to guess wrong.
+
+- **The one real, consequential finding (#26, M2):** the new engine property-test guard tier
+  (up to ~3 minutes, tagged plain `guard`) would join `tools/mutation_check.py`'s per-mutation
+  `SUITE`, which runs the whole non-slow guard suite once for every one of 130+ mutation
+  entries -- multiplying the mutations job's runtime by roughly an order of magnitude and very
+  plausibly recreating #252 (a battery timeout that cancelled a release). Nothing in #26's
+  three prior discretion passes analyzed this. Fixed by amending #26 directly: a new AC
+  requires measuring the actual battery runtime with the new guards in place before the story
+  is considered done, and a new Discretion note names the established fix (the same `slow`-tag
+  mechanism already used for one other expensive test) as the default resolution rather than
+  inventing a new one.
+- **Two smaller real gaps, fixed the same way:** #31 (M3) didn't say whether the "paper" board
+  theme restyles only the grid or the whole screen's chrome, and four downstream stories
+  (#32-#35) already hardcode chrome colours assuming it doesn't -- added a note requiring this
+  be confirmed against the design source before #31 is built. #39 (M4) never stated whether its
+  `startNew()` routes through M3 #30's `GameState.newDeal()`/`SeedSource` no-repeat guarantee,
+  or silently drops it -- added a note requiring the former.
+- **Two cosmetic doc-drift items fixed in passing:** M2's milestone description stated a stale,
+  superseded seed-count figure (200/200/50/10) alongside the correct, current one
+  (200/200/40/5) that both stories actually use -- corrected. #46 (M4)'s dependency prose
+  under-stated its own real GitHub dependency graph by one story (#45) -- corrected; the actual
+  enforced graph was never wrong, only the prose describing it.
+- **M3 and M5 needed no changes.** M3's nine stories and M5's eleven stories were independently
+  verified clean -- no (a)-class gap, correct dependency graphs, no stale claims against either
+  the current codebase or each other's planned artifacts. M5 in particular had already been
+  through an equivalent audit of its own during planning (a first pass, a second pass, and a
+  coverage check, all visible in its issues) and this pass found nothing that process missed.
+
+**Overall:** all four milestones' plans are now assessed as solid enough for unattended
+execution. The M2 finding was the one that mattered -- a systemic CI-timing risk that would
+have surfaced expensively (a cancelled required check, mid-milestone) rather than being caught
+by reading a single story in isolation, which is exactly why this pass ran per-milestone rather
+than per-story.
