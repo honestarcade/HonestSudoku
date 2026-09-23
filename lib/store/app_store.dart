@@ -103,6 +103,9 @@ final class AppStore {
   final Map<StoreDocument, int> _versions;
   final Map<String, Map<int, Migration>> _migrations;
   final Map<StoreDocument, Future<void>> _queues = {};
+
+  /// Writes completed per document, for tests that count them.
+  final Map<StoreDocument, int> writeCounts = {};
   final Set<StoreDocument> _newer = {};
 
   static void _defaultLog(String message) =>
@@ -236,5 +239,6 @@ final class AppStore {
     await sink.flush();
     await sink.close();
     await tmp.rename(target.path);
+    writeCounts[d] = (writeCounts[d] ?? 0) + 1;
   }
 }

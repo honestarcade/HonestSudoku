@@ -84,10 +84,13 @@ class _BoardScreenState extends State<BoardScreen> with RouteAware {
   }
 
   @override
+  void didPush() => _c.enterBoard();
+
+  @override
   void didPushNext() => _c.setBoardVisible(false);
 
   @override
-  void didPopNext() => _c.setBoardVisible(true);
+  void didPopNext() => _c.enterBoard();
 
   void _goTo(String destination) {
     // Leaving the board pauses the game, so time does not run behind the

@@ -20,7 +20,7 @@ void setScreen(WidgetTester tester, double w, double h) {
 Future<void> screenTest(
   WidgetTester tester,
   Future<void> Function(GameController c, StubGenerator gen) body, {
-  GameSettings settings = const GameSettings(),
+  AppSettings settings = const AppSettings(),
   GridShape shape = GridShape.classic,
   double width = 390,
   double height = 844,
@@ -147,7 +147,9 @@ void main() {
         testWidgets('${strike.name} × ${announce.name}', (tester) async {
           await screenTest(
             tester,
-            settings: GameSettings(strikeMode: strike, announce: announce),
+            settings: AppSettings(
+              lastSetup: LastSetup(strikeMode: strike, announce: announce),
+            ),
             (c, _) async {
               final limit = strike.limit;
               final entries = limit ?? 1;
@@ -198,17 +200,18 @@ void main() {
   testWidgets('auto notes: candidates are there, the tool reads AUTO', (
     tester,
   ) async {
-    await screenTest(tester, settings: const GameSettings(autoNotes: true), (
-      c,
-      _,
-    ) async {
-      final (cell, _) = emptyAndWrong(c.state!);
-      expect(find.text('AUTO'), findsOneWidget);
-      expect(c.state!.notes[cell], isNotEmpty);
-      await tester.tap(find.byKey(const ValueKey('tool-notes')));
-      await tester.pump();
-      expect(c.state!.noteMode, isFalse, reason: 'AUTO ignores taps');
-    });
+    await screenTest(
+      tester,
+      settings: const AppSettings(game: GameSettings(autoNotes: true)),
+      (c, _) async {
+        final (cell, _) = emptyAndWrong(c.state!);
+        expect(find.text('AUTO'), findsOneWidget);
+        expect(c.state!.notes[cell], isNotEmpty);
+        await tester.tap(find.byKey(const ValueKey('tool-notes')));
+        await tester.pump();
+        expect(c.state!.noteMode, isFalse, reason: 'AUTO ignores taps');
+      },
+    );
   });
 
   testWidgets('undo then redo through the tools', (tester) async {
