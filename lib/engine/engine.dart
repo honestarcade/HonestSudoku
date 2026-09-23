@@ -5,11 +5,14 @@
 library;
 
 export 'candidates.dart';
+export 'check.dart';
 export 'full_grid.dart';
 export 'generator.dart';
 export 'grid.dart';
+export 'hint.dart';
 export 'list_equality.dart';
 export 'puzzle.dart';
 export 'rng.dart';
 export 'solver.dart' show countSolutions, isConsistent, solve;
+export 'strings.dart';
 export 'units.dart' show Unit, UnitKind, unitList, unitsOf;
