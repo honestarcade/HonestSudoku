@@ -327,7 +327,7 @@ Ad-hoc entries (changes made outside the n8SDLC commands that deviate from plann
   **Why:** Owner's calls (2026-09-19). The runbook pays off on the studio's third app; the techniques reference is read by both the engine's grading and the difficulty tuning. The tracker exists because three owner tasks gate long waits and the label alone does not show what is coming.
   **Issue:** #76
 
-## Ad-hoc — 2026-09-19
+## Ad-hoc — 2026-09-19 — reconciled by /n8-replan 2026-09-23
 
 - **Change:** Both project skills approved during `/n8-plan M7` — the Play Console launch runbook and the Sudoku techniques reference — were **not built**. The suggestions are recorded on #9 and #25 instead, with what each should encode.
   **Why:** `/n8-skill`'s own rule: a skill is grounded in real paths and symbols at HEAD, and where that code does not exist yet the suggestion is noted and the skill built after the milestone verifies. Today `lib/` holds only the Flutter scaffold's `main.dart`, there is no `.github/workflows/`, no `tools/`, and no `.n8/memory/play-console.md`. The cold-test gate is also unrunnable without an artefact to prove against. Building either now would produce a document describing how such things usually work rather than how this project's actually do — the failure the rule exists to prevent.
@@ -582,7 +582,7 @@ CI and the tag-to-Play pipeline, on `milestone/m1-ci`. Three stories implemented
   **Verified by binding, not by existence:** `isRequired` is now **true** on the `gate` check run for both open PRs, and the two states discriminate — red `e89d820` → `rollup=FAILURE`, `mergeStateStatus=BLOCKED`; green `63a2c66` → `rollup=SUCCESS`, `mergeStateStatus=CLEAN`. Before the fix both readings were `BLOCKED`. `required_approving_review_count` is still 0, checked after the PUT.
   **Issue:** #18
 
-## Ad-hoc — 2026-09-19
+## Ad-hoc — 2026-09-19 — reconciled by /n8-replan 2026-09-23
 
 - **Change:** #18's fourth acceptance criterion and its `key_links` line were **amended** after the fact. Both specified the required status-check context as `CI / gate`, i.e. `<workflow name> / <job name>`. A GitHub ruleset matches the **check-run name**, which is `gate`. As written, the criterion blocked every merge to `main` unconditionally. The shipped rule is `{"context": "gate", "integration_id": 15368}`; the `integration_id` is an addition, pinning the requirement to GitHub Actions so nothing else can satisfy a check named `gate`.
   **Why:** implementing the criterion verbatim produced an inert rule that read as correct from the server and blocked everything in practice. The issue text is the plan, so leaving it uncorrected would have any future reader — including `/n8-verify`, which was told to work from the AC — score the shipped state as non-compliant and "fix" it back. Amended in place on the issue with the old text struck through and dated, rather than silently rewritten.
@@ -613,7 +613,7 @@ CI and the tag-to-Play pipeline, on `milestone/m1-ci`. Three stories implemented
 - **Note (method):** the plan-comment-before-code step was skipped for these fourteen bugs. Each was filed by `/n8-verify` with the repro, the cause and the fix already in its body, so the definition of done was written down before any code — which is what that step exists to produce. Evidence comments still go on each issue.
   **Issue:** #126-#139
 
-## Ad-hoc — 2026-09-19 (second M1 fix pass)
+## Ad-hoc — 2026-09-19 (second M1 fix pass) — reconciled by /n8-replan 2026-09-23
 
 - **Change:** the per-tester-versus-cohort reading of Play's fourteen-day rule is **withdrawn as a stated fact** from #73, #70, the M7 milestone description and the two ledger lines above. Each asserted one reading or, in #73's case, both two criteria apart. The stricter operational rule — keep at least twelve testers enrolled continuously for the whole window and treat any dip as restarting the clock — replaces it, because it satisfies either reading.
   **Why:** nothing in this repository or in #19 sources either mechanism. #139 removed the contradiction from `.n8/memory/play-console.md` and left it in the artefacts that get executed, which is the instance-versus-class miss that fix was itself written to avoid (#148). Choosing a side would have replaced a visible contradiction with an invisible guess; the memory file now carries the open question and everything else defers to it.
@@ -651,14 +651,14 @@ CI and the tag-to-Play pipeline, on `milestone/m1-ci`. Three stories implemented
 - **Correction:** `#148`'s ad-hoc entry claimed the per-tester reading was withdrawn from "the two ledger lines above". One was edited and one was not, and the edited one kept the presupposition rather than the attribution. Both now carry the qualification, and `.n8/memory/play-console.md` no longer attributes the word "continuous" to #19, which does not use it, nor claims the API check "proves all five work" when `HS_KEY_PASS` is proved by nothing.
   **Issue:** #164
 
-## Ad-hoc — 2026-09-20 (project goal: this repo becomes a reusable basis)
+## Ad-hoc — 2026-09-20 (project goal: this repo becomes a reusable basis) — reconciled by /n8-replan 2026-09-23
 
 - **Change:** The owner set a three-phase sequence that outlives M1: *"Let's finish M1, then deploy the scaffold to ensure it works, then create something reusable from it."* Earlier in the same session: *"I want to get to a clean state of infra and CI to use this as a basis for future apps, so I really want to finish M1 through all bug fixes until we're really happy with it."*
   **Why:** It reframes what the guards and tooling are *for*. They are not overhead on a Sudoku app — they are the deliverable, and Honest Sudoku is their first consumer. That is why four rounds of verification finding ~50 defects, all in guards and tooling, is progress rather than churn, and why the mutation battery became a first-class gate step instead of a once-a-round manual review.
   **What follows from it:** (1) M1 closes only when every filed bug is fixed, not when the AC are ticked. (2) The scaffold ships to the internal track *before* there is a game, because proving the release path is the point of the deploy, not distributing Sudoku. (3) A later extraction — template repo or equivalent — is real scope that no milestone currently holds.
   **Milestones/issues likely affected:** no planned issue changes meaning, but the roadmap has no milestone for the extraction in phase 3. That is a planning gap to close once M1 is verified, not now.
 
-## Ad-hoc — 2026-09-20 (#21's post-merge criterion amended; #179)
+## Ad-hoc — 2026-09-20 (#21's post-merge criterion amended; #179) — reconciled by /n8-replan 2026-09-23
 
 - **Change:** #21's post-merge acceptance criterion and its Demo required a dispatch with `to_track: production` that "fails at the first step", with both run URLs in the closing comment. #165 had already made both dispatch inputs `type: choice` with `options: [internal, alpha, beta]`, so `production` is not selectable and that run cannot be created from the UI. The criterion asked for evidence that cannot exist. Owner's call (2026-09-20): keep `type: choice`, rewrite the criterion.
   **Why:** The two were filed in different rounds and nobody reconciled them. Keeping `choice` is the stronger barrier — it removes the value from the UI entirely rather than accepting and rejecting it — and the refusal step stays as the second, so nothing is lost by dropping the dispatch.
@@ -666,7 +666,7 @@ CI and the tag-to-Play pipeline, on `milestone/m1-ci`. Three stories implemented
   **Also corrected:** `play-promote.yml` carried a comment asserting that `type: choice` "cannot be bypassed by dispatching the API directly". That was a guess stated as fact. It is untested — the test is a live dispatch of the workflow whose refusal is the subject, and this session's attempt was refused by the agent sandbox as a production deploy — so the comment now says so plainly instead.
   **Milestones/issues likely affected:** #21 only. #8's third criterion already reads "closed testing; production is a human act in the Console".
 
-## Ad-hoc — 2026-09-20 (two #14 AC3 deviations, logged late; #105, #114)
+## Ad-hoc — 2026-09-20 (two #14 AC3 deviations, logged late; #105, #114) — reconciled by /n8-replan 2026-09-23
 
 - **Change:** `tools/check_aab.sh` deviates from #14's AC3 in two ways that were never logged. #105 asked for the first to be logged *or* the story amended, and neither happened.
   1. **AC3 says the scanner needs "only unzip, tr, grep, sort".** It also needs `awk` (the element decoder, #80) and `dirname` (the `cd` on line 26, there since the file was written). The header is now correct and, more to the point, carries the command that *verifies* it — running the script under `env -i` with only those tools on PATH. That was never run; it takes two seconds and it is how #114 was found.
@@ -674,7 +674,7 @@ CI and the tag-to-Play pipeline, on `milestone/m1-ci`. Three stories implemented
   **Why it matters:** both were visible in the source and invisible to anyone reading the plan. A deviation recorded only where the deviating code lives is a deviation the plan does not know about.
   **Milestones/issues likely affected:** #14 (M0, closed). AC3's wording is now stale in two places; the behaviour is correct and better than specified, so this is a record correction rather than a code change.
 
-## Ad-hoc — 2026-09-20 (record corrections found by the fourth M0 verification; #115, #118, #122)
+## Ad-hoc — 2026-09-20 (record corrections found by the fourth M0 verification; #115, #118, #122) — reconciled by /n8-replan 2026-09-23
 
 - **`flutter_lints` is exempt from the justification rule and the record did not say so (#118).** `dependency_policy.dart` exempts `flutter`, `flutter_test`, `flutter_localizations` and `flutter_lints`. The first three are the SDK; `flutter_lints` is a genuine third-party pub.dev package, and the exemption is why `pubspec.yaml` carries **zero** `# why:` lines while the guard is green. CLAUDE.md invariant 3, epic #7's fourth criterion and coverage-map item 3 all said *every* third-party package carries a justification, with no exemption mentioned. The exemption is reasonable and was commented in the code; it is now in the invariant too. Same failure mode as #100.
 - **The M0 coverage map quoted the format command one flag short (#118).** Item 6 said `dart format --set-exit-if-changed .`; the gate runs `dart format --output=none --set-exit-if-changed .`. The artefact is stricter than the record — it reports rather than rewrites — which is the right direction, but it is a word-for-word mismatch in a map whose stated purpose is word-for-word checkability. The map is corrected.
@@ -728,7 +728,7 @@ CI and the tag-to-Play pipeline, on `milestone/m1-ci`. Three stories implemented
   - **Generalised, because both were the same mistake:** YAML mutations have been checked for parseability since `#172`; Dart mutations were not. `compiles_as_dart` now runs `dart analyze` over every mutated `.dart` file and reports BROKEN, so a mutation that cannot be applied is never scored as a guard failure.
 - **Decision (Rule 1 — a committed defect, found while probing):** `tools/setup_play_ci.sh` at branch HEAD granted the CI service account `--role roles/owner`. An interrupted battery run left that mutation in the working tree and `9215586` (a docs commit) swept it in; the tree's later correction then hid it from `tools/gate.sh`, which reads the tree and not the commit. It never reached `main` and CI would have failed on push. The commit was amended to drop the hunk. **Two guards, because `finally` cannot cover a kill:** the battery writes `.mutation_check_in_flight` naming the files it is about to mutate and refuses to start while one exists, so an interrupted run is detectable by the next; and `gate.sh` now prints, after its verdict, that the verdict is about the working tree, listing the dirty files. The guard that caught it — `no IAM role is ever granted to the service account` — was already there and already correct; what was missing was any reason to run it against HEAD.
 
-## Ad-hoc — 2026-09-21: the guard suite's architecture changes to "execute the artefact" (#205)
+## Ad-hoc — 2026-09-21: the guard suite's architecture changes to "execute the artefact" (#205) — reconciled by /n8-replan 2026-09-23
 
 - **The change.** Guards that assert a *runtime* property stop pattern-matching the artefact's text and start running it. Document properties — action pins, `permissions:` blocks, triggers, step sets — stay textual and keep being read structurally by `Workflow.parse`. This is #205, filed as a proposal after round seven and adopted by the owner after round eight.
 - **Why, in one sentence with the evidence behind it.** Across rounds five to eight, every guard that was defeated is a text assertion *about* an artefact, and every guard never defeated *executes* one. Round eight made it sharp: #207, the only fix that survived a genuine adversarial move, is the one that runs `play_promote.sh`; #202, #203, #206 and #209 all fell to a substring, a surviving call site, a prose comment or an unenumerated file.
@@ -857,3 +857,21 @@ PY
 
 - **Decision (#266): the exact-phrase narrowing from #260 gets its own test and mutation.** Round-seventeen verification found the fix correct but unguarded — nothing distinguished the required phrase from a bare "draft" substring. Added a test case supplying a 4xx refusal that mentions "draft" without the exact phrase, asserting the retry does not fire; confirmed it fails against the pre-fix (bare-substring) shape and passes against the shipped fix, per test-plan discipline. Added a matching mutation entry to `tools/mutation_check.py`.
   **Issue:** #266
+
+## /n8-replan (all planned-but-unexecuted: M2–M8) — 2026-09-23
+
+Scope: M2 through M7 (planned, unexecuted) plus M8 (Audit, storyless, description-only check). Triggered by the user: "audit our decisions and make sure none are relevant anymore" — a check of all eight unreconciled `## Ad-hoc` entries against the current plan and codebase before M2 execution starts.
+
+- **Ledger entries 1–8** (2026-09-18 through 2026-09-21): all reconciled. Seven were already self-declared non-stale for anything beyond M0/M1 (closed milestones) or already reflected in the amended issue/milestone-description text they named (M7's item 23 carries the exact amendment the 2026-09-19 entry describes). None required a story edit.
+- **#205 closed** ("execute the artefact" architecture proposal): the decision was made and fully carried out across M1's sixth through seventeenth fix passes, all logged in this file — the issue itself was just never closed when the decision landed. Closed as completed, citing the rounds that implemented it. Does not touch M2–M7: the change is scoped to `test/guards/` (area:ci), not the game code those milestones build.
+- **Spot-checked M2's engine story (#22) and M4's persistence/about-links stories** against current codebase reality: every concrete claim (file paths, `lib/links.dart`, `test/guards/repo_files.dart`, `.fvmrc`, pubspec dependency ranges, invariant guard numbers `#14`/`#15`/`#26`) still matches. No stale "how" or "what" found in either.
+- **One entry (2026-09-20, "project goal: reusable basis") named a real gap, deferred by its own text** until M1 verifies — which happened this session. Asked the owner rather than deciding unilaterally: creating a new milestone is a roadmap-level scope call. See the owner's answer, logged separately once given.
+
+No story rewrites, no closures beyond #205, no re-wired dependencies. The plan for M2–M7 is trustworthy as written.
+
+## Owner decision — 2026-09-23: M1a created, the reusable-basis gap resolved
+
+- **Decision:** the owner's answer to the reusable-basis gap flagged by the 2026-09-20 ad-hoc entry and this session's replan: extract now, before M2, as a new milestone **M1a: Reusable app template**, into a **new separate repository** (`android-studio-app-template`, owner-created). Scope: the CI/guard machinery **and** the Play Console launch runbook — not the Flutter game scaffolding itself.
+  **Owner's words:** *"let's make an M1a for this. I want to extract the reusable parts now before developing the game."* … *"I want it to get me to a very solid starting point for any apps that use android studio and flutter. I plan to make several apps/games this way. I want this starter template to include the play console steps that I have to do, and setup needed. So that after starting from the template and doing documented steps, we can move right into game development without spending time on this infra/CI stuff every app."*
+  **Created:** milestone #10 (M1a), epic #273, five stories (#274–#278: guard machinery, CI/CD + n8SDLC scaffolding, README setup runbook, Play Console runbook, end-to-end proof against a placeholder app).
+  **Blocked on:** the owner creating the empty `android-studio-app-template` repository. Execution cannot start until it exists.
