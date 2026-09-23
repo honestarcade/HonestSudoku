@@ -1037,3 +1037,27 @@ than per-story.
 - **Decision:** The v1 game fixture holds four undo steps and one redo step, not three and one.
   **Why:** It was produced once from the codec by a scripted play-through (five changes, one undo). The count is immaterial to what the fixture protects; the README records the actual numbers and forbids regenerating it.
   **Issue:** #38
+
+## /n8-exec M4 — 2026-09-23
+
+- **Decision:** M4 was built stacked on the local M3 branch, which is itself stacked on M2, while M2's PR #285 was in CI. Both are rebased onto `main` in order once their predecessors merge.
+  **Why:** M2's `mutations` job takes most of an hour per run; waiting idle for each merge would have stalled the run for hours.
+  **Issue:** #37–#46
+- **Decision:** #40–#46 were written together and committed per story afterwards. The intermediate commits (#40 and #41 in particular) do not compile on their own, because `app_scope.dart` imports the link opener from #44's commit and the route table arrives in #46's. The final state passes the full suite and the gate.
+  **Why:** The stories are interlocked. The loading route replaces M3's in-board loading path, and the route table is what connects them, so none can be built and tested alone. The squash merge collapses the intermediate states.
+  **Issue:** #40–#46
+- **Decision:** The widget tests run the app without a store (the store factory may return null), and persistence is proven in plain tests that drive the same controller calls the screens make: settings toggles and the stats reset.
+  **Why:** A write queued inside the widget tester's fake clock and awaited from `runAsync`'s real zone deadlocks, and the first attempt hung for four minutes. Reads that are started and awaited entirely inside `runAsync` do work, so the statistics screen tests load a real store that way.
+  **Issue:** #42, #43
+- **Decision:** `url_launcher: ^6.3.2` (pub.dev latest, 2026-09-23). `url_launcher_android` 6.3.33's manifest declares no permissions; it registers a non-exported `WebViewActivity` that the app never uses (links open externally), and without `INTERNET` it could not load anything.
+  **Why:** #44's planned dependency, re-checked at the version resolved today.
+  **Issue:** #44
+- **Decision:** About Honest Arcade's ‹ and phone back go to the menu, including when it was opened from About the App.
+  **Why:** The design's `goBack` returns to the board only when the previous screen was the board, and to the menu otherwise, and the studio screen can never be opened from the board. #46's text says the same ("the studio screen opened from About the App returns to the menu as the design does").
+  **Issue:** #45, #46
+- **Decision:** No `SoundSettingsSink` hook. The sound toggles are stored and shown now, and M5 #49 reads them from the settings when it plays sounds.
+  **Why:** A no-op hook with no caller would be dead code for M5 to replace; the settings are already the single source it needs.
+  **Issue:** #42, #49
+- **Decision:** The 4×4 setup tests assert Medium through Evil greyed, and a move from Evil to Easy.
+  **Why:** #25's narrowed support table. 4×4 offers Easy only, so #41's "4×4 shows Expert and Evil greyed … moves to Hard" became Medium, Hard, Expert and Evil greyed, with a move to Easy.
+  **Issue:** #41
