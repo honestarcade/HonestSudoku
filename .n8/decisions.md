@@ -943,3 +943,12 @@ execution. The M2 finding was the one that mattered -- a systemic CI-timing risk
 have surfaced expensively (a cancelled required check, mid-milestone) rather than being caught
 by reading a single story in isolation, which is exactly why this pass ran per-milestone rather
 than per-story.
+
+## /n8-exec M2 — 2026-09-23
+
+- **Decision:** The design file is read through the `DesignSync` tool's read methods (`list_files`, `get_file`) on project `9e9471c9-5231-4fd8-9889-066345073295`, at the owner's direction in this session ("You should be able to access everything you need from the mcp"). The planning passes read it through a design connection this session does not have. The copy used is `Honest Sudoku.dc.html`, sha256 `f2592eb5dda759413e9266e4ec574085c7262fb38aa28cbef9fd8e3555b585ee`, fetched 2026-09-23 (`shasum -a 256` on the saved file). It is kept outside the repository because its `<link>` to fonts.googleapis.com would put a web-font reference into the tree that invariant 1's guard forbids.
+  **Why:** M3–M5's stories cite values only the file holds (THEMES, verbatim copy, paddings), and #23 pins against the design's own JavaScript.
+  **Issue:** #22 (first story run), all of M2–M5
+- **Decision:** `stripDartComments` joins `repo_files.dart`, and the engine rules live in a new `test/guards/engine_rules.dart` beside `engine_imports_test.dart`, following the pure-rule/inline-fixture split `dependency_rules.dart` and `workflow_rules.dart` already use.
+  **Why:** #22's Discretion asks for pure rule functions; a separate rules file is the pattern the guard directory already has.
+  **Issue:** #22
