@@ -1030,8 +1030,13 @@ MUTATIONS: list[Mutation] = [
              'memory-guard:'),
     Mutation("#256", "the draft-app retry fires on any refusal",
              "tools/play_promote.sh",
-             sub(r'is_draft_app_rule\(\) \{\n  case "\$REFUSAL" in\n.*?\n  esac\n\}',
-                 'is_draft_app_rule() {\n  return 0\n}', 1, flags=re.S),
+             # Anchored on the function's whole body rather than on the
+             # single `case` it used to hold: the sixteenth pass gave it a
+             # status check and a second `case`, and this entry went BROKEN
+             # on its first full run after that (#260).
+             sub(r"^is_draft_app_rule\(\) \{\n.*?^\}\n",
+                 "is_draft_app_rule() {\n  return 0\n}\n", 1,
+                 flags=re.S | re.M),
              "a permission denial is downgraded to a draft and called a success (#129)",
              'draft-retry: a 403 must fail'),
     Mutation("#249", "a secret is used as a file name",
