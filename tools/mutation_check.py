@@ -994,6 +994,16 @@ MUTATIONS: list[Mutation] = [
                  "", 1, flags=re.S),
              "an edit that commits nothing reads back the track that was already there",
              'draft-retry: expected two track PUTs'),
+    # ---- #266: round seventeen found the phrase match itself unguarded ------
+    # #260 narrowed the matcher from any 4xx to the PHRASE, and nothing told
+    # the two apart: this weakening back to a bare substring was GREEN at
+    # 31488be.
+    Mutation("#266", "the draft-app rule fires on any 4xx mentioning \"draft\"",
+             "tools/play_promote.sh",
+             sub(r'\*"only releases with status draft"\*\) return 0 ;;',
+                 '*"draft"*) return 0 ;;', 1),
+             "a wording change or an unrelated near-miss retries and reports success",
+             'draft-retry: a 4xx that mentions'),
     Mutation("#261", "a release cancels the build it was asked to make",
              ".github/workflows/release.yml",
              sub(r"^  cancel-in-progress: false$", "  cancel-in-progress: true", 1,
