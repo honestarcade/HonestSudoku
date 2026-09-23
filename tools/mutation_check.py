@@ -1097,6 +1097,23 @@ MUTATIONS: list[Mutation] = [
              # round-trip test: an unescaped password partially reaches
              # stderr. Earlier and more specific than the old marker.
              'reached stderr'),
+    # ---- #22: the engine stays plain Dart --------------------------------
+    Mutation("#22", "the engine imports Flutter", "lib/engine/candidates.dart",
+             sub(r"^(import 'grid\.dart';)$",
+                 r"import 'package:flutter/foundation.dart';\n\1", flags=re.M),
+             "the engine could no longer run in a plain isolate or test",
+             'engine-imports: 1 offender'),
+    Mutation("#22", "the engine reaches out of lib/engine/", "lib/engine/candidates.dart",
+             sub(r"^(import 'grid\.dart';)$", r"import '../links.dart';\n\1",
+                 flags=re.M),
+             "a relative import is a way round the allowlist",
+             'engine-imports: 1 offender'),
+    Mutation("#22", "the engine uses an unseeded Random", "lib/engine/solver.dart",
+             chain(sub(r"^(import 'dart:typed_data';)$", r"import 'dart:math';\n\1",
+                       flags=re.M),
+                   append("\nfinal unseeded = Random();\n")),
+             "an unseeded PRNG breaks same-seed-same-board (invariant 4)",
+             'engine-random: 1 offender'),
 ]
 
 
