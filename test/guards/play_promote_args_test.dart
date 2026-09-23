@@ -717,14 +717,14 @@ exit 0
       File(log).writeAsStringSync('');
       final f = File('${dir.path}/curl')
         ..writeAsStringSync('''#!/bin/sh
-out=""; method="GET"; want=0; prev=""; url=""
+out=""; method="GET"; want=0; prev=""; url=""; body=""
 for a in "\$@"; do
-  case "\$prev" in -o) out="\$a" ;; -X) method="\$a" ;; esac
+  case "\$prev" in -o) out="\$a" ;; -X) method="\$a" ;; -d) body="\$a" ;; esac
   case "\$a" in http://*|https://*) url="\$a" ;; esac
   if [ "\$a" = "-w" ]; then want=1; fi
   prev="\$a"
 done
-echo "\$method \$url" >> "$log"
+echo "\$method \$url \$body" >> "$log"
 st=200
 payload='{}'
 case "\$url" in
@@ -748,7 +748,7 @@ exit 0
       Process.runSync('chmod', ['+x', f.path]);
     }
 
-    ({int code, String out, String err, int commits}) run() {
+    ({int code, String out, String err, int commits, String calls}) run() {
       final r = Process.runSync(
         _script,
         [_package, 'internal', 'alpha'],
@@ -768,6 +768,7 @@ exit 0
         out: r.stdout.toString(),
         err: r.stderr.toString(),
         commits: ':commit'.allMatches(calls).length,
+        calls: calls,
       );
     }
 
@@ -798,6 +799,40 @@ exit 0
         reason:
             'draft-retry: expected exactly two commit attempts (completed, '
             'then draft); saw ${r.commits}',
+      );
+
+      // WHAT THE RETRY SENT, not merely that it happened. The stub logged
+      // the method and url and nothing else, and its read-back is a
+      // hard-coded draft release — so a retry that promoted `completed`, or
+      // one that skipped the PUT altogether, satisfied every assertion above
+      // and the suite stayed green (#260). The request body is in the log
+      // now, so this reads the request instead of inferring it.
+      final puts = r.calls
+          .split('\n')
+          .where((line) => line.startsWith('PUT '))
+          .toList();
+      expect(
+        puts,
+        hasLength(2),
+        reason:
+            'draft-retry: expected two track PUTs (completed, then draft); '
+            'saw ${puts.length}. A retry that commits without PUTting '
+            'promotes nothing and still reports success. Calls:\n${r.calls}',
+      );
+      expect(
+        puts.last,
+        contains('"status":"draft"'),
+        reason:
+            'draft-retry: the RETRY did not ask for a draft release, which '
+            'is the whole point of it — the completed attempt is what Play '
+            'refused. Sent: ${puts.last}',
+      );
+      expect(
+        puts.last,
+        contains('"1021"'),
+        reason:
+            'draft-retry: the retry promoted different version codes from '
+            'the ones read off the source track. Sent: ${puts.last}',
       );
     });
 
