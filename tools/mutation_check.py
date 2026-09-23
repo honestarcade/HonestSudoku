@@ -1131,6 +1131,7 @@ def main() -> int:
     base = run(SUITE_SLOW + ["--reporter", "json"])
     names: list[str] = []
     printed: list[str] = []
+    suites: list[str] = []
     by_id: dict[str, str] = {}
     failed: list[str] = []
     for line in base.stdout.splitlines():
@@ -1142,7 +1143,16 @@ def main() -> int:
         except ValueError:
             continue
         kind = event.get("type")
-        if kind == "testStart":
+        if kind == "suite":
+            # The PATH the runner prints before every test name. A marker
+            # naming an unrelated test file passed the audit and scored
+            # `caught` for a mutation with nothing to do with it (#250);
+            # the relative part of these comes from the source, so checking
+            # them is the same verdict everywhere.
+            path = event.get("suite", {}).get("path", "")
+            if path:
+                suites.append(path)
+        elif kind == "testStart":
             test = event.get("test", {})
             name = test.get("name", "")
             by_id[str(test.get("id"))] = name
@@ -1191,13 +1201,32 @@ def main() -> int:
     printable: list[str] = []
     for source in sorted((ROOT / "test" / "guards").glob("*.dart")):
         text = source.read_text()
-        for call in re.finditer(r"(?:print|markTestSkipped)\(\s*(.*?)\);",
-                                text, re.S):
-            printable.append(" ".join(re.findall(r"'([^']*)'", call.group(1))))
+        # `printOnFailure` too: its text lands in the output exactly when the
+        # suite is red, which is every run the battery judges. Both quote
+        # styles, because Dart has two and the single-quote-only version
+        # missed every `print("...")` (#250).
+        for call in re.finditer(
+                r"(?:print|printOnFailure|markTestSkipped)\(\s*(.*?)\);",
+                text, re.S):
+            printable.append(" ".join(
+                re.findall(r"'([^']*)'|\"([^\"]*)\"", call.group(1))
+                and [m[0] or m[1] for m in
+                     re.findall(r"'([^']*)'|\"([^\"]*)\"", call.group(1))]
+                or []))
+
+    # And the runner's own chrome, which is in every run's output and in
+    # none of the sources above: the file path before each name, the loading
+    # lines, the counter and the closing line (#250).
+    chrome = suites + [
+        "loading ",
+        "All tests passed!",
+        "Some tests failed.",
+    ]
 
     haystack = [("a test's NAME", n) for n in names]
     haystack += [("what a test PRINTS", t) for t in printed]
     haystack += [("a message a test can print", t) for t in printable]
+    haystack += [("the runner's own output", t) for t in chrome]
     vacuous = [
         (m, kind, text)
         for m in selected
@@ -1217,8 +1246,9 @@ def main() -> int:
         return 2
     if args.audit:
         print(f"{len(selected)} markers audited against {len(names)} test "
-              f"names, {len(printed)} printed lines and {len(printable)} "
-              f"messages a guard can print; none of them matches")
+              f"names, {len(printed)} printed lines, {len(printable)} "
+              f"messages a guard can print and {len(chrome)} lines the "
+              f"runner itself emits; none of them matches")
         return 0
 
     print(f"mutation_check: {len(selected)} mutations\n")
