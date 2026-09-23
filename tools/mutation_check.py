@@ -976,6 +976,22 @@ MUTATIONS: list[Mutation] = [
                  r"\1          exit 1\n", 1),
              "every refusal still fails as expected; the control is what names this one",
              'the step fails even with every secret set'),
+    # ---- #256/#249: what the release itself exposed -------------------------
+    # The first is #129 verbatim, green at be84231 because nothing reached the
+    # retry branch. The second is a secret used as a FILE NAME, which
+    # upload-artifact publishes as surely as the bytes.
+    Mutation("#256", "the draft-app retry fires on any refusal",
+             "tools/play_promote.sh",
+             sub(r'is_draft_app_rule\(\) \{\n  case "\$REFUSAL" in\n.*?\n  esac\n\}',
+                 'is_draft_app_rule() {\n  return 0\n}', 1, flags=re.S),
+             "a permission denial is downgraded to a draft and called a success (#129)",
+             'draft-retry: a 403 must fail'),
+    Mutation("#249", "a secret is used as a file name",
+             ".github/workflows/release.yml",
+             sub(r'(          test -s "\$RUNNER_TEMP/upload\.keystore")',
+                 r'\1\n          touch "$GITHUB_WORKSPACE/$HS_KEYSTORE_B64"', 1),
+             "an artifact listing shows the names it swept, not only the bytes",
+             'published-secret'),
     Mutation("#245", "the pre-flight cannot complete when the secrets are equal",
              ".github/workflows/release.yml",
              sub(r'(          echo "all five secrets are present"\n)',
