@@ -952,3 +952,9 @@ than per-story.
 - **Decision:** `stripDartComments` joins `repo_files.dart`, and the engine rules live in a new `test/guards/engine_rules.dart` beside `engine_imports_test.dart`, following the pure-rule/inline-fixture split `dependency_rules.dart` and `workflow_rules.dart` already use.
   **Why:** #22's Discretion asks for pure rule functions; a separate rules file is the pattern the guard directory already has.
   **Issue:** #22
+- **Decision (Rule 3):** The solver also branches on a unit's missing value when that value has fewer places left than the most-constrained cell has candidates, and treats a missing value with no place as a dead end (exact-cover column choice). Most-constrained-cell ordering is kept, as #22 specifies.
+  **Why:** #23's carve to uniqueness on 16×16 did not finish: 176 of 256 cells visited after 40 s, with each check slower than the last (local probe, 2026-09-23, `dart` on the engine against seeds 1–3). With the added branching the same carves took 1118, 1163 and 1591 ms. 9×9 carves gave the same given counts before and after (26/23/21 for seeds 1–3), as expected, since the change alters the search order and not the count.
+  **Issue:** #23 (blocker), amends #22's solver
+- **Decision:** The golden hash is printed as two zero-padded 32-bit halves.
+  **Why:** `int.toUnsigned(64)` on the VM returns a signed value, so the first recording produced hashes with a leading `-`. The published FNV-1a vectors (`''` → `cbf29ce484222325`, `'a'` → `af63dc4c8601ec8c`) are asserted in the test.
+  **Issue:** #23

@@ -2,9 +2,10 @@
 //
 // Each unit keeps a bitmask of the values placed in it, built from the unit
 // tables in units.dart, so a cell's candidates are the complement of the
-// union of its three units' masks. The search picks the most-constrained empty
-// cell (lowest index on a tie), tries values in ascending order, and stops as
-// soon as `limit` solutions are found.
+// union of its three units' masks. The search branches on the most
+// constrained choice — the empty cell with the fewest candidates (lowest index
+// on a tie, values ascending), or a unit's missing value with even fewer
+// places to go — and stops as soon as `limit` solutions are found.
 
 import 'dart:typed_data';
 
@@ -86,43 +87,109 @@ final class _Search {
   }
 
   int count(int? limit, {bool capture = false}) {
+    final cells = grid.length;
+    final n = shape.n;
+    final units = UnitTables.of(shape).units;
+    final free = List<int>.filled(cells, 0);
+    final places = List<int>.filled(n, 0);
     var found = 0;
 
+    void place(int cell, int bit) {
+      final u = cellUnits[cell];
+      grid[cell] = bit.bitLength;
+      masks[u[0]] |= bit;
+      masks[u[1]] |= bit;
+      masks[u[2]] |= bit;
+    }
+
+    void unplace(int cell, int bit) {
+      final u = cellUnits[cell];
+      grid[cell] = 0;
+      masks[u[0]] ^= bit;
+      masks[u[1]] ^= bit;
+      masks[u[2]] ^= bit;
+    }
+
     bool recurse() {
-      var best = -1;
-      var bestFree = 0;
+      // The most-constrained cell.
+      var bestCell = -1;
       var bestCount = 1 << 30;
-      for (var i = 0; i < grid.length; i++) {
+      for (var i = 0; i < cells; i++) {
         if (grid[i] != 0) continue;
-        final free = _free(i);
-        final c = _popcount[free];
+        final f = _free(i);
+        free[i] = f;
+        final c = _popcount[f];
         if (c == 0) return false;
         if (c < bestCount) {
-          best = i;
-          bestFree = free;
+          bestCell = i;
           bestCount = c;
-          if (c == 1) break;
         }
       }
-      if (best < 0) {
+      if (bestCell < 0) {
         found++;
         if (capture && found == 1) captured = List<int>.of(grid);
         return limit != null && found >= limit;
       }
-      final units = cellUnits[best];
-      var free = bestFree;
-      while (free != 0) {
-        final bit = free & -free;
-        free ^= bit;
-        grid[best] = bit.bitLength;
-        masks[units[0]] |= bit;
-        masks[units[1]] |= bit;
-        masks[units[2]] |= bit;
+
+      // The most-constrained (unit, value): a value missing from a unit must
+      // go in one of the unit's cells that can take it. Branching on the
+      // fewer of the two choices is what keeps sparse 16×16 boards tractable;
+      // a missing value with no place left is a dead end.
+      var bestUnit = -1;
+      var bestBit = 0;
+      if (bestCount > 1) {
+        for (var u = 0; u < units.length; u++) {
+          final missing = _full & ~masks[u];
+          if (missing == 0) continue;
+          for (var v = 0; v < n; v++) {
+            places[v] = 0;
+          }
+          for (final c in units[u].cells) {
+            if (grid[c] != 0) continue;
+            var f = free[c];
+            while (f != 0) {
+              final bit = f & -f;
+              f ^= bit;
+              places[bit.bitLength - 1]++;
+            }
+          }
+          var m = missing;
+          while (m != 0) {
+            final bit = m & -m;
+            m ^= bit;
+            final c = places[bit.bitLength - 1];
+            if (c == 0) return false;
+            if (c < bestCount) {
+              bestCount = c;
+              bestUnit = u;
+              bestBit = bit;
+            }
+          }
+          if (bestCount == 1) break;
+        }
+      }
+
+      if (bestUnit >= 0) {
+        final spots = [
+          for (final c in units[bestUnit].cells)
+            if (grid[c] == 0 && free[c] & bestBit != 0) c,
+        ];
+        for (final c in spots) {
+          place(c, bestBit);
+          final stop = recurse();
+          unplace(c, bestBit);
+          if (stop) return true;
+        }
+        return false;
+      }
+
+      var f = free[bestCell];
+      while (f != 0) {
+        final bit = f & -f;
+        f ^= bit;
+        place(bestCell, bit);
         final stop = recurse();
-        masks[units[0]] ^= bit;
-        masks[units[1]] ^= bit;
-        masks[units[2]] ^= bit;
-        grid[best] = 0;
+        unplace(bestCell, bit);
         if (stop) return true;
       }
       return false;

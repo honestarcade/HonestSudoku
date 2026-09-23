@@ -1,0 +1,77 @@
+{
+  "_comment": "Determinism anchors for invariant 4. Written by test/helpers/golden_recorder.dart, never by hand. Any change to rng, full_grid or the carving order MUST fail the test that reads this file; if a change is intended, re-record and say why in the commit.",
+  "boards": [
+    {
+      "shape": "4x4",
+      "seed": 1,
+      "hash": "054513b312a5f58d",
+      "givenCount": 6
+    },
+    {
+      "shape": "4x4",
+      "seed": 2,
+      "hash": "ab8478a9f245c3b3",
+      "givenCount": 6
+    },
+    {
+      "shape": "4x4",
+      "seed": 20260824,
+      "hash": "cd00b09fe5c7a21d",
+      "givenCount": 6
+    },
+    {
+      "shape": "6x6",
+      "seed": 1,
+      "hash": "42d994d05bdd1b6c",
+      "givenCount": 9
+    },
+    {
+      "shape": "6x6",
+      "seed": 2,
+      "hash": "29c02a897f0c2fa7",
+      "givenCount": 10
+    },
+    {
+      "shape": "6x6",
+      "seed": 20260824,
+      "hash": "e3f311041fd5d5ce",
+      "givenCount": 11
+    },
+    {
+      "shape": "9x9",
+      "seed": 1,
+      "hash": "94485416f0715c41",
+      "givenCount": 26
+    },
+    {
+      "shape": "9x9",
+      "seed": 2,
+      "hash": "ca0feb00dca3fcd0",
+      "givenCount": 23
+    },
+    {
+      "shape": "9x9",
+      "seed": 20260824,
+      "hash": "dc5b45603359d5d9",
+      "givenCount": 24
+    },
+    {
+      "shape": "16x16",
+      "seed": 1,
+      "hash": "419725849b111c68",
+      "givenCount": 92
+    },
+    {
+      "shape": "16x16",
+      "seed": 2,
+      "hash": "a5a95a05c19d486a",
+      "givenCount": 96
+    },
+    {
+      "shape": "16x16",
+      "seed": 20260824,
+      "hash": "95cefe021b4f834e",
+      "givenCount": 90
+    }
+  ]
+}
