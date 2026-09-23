@@ -39,9 +39,9 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 # The guard suite, minus any `slow`-tagged test.
 #
-# NOTHING carries that tag today — the expensive test that carried it was
-# reverted, and #217 was later closed by a cheap one that does not need it —
-# so this currently excludes nothing, and `dart_test.yaml` says so too. The
+# ONE test carries it: `the flag the workflow sets is the flag the guard
+# reads`, which spawns a child `flutter test` (#245). So this excludes
+# exactly that one, and the entry that needs it sets `slow=True`. The
 # machinery stays because the reason for it is real and was measured: a guard
 # whose input is expensive is run once per mutation, and a 45s test turns a
 # 20-minute battery into 90. When the next expensive guard arrives it tags
@@ -976,6 +976,27 @@ MUTATIONS: list[Mutation] = [
                  r"\1          exit 1\n", 1),
              "every refusal still fails as expected; the control is what names this one",
              'the step fails even with every secret set'),
+    # ---- #256/#249: what the release itself exposed -------------------------
+    # The first is #129 verbatim, green at be84231 because nothing reached the
+    # retry branch. The second is a secret used as a FILE NAME, which
+    # upload-artifact publishes as surely as the bytes.
+    Mutation("#258", "a credential is pasted into a memory file",
+             ".n8/memory/pages.md",
+             append('export HS_KEYSTORE_PASS: hunter2seventeen'),
+             "these files are committed and readable by anyone with the repository",
+             'memory-guard:'),
+    Mutation("#256", "the draft-app retry fires on any refusal",
+             "tools/play_promote.sh",
+             sub(r'is_draft_app_rule\(\) \{\n  case "\$REFUSAL" in\n.*?\n  esac\n\}',
+                 'is_draft_app_rule() {\n  return 0\n}', 1, flags=re.S),
+             "a permission denial is downgraded to a draft and called a success (#129)",
+             'draft-retry: a 403 must fail'),
+    Mutation("#249", "a secret is used as a file name",
+             ".github/workflows/release.yml",
+             sub(r'(          test -s "\$RUNNER_TEMP/upload\.keystore")',
+                 r'\1\n          touch "$GITHUB_WORKSPACE/$HS_KEYSTORE_B64"', 1),
+             "an artifact listing shows the names it swept, not only the bytes",
+             'published-secret'),
     Mutation("#245", "the pre-flight cannot complete when the secrets are equal",
              ".github/workflows/release.yml",
              sub(r'(          echo "all five secrets are present"\n)',
@@ -1113,7 +1134,9 @@ def main() -> int:
     # Read from the json stream rather than from a run's printed output,
     # because that output is machine-dependent in a way this check must not
     # be. Measured 2026-09-22, `flutter test --no-pub --tags guard` piped to
-    # a file: no CR bytes, and every line still capped near 198 characters,
+    # a file: no CR bytes, and a longest line that moves with the tree and
+    # the checkout path — 199 characters one day, 205 another, with a name
+    # visibly cut in one run and whole in the next,
     # so whether a given test's name survives depends on the length of the
     # absolute path printed before it — which differs between this checkout
     # and a runner's. CI's reporter prints them whole. An output-based audit
@@ -1131,6 +1154,7 @@ def main() -> int:
     base = run(SUITE_SLOW + ["--reporter", "json"])
     names: list[str] = []
     printed: list[str] = []
+    suites: list[str] = []
     by_id: dict[str, str] = {}
     failed: list[str] = []
     for line in base.stdout.splitlines():
@@ -1142,7 +1166,16 @@ def main() -> int:
         except ValueError:
             continue
         kind = event.get("type")
-        if kind == "testStart":
+        if kind == "suite":
+            # The PATH the runner prints before every test name. A marker
+            # naming an unrelated test file passed the audit and scored
+            # `caught` for a mutation with nothing to do with it (#250);
+            # the relative part of these comes from the source, so checking
+            # them is the same verdict everywhere.
+            path = event.get("suite", {}).get("path", "")
+            if path:
+                suites.append(path)
+        elif kind == "testStart":
             test = event.get("test", {})
             name = test.get("name", "")
             by_id[str(test.get("id"))] = name
@@ -1191,13 +1224,32 @@ def main() -> int:
     printable: list[str] = []
     for source in sorted((ROOT / "test" / "guards").glob("*.dart")):
         text = source.read_text()
-        for call in re.finditer(r"(?:print|markTestSkipped)\(\s*(.*?)\);",
-                                text, re.S):
-            printable.append(" ".join(re.findall(r"'([^']*)'", call.group(1))))
+        # `printOnFailure` too: its text lands in the output exactly when the
+        # suite is red, which is every run the battery judges. Both quote
+        # styles, because Dart has two and the single-quote-only version
+        # missed every `print("...")` (#250).
+        for call in re.finditer(
+                r"(?:print|printOnFailure|markTestSkipped)\(\s*(.*?)\);",
+                text, re.S):
+            printable.append(" ".join(
+                re.findall(r"'([^']*)'|\"([^\"]*)\"", call.group(1))
+                and [m[0] or m[1] for m in
+                     re.findall(r"'([^']*)'|\"([^\"]*)\"", call.group(1))]
+                or []))
+
+    # And the runner's own chrome, which is in every run's output and in
+    # none of the sources above: the file path before each name, the loading
+    # lines, the counter and the closing line (#250).
+    chrome = suites + [
+        "loading ",
+        "All tests passed!",
+        "Some tests failed.",
+    ]
 
     haystack = [("a test's NAME", n) for n in names]
     haystack += [("what a test PRINTS", t) for t in printed]
     haystack += [("a message a test can print", t) for t in printable]
+    haystack += [("the runner's own output", t) for t in chrome]
     vacuous = [
         (m, kind, text)
         for m in selected
@@ -1217,8 +1269,9 @@ def main() -> int:
         return 2
     if args.audit:
         print(f"{len(selected)} markers audited against {len(names)} test "
-              f"names, {len(printed)} printed lines and {len(printable)} "
-              f"messages a guard can print; none of them matches")
+              f"names, {len(printed)} printed lines, {len(printable)} "
+              f"messages a guard can print and {len(chrome)} lines the "
+              f"runner itself emits; none of them matches")
         return 0
 
     print(f"mutation_check: {len(selected)} mutations\n")

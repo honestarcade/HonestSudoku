@@ -13,9 +13,12 @@ library;
 // change it; this script is the barrier that lives in the repository, where a
 // change to it shows up in a diff.
 //
-// What this does NOT cover: anything past the argument checks. A fake token
-// proves the script reaches the API and stops there; it proves nothing about
-// the edits flow, which needs real credentials and is verified by dispatch.
+// What this does NOT cover: the real API. A fake token proves the script
+// reaches it and stops there, and a stub `curl` drives the rest — the edits
+// flow, the failed-edit deletion, the completed-release requirement, the
+// draft-app retry and the summary's honesty are all exercised here without
+// credentials. What only a dispatch can show is Google's own behaviour: the
+// wording of its refusals, and whether a track accepts what was sent.
 import 'dart:convert';
 import 'dart:io';
 
@@ -684,6 +687,153 @@ exit 0
         reason: 'no-completed-release: the message must name the track',
       );
       expect((r.stdout as String).trim(), isEmpty);
+    });
+  });
+
+  group('the draft-app retry fires for that rule and for nothing else', () {
+    // #129's defect was a retry that fired on ANY failure: a 403 became "the
+    // app is not yet published", the release was downgraded to draft, and the
+    // run exited 0. The fix made the retry specific — and nothing tested it,
+    // so at `be84231` making `is_draft_app_rule` return 0 unconditionally,
+    // which IS #129, left the whole suite green (#256).
+    //
+    // The real draft-app refusal arrives at `:commit`, which is where the
+    // live run met it on 2026-09-22 (run 35797055235): `400 Only releases
+    // with status draft may be created on draft app.`
+    late Directory dir;
+
+    setUp(() => dir = Directory.systemTemp.createTempSync('hs-draft'));
+    tearDown(() => dir.deleteSync(recursive: true));
+
+    /// A curl that drives the whole edits flow, with the FIRST `:commit`
+    /// answered by [status]/[body] and every later one answered 200.
+    ///
+    /// Every call is appended to `calls.log`, so "exactly one commit attempt"
+    /// below is a count rather than an inference — which matters, because the
+    /// difference between the fixed script and #129 is how many times it
+    /// tries.
+    void stubCurl({required String status, required String body}) {
+      final log = '${dir.path}/calls.log';
+      File(log).writeAsStringSync('');
+      final f = File('${dir.path}/curl')
+        ..writeAsStringSync('''#!/bin/sh
+out=""; method="GET"; want=0; prev=""; url=""
+for a in "\$@"; do
+  case "\$prev" in -o) out="\$a" ;; -X) method="\$a" ;; esac
+  case "\$a" in http://*|https://*) url="\$a" ;; esac
+  if [ "\$a" = "-w" ]; then want=1; fi
+  prev="\$a"
+done
+echo "\$method \$url" >> "$log"
+st=200
+payload='{}'
+case "\$url" in
+  *:commit)
+    if [ "\$(grep -c ':commit' "$log")" = 1 ]; then
+      st='$status'
+      payload='$body'
+    fi
+    ;;
+  */tracks/internal)
+    payload='{"releases":[{"status":"completed","versionCodes":["1021"]}]}' ;;
+  */tracks/alpha)
+    payload='{"releases":[{"status":"draft","versionCodes":["1021"]}]}' ;;
+  */edits)
+    payload='{"id":"E1"}' ;;
+esac
+[ -n "\$out" ] && printf '%s' "\$payload" > "\$out"
+[ "\$want" = 1 ] && printf '%s' "\$st"
+exit 0
+''');
+      Process.runSync('chmod', ['+x', f.path]);
+    }
+
+    ({int code, String out, String err, int commits}) run() {
+      final r = Process.runSync(
+        _script,
+        [_package, 'internal', 'alpha'],
+        workingDirectory: repoRoot.path,
+        includeParentEnvironment: false,
+        environment: {
+          'PATH': '${dir.path}:/usr/bin:/bin',
+          'PLAY_TOKEN': 'fake',
+          'HS_PLAY_API': _unreachableApi,
+        },
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8,
+      );
+      final calls = File('${dir.path}/calls.log').readAsStringSync();
+      return (
+        code: r.exitCode,
+        out: r.stdout.toString(),
+        err: r.stderr.toString(),
+        commits: ':commit'.allMatches(calls).length,
+      );
+    }
+
+    test('the real draft-app refusal is retried as a draft', () {
+      stubCurl(
+        status: '400',
+        body:
+            '{"error":{"code":400,"status":"INVALID_ARGUMENT","message":'
+            '"Only releases with status draft may be created on draft app."}}',
+      );
+      final r = run();
+      expect(
+        r.code,
+        0,
+        reason: 'draft-retry: the draft-app rule must be retried. ${r.err}',
+      );
+      expect(
+        r.out,
+        contains('status=draft'),
+        reason:
+            'draft-retry: the retry happened but the run did not report the '
+            'status it actually used, so the summary would claim a completed '
+            'release',
+      );
+      expect(
+        r.commits,
+        2,
+        reason:
+            'draft-retry: expected exactly two commit attempts (completed, '
+            'then draft); saw ${r.commits}',
+      );
+    });
+
+    test('a refusal that is not the draft-app rule is not retried', () {
+      // The #129 shape, and the one the fix exists for: a permission denial
+      // must not be downgraded to a draft and reported as a success.
+      stubCurl(
+        status: '403',
+        body:
+            '{"error":{"code":403,"status":"PERMISSION_DENIED","message":'
+            '"The caller does not have permission"}}',
+      );
+      final r = run();
+      expect(
+        r.code,
+        5,
+        reason:
+            'draft-retry: a 403 must fail the run, not be retried as a '
+            'draft. Exit ${r.code}: ${r.err}',
+      );
+      expect(
+        r.err,
+        contains('not for the draft-app rule'),
+        reason:
+            'draft-retry: the failure must say the refusal was not the '
+            'draft-app rule, so the next reader is not sent looking for an '
+            'unpublished app',
+      );
+      expect(
+        r.commits,
+        1,
+        reason:
+            'draft-retry: expected exactly ONE commit attempt for a refusal '
+            'that earns no retry; saw ${r.commits}. Retrying every failure '
+            'is #129 verbatim',
+      );
     });
   });
 

@@ -293,7 +293,22 @@ jobs:
     # `needs.gate.result` rather than `failure()`: a CANCELLED gate is not a
     # failure, so `failure()` produced no "nothing shipped" line for it (#165).
     #
-    # UNVERIFIED, and flagged as such rather than left reading as fact: when a
+    # SETTLED, 2026-09-22, and not in this job's favour. Run 35783678379 —
+    # the first `v0.1.0` tag, whose gate was cancelled by the battery's
+    # timeout — recorded `gate / mutations: cancelled`, `ship: skipped` and
+    # `report-gate-failure: SKIPPED`. So a cancelled gate announces nothing
+    # at all, which is what the paragraph below feared and what this comment
+    # used to call untested (#257).
+    #
+    # The gap is ACCEPTED rather than closed: `if: always()` does not help,
+    # because GitHub skips a dependent job of a cancelled one instead of
+    # evaluating its condition, and the notifier that would work keys on
+    # `workflow_run` — new infrastructure on the release path, which is not a
+    # fix-pass change. What the acceptance rests on: nothing ships (`ship`
+    # needs this gate), and the cancellation is visible in the Actions list
+    # and on the PR. What it costs: nobody is told.
+    #
+    # The paragraph this replaces, kept because it was right: when a
     # run is cancelled GitHub cancels its dependent jobs rather than
     # evaluating their `if:`, so this job may well not run for a cancelled
     # gate either. The change is still right — `result != 'success'` is

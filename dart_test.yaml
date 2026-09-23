@@ -6,8 +6,8 @@ tags:
     description: Invariant and project-identity guards that read repository files.
   slow:
     description: >-
-      Guards whose input is expensive to produce. Nothing carries this tag
-      today — the expensive test that carried it was reverted, and #217 was
-      later closed by one that does not need it — but the battery
-      still honours it, so the next expensive guard can opt out of being run
-      once per mutation without anyone rediscovering why that matters.
+      Guards that cost more than an assertion to run. One test carries it:
+      `the flag the workflow sets is the flag the guard reads`, which spawns
+      a child `flutter test` to set an environment its own process cannot
+      (#245). The battery excludes it from the runs that do not need it, and
+      the one mutation that does sets `slow=True`.
