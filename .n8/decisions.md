@@ -1028,3 +1028,12 @@ than per-story.
 - **Decision:** Leaving the board for a placeholder route (Rules, Settings, Main menu, Change size) pauses a live game first.
   **Why:** The timer already stops while another route covers the board. Pausing also means the player comes back to the pause card rather than a board that silently stopped counting.
   **Issue:** #36
+- **Decision:** `path_provider` is `^2.1.6` (pub.dev latest, 2026-09-23), with its `# why:` date moved to 2026-09-23 because the manifests were re-checked today.
+  **Why:** Since the planner's check, `path_provider_android` (2.3.1) arrives with a JNI stack: `jni` 1.0.3, `jni_flutter` 1.0.3, native-asset `hooks`. Their library manifests are empty, and `path_provider_android` ships none. The only `INTERNET` permissions are in their example and test-runner apps, which never ship (read in `~/.pub-cache`, 2026-09-23). The dependency blocklist passes over the new lockfile, and the release bundle scan is the final proof.
+  **Issue:** #38
+- **Decision:** The dependency guard's `dart:io` ban now spares `lib/store/` alone. A new test pins the scope (the store is allowed, a screen is refused, a socket in the store is still caught), with a battery mutation for the allowance widening.
+  **Why:** The rule's own comment requires the change to come in the commit that cites the conversation authorising file I/O. That is #38, planned with the owner on 2026-09-18 together with `path_provider`.
+  **Issue:** #38
+- **Decision:** The v1 game fixture holds four undo steps and one redo step, not three and one.
+  **Why:** It was produced once from the codec by a scripted play-through (five changes, one undo). The count is immaterial to what the fixture protects; the README records the actual numbers and forbids regenerating it.
+  **Issue:** #38

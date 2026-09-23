@@ -1,0 +1,19 @@
+{
+  "v": 1,
+  "data": {
+    "shapes": {
+      "easy": {
+        "9×9": {
+          "started": 66,
+          "solved": 64,
+          "best": 134,
+          "total": 17792,
+          "time": 18360
+        }
+      }
+    },
+    "streaks": {
+      "easy": 12
+    }
+  }
+}

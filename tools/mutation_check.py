@@ -1179,6 +1179,20 @@ MUTATIONS: list[Mutation] = [
                  r"import 'package:flutter/foundation.dart';\n\1", flags=re.M),
              "the rules could no longer be proven without a screen",
              'game-imports: 1 offender'),
+    # ---- #38: dart:io is allowed in lib/store/ and nowhere else ------------
+    Mutation("#38", "the dart:io allowance widens to all of lib/",
+             "test/guards/dependency_rules.dart",
+             sub(r"final allowsDartIo = path\.startsWith\('lib/store/'\);",
+                 "final allowsDartIo = path.startsWith('lib/');"),
+             "any screen could open a socket through dart:io",
+             'dart-io-scope: dart:io is allowed outside'),
+    Mutation("#38", "the store reaches path_provider outside its one file",
+             "lib/store/app_store.dart",
+             sub(r"^(import 'codecs\.dart';)$",
+                 r"import 'package:path_provider/path_provider.dart';\n\1",
+                 flags=re.M),
+             "a second place resolving directories is a second place to get it wrong",
+             'store-imports: 1 offender'),
 ]
 
 

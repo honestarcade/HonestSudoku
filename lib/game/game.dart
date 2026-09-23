@@ -4,12 +4,15 @@
 /// screen.
 library;
 
+export 'app_settings.dart';
 export 'format.dart';
 export 'game_settings.dart';
 export 'game_state.dart';
 export 'notice.dart';
 export 'real_stats_source.dart';
+export 'saved_game.dart';
 export 'seed_source.dart';
+export 'setting_toggle.dart';
 export 'snapshot.dart';
 export 'stats_book.dart';
 export 'stats_source.dart';

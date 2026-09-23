@@ -1,0 +1,27 @@
+{
+  "v": 1,
+  "data": {
+    "game": {
+      "autoNotes": true,
+      "autoClear": true,
+      "conflicts": true,
+      "hintWhy": true,
+      "hlSame": false,
+      "hlUnit": true,
+      "dimDone": true,
+      "showTimer": true,
+      "bigDigits": true,
+      "strikeMode": "zen",
+      "announceMode": "atEnd"
+    },
+    "themeKey": "paper",
+    "sfx": false,
+    "haptics": true,
+    "lastSetup": {
+      "shape": "16×16",
+      "difficulty": "expert",
+      "strikeMode": "unlimited",
+      "announceMode": "atEnd"
+    }
+  }
+}
