@@ -290,7 +290,7 @@ void _assertCiShape(Workflow ci) {
   );
   _expectRunsExactly(
     gate.stepById('guards'),
-    'flutter test --no-pub --tags guard',
+    'flutter test --no-pub --tags guard --exclude-tags weekly,bench',
     'ci-shape: the invariant guards must be their own step',
   );
   _expectRunsExactly(
@@ -420,6 +420,13 @@ const _dependsOn = <String, Map<String, Map<String, List<String>>>>{
       'play': ['gcloud'],
       'keystore': ['keytool'],
       'forget': [],
+    },
+  },
+  '.github/workflows/engine-nightly.yml': {
+    'weekly': {
+      'deps': ['flutter'],
+      'weekly': ['flutter'],
+      'summary': [],
     },
   },
 };
@@ -648,6 +655,28 @@ const _stepsAllSucceeded = '''
 /// Top level so `every [] step is exercised by a named test` can hold this
 /// map to the `[]` set in `_dependsOn` (#226).
 const _claims = <String, _Claim>{
+  'the engine nightly summary says where the failing seeds are': (
+    path: '.github/workflows/engine-nightly.yml',
+    job: 'weekly',
+    step: 'summary',
+    env: {'OUTCOME': 'failure'},
+    expressions: {},
+    plant: {},
+    completes: true,
+    mustSay: ['Engine nightly: failure', 'offending seed', 'engine-'],
+    mustNotSay: ['held uniqueness'],
+  ),
+  'the engine nightly summary does not claim a failure on success': (
+    path: '.github/workflows/engine-nightly.yml',
+    job: 'weekly',
+    step: 'summary',
+    env: {'OUTCOME': 'success'},
+    expressions: {},
+    plant: {},
+    completes: true,
+    mustSay: ['Engine nightly: success', 'held uniqueness'],
+    mustNotSay: ['offending'],
+  ),
   'the failed-gate notice does not claim a release': (
     path: '.github/workflows/release.yml',
     job: 'report-gate-failure',
@@ -2850,6 +2879,7 @@ void main() {
           '.github/workflows/ci.yml gate guards',
           '.github/workflows/ci.yml gate gate',
           '.github/workflows/ci.yml mutations mutations',
+          '.github/workflows/engine-nightly.yml weekly weekly',
         ];
 
         final found = <String>{};
@@ -3005,6 +3035,13 @@ void main() {
               cancel: 'false',
               perms: {'contents': 'read'},
             ),
+            // Weekly, on the default branch only: a newer run would test the
+            // same commit, so an older one is never worth cancelling (#26).
+            '.github/workflows/engine-nightly.yml': (
+              group: 'engine-nightly',
+              cancel: 'false',
+              perms: {'contents': 'read'},
+            ),
           };
 
       // The one job that needs more than the workflow's own grant, named
@@ -3105,11 +3142,11 @@ void main() {
       }
       expect(
         found,
-        3,
+        4,
         reason:
-            'flutter-pin: expected three Flutter setups (ci.yml\'s two jobs '
-            'and release.yml\'s ship); found $found. A new one is unpinned '
-            'until it is counted here',
+            'flutter-pin: expected four Flutter setups (ci.yml\'s two jobs, '
+            'release.yml\'s ship and engine-nightly.yml\'s weekly); found '
+            '$found. A new one is unpinned until it is counted here',
       );
     });
 
@@ -3244,6 +3281,9 @@ void main() {
             'artifact',
           ],
           'mutations': ['checkout', 'java', 'flutter', 'deps', 'mutations'],
+        },
+        '.github/workflows/engine-nightly.yml': {
+          'weekly': ['checkout', 'flutter', 'deps', 'weekly', 'summary'],
         },
       };
 

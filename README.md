@@ -27,9 +27,17 @@ tools/gate.sh
 
 Six steps, stopping at the first failure: resolve dependencies against the
 lockfile, analyze (infos are fatal), check formatting, run the tests including
-the invariant guards, build the release bundle, and scan that bundle for
-Android permissions. It reports rather than rewrites — a formatting failure
-names the file and leaves it alone.
+the invariant guards (`flutter test --no-pub --exclude-tags weekly,bench`),
+build the release bundle, and scan that bundle for Android permissions. It
+reports rather than rewrites — a formatting failure names the file and leaves
+it alone.
+
+Two test tiers are left out of the gate because they take too long for a pull
+request. `weekly` runs the engine guards over far more seeds for every size and
+difficulty (`engine_guard_weekly_test.dart`), and
+`.github/workflows/engine-nightly.yml` runs it every Sunday
+(or on demand from the Actions tab). `bench` times the generator on this
+machine: `flutter test --tags bench`. `dart_test.yaml` lists what runs where.
 
 The **CI** workflow (`.github/workflows/ci.yml`, job `gate`) runs this same
 script on every pull request, so green locally and green in CI mean the same

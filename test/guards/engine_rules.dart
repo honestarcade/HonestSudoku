@@ -80,3 +80,30 @@ List<String> engineRandomOffenders(String path, String source) {
       if (_random.hasMatch(lines[i])) '$path:${i + 1}: ${lines[i].trim()}',
   ];
 }
+
+/// Clock and timer forms the engine may not use: generation must depend on
+/// the seed alone (invariant 4). Only the off-thread wrapper, which enforces
+/// the time ceiling, may use them — and never `Random`.
+const engineClockForms = [
+  'DateTime.now(',
+  'Stopwatch(',
+  'Timer(',
+  'Timer.periodic(',
+  'Future.delayed',
+  '.timeout(',
+];
+
+/// The one engine file allowed [engineClockForms].
+const engineClockAllowed = 'lib/engine/isolate_generator.dart';
+
+/// Lines of [source] using a clock or timer form, comments stripped. Empty
+/// for [engineClockAllowed].
+List<String> engineClockOffenders(String path, String source) {
+  if (path == engineClockAllowed) return const [];
+  final lines = stripDartComments(source).split('\n');
+  return [
+    for (var i = 0; i < lines.length; i++)
+      for (final form in engineClockForms)
+        if (lines[i].contains(form)) '$path:${i + 1}: $form',
+  ];
+}

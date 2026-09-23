@@ -60,10 +60,9 @@ void main() {
 
   test('evidence: every unique 4×4 board at or above the floor falls to '
       'naked singles', () {
-    // One full grid, every subset of at least six givens: the claim is about
-    // the shape, and all 4×4 grids are equivalent up to relabelling and the
-    // symmetries the ladder is blind to. The decision log records the same
-    // result over 95 distinct grids (4 618 710 unique boards).
+    // One full grid, every subset of at least six givens. The decision log
+    // (2026-09-23) records the same result over all 288 4×4 grids,
+    // 13 269 792 unique boards, from a local probe too slow for the gate.
     const s = GridShape.mini;
     final solution = fullGrid(s, Rng(1));
     var unique = 0;

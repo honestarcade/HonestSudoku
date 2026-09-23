@@ -35,16 +35,26 @@ int givensFloor(GridShape shape) => shape.n + shape.n ~/ 2;
 /// Attempts a difficulty-targeted generation may make.
 ///
 /// Sized to the rarest band each shape offers so that running out is
-/// vanishingly unlikely: 6×6 Hard and 9×9 Expert succeed on well under one
-/// attempt in a hundred, but an attempt costs well under two milliseconds
-/// there. 16×16 attempts cost up to a second, and the off-thread wrapper's
-/// time ceiling ends a slow request long before 200.
+/// vanishingly unlikely. The success rates and per-attempt costs behind the
+/// numbers are in the decision log (local probe, 2026-09-23). On 16×16 the
+/// off-thread wrapper's time ceiling ends a slow request long before 200.
 int defaultMaxAttempts(GridShape shape) => switch (shape.n) {
   4 => 50,
   6 => 10000,
   9 => 2000,
   _ => 200,
 };
+
+/// Whether a generated board may end at most `ceil(target × 1.1)` givens.
+///
+/// Not for Evil, which takes whatever count uniqueness allows, and not for
+/// 16×16 Expert: the design's target there lies below where uniqueness and
+/// the ladder let a 16×16 carve stop (87–96 givens over 60 attempts, local
+/// probe, 2026-09-23, in the decision log), so the ceiling would discard
+/// nearly every Expert board the carve finds.
+bool countCeilingApplies(GridShape shape, Difficulty difficulty) =>
+    difficulty != Difficulty.evil &&
+    !(shape.n == 16 && difficulty == Difficulty.expert);
 
 /// Generates boards.
 final class Generator {
@@ -143,9 +153,9 @@ final class Generator {
     final total = shape.cellCount;
     final attempts = maxAttempts ?? defaultMaxAttempts(shape);
     final target = targetGivens(shape, difficulty);
-    final ceilingCount = (target * 1.1).ceil() > target
-        ? (target * 1.1).ceil()
-        : target + 1;
+    final ceilingCount = countCeilingApplies(shape, difficulty)
+        ? ((target * 1.1).ceil() > target ? (target * 1.1).ceil() : target + 1)
+        : total;
     final floor = givensFloor(shape);
     const span = kProgressGrading - kProgressCarving;
 
@@ -185,6 +195,9 @@ final class Generator {
         );
       }
       if (values == null) continue;
+      if (_counter(shape, values) != 1) {
+        throw StateError('carving produced a board without a unique solution');
+      }
 
       report(kProgressGrading);
       final g = grader.grade(
@@ -220,6 +233,7 @@ final class Generator {
     required int floor,
     required void Function(int) onTick,
   }) {
+    final ladderProvesUniqueness = this.grader == null;
     final values = List<int>.of(solution);
     var given = values.length;
     var band = Difficulty.easy;
@@ -228,16 +242,21 @@ final class Generator {
       final cell = order[k];
       if (given > floor) {
         values[cell] = 0;
-        if (_counter(shape, values) != 1) {
+        // Grade instead of counting. The ladder only makes forced
+        // deductions, so a board it finishes within the band has exactly one
+        // solution, and a board with two leaves it stuck, which reads as
+        // "too hard" and is reverted anyway: the decisions are the ones a
+        // uniqueness count would make, and counting was the expensive half on
+        // a sparse 16×16 (decision log, 2026-09-23). A substituted grader
+        // proves nothing, so then the count still runs; and every finished
+        // board is counted once in `generate`.
+        final g = grader.grade(shape, values, ceiling: difficulty);
+        if (g.band.index > difficulty.index ||
+            (!ladderProvesUniqueness && _counter(shape, values) != 1)) {
           values[cell] = solution[cell];
         } else {
-          final g = grader.grade(shape, values, ceiling: difficulty);
-          if (g.band.index > difficulty.index) {
-            values[cell] = solution[cell];
-          } else {
-            given--;
-            band = g.band;
-          }
+          given--;
+          band = g.band;
         }
       }
       onTick(k + 1);

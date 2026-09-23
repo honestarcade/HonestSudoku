@@ -1,5 +1,5 @@
 {
-  "_comment": "Determinism anchors for invariant 4. Written by test/helpers/golden_recorder.dart, never by hand. Any change to rng, full_grid or the carving order MUST fail the test that reads this file; if a change is intended, re-record and say why in the commit.",
+  "_comment": "Determinism anchors for invariant 4. Written by test/helpers/golden_recorder.dart, never by hand. Any change to rng, full_grid, the carving order or the grading ladder MUST fail a test that reads this file; if a change is intended, re-record and say why in the commit. `boards` are ungraded carves (test/engine/golden_boards_test.dart); `graded` pins seed 20260824 for every supported size and band (test/guards/engine_guard_*_test.dart).",
   "boards": [
     {
       "shape": "4x4",
@@ -72,6 +72,134 @@
       "seed": 20260824,
       "hash": "95cefe021b4f834e",
       "givenCount": 90
+    }
+  ],
+  "graded": [
+    {
+      "shape": "4x4",
+      "difficulty": "easy",
+      "seed": 20260824,
+      "hash": "e70d9ffa14bc85f8",
+      "technique": "nakedSingle",
+      "givenCount": 9,
+      "attempts": 1
+    },
+    {
+      "shape": "6x6",
+      "difficulty": "easy",
+      "seed": 20260824,
+      "hash": "3d5bfded26c50f7b",
+      "technique": "nakedSingle",
+      "givenCount": 20,
+      "attempts": 1
+    },
+    {
+      "shape": "6x6",
+      "difficulty": "medium",
+      "seed": 20260824,
+      "hash": "2a36dc974c161536",
+      "technique": "pointing",
+      "givenCount": 11,
+      "attempts": 185
+    },
+    {
+      "shape": "6x6",
+      "difficulty": "hard",
+      "seed": 20260824,
+      "hash": "94d58dd5482e2580",
+      "technique": "nakedPair",
+      "givenCount": 9,
+      "attempts": 1294
+    },
+    {
+      "shape": "9x9",
+      "difficulty": "easy",
+      "seed": 20260824,
+      "hash": "c832ba1f176eb0f8",
+      "technique": "nakedSingle",
+      "givenCount": 45,
+      "attempts": 1
+    },
+    {
+      "shape": "9x9",
+      "difficulty": "medium",
+      "seed": 20260824,
+      "hash": "9bcf9b242924a324",
+      "technique": "pointing",
+      "givenCount": 27,
+      "attempts": 3
+    },
+    {
+      "shape": "9x9",
+      "difficulty": "hard",
+      "seed": 20260824,
+      "hash": "f55ea8e80b37bb9c",
+      "technique": "hiddenPair",
+      "givenCount": 31,
+      "attempts": 16
+    },
+    {
+      "shape": "9x9",
+      "difficulty": "expert",
+      "seed": 20260824,
+      "hash": "f090ea8d334f46e9",
+      "technique": "nakedTriple",
+      "givenCount": 26,
+      "attempts": 16
+    },
+    {
+      "shape": "9x9",
+      "difficulty": "evil",
+      "seed": 20260824,
+      "hash": "fd8e747181ad5655",
+      "technique": "beyond",
+      "givenCount": 24,
+      "attempts": 4
+    },
+    {
+      "shape": "16x16",
+      "difficulty": "easy",
+      "seed": 20260824,
+      "hash": "123f7bcb71f1fc83",
+      "technique": "nakedSingle",
+      "givenCount": 141,
+      "attempts": 1
+    },
+    {
+      "shape": "16x16",
+      "difficulty": "medium",
+      "seed": 20260824,
+      "hash": "308cbd9318bb39ee",
+      "technique": "claiming",
+      "givenCount": 104,
+      "attempts": 1
+    },
+    {
+      "shape": "16x16",
+      "difficulty": "hard",
+      "seed": 20260824,
+      "hash": "b2359960d07e73b3",
+      "technique": "hiddenPair",
+      "givenCount": 97,
+      "attempts": 1
+    },
+    {
+      "shape": "16x16",
+      "difficulty": "expert",
+      "seed": 20260824,
+      "hash": "b63be5ae43005991",
+      "technique": "nakedTriple",
+      "givenCount": 93,
+      "attempts": 2
+    },
+    {
+      "shape": "16x16",
+      "difficulty": "evil",
+      "seed": 20260824,
+      "hash": "95cefe021b4f834e",
+      "technique": "beyond",
+      "givenCount": 90,
+      "attempts": 1
     }
   ]
 }

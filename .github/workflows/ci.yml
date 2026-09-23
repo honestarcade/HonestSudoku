@@ -7,7 +7,11 @@
 # The invariant guards run as their own named step before the full gate, so a
 # breached project invariant is the first red line in the checks list rather
 # than something to find inside a long log. They run twice in total; the second
-# run is inside gate.sh and costs seconds.
+# run is inside gate.sh. Since #26 that repeat includes the engine property
+# guards (52 s for the four files, measured 2026-09-23 with a local
+# `flutter test` over them), which #26 accepted to keep the gate and CI
+# running the same command. Both runs leave out the `weekly` engine tier
+# and the `bench` timings (dart_test.yaml says what runs where).
 name: CI
 
 on:
@@ -100,7 +104,7 @@ jobs:
           # field then fails instead of skipping: a lapsed secret must be
           # loud, because a skip on a required check is a silent downgrade.
           HS_RULESET_READ_EXPECTED: ${{ secrets.HS_RULESET_READ_TOKEN != '' && '1' || '' }}
-        run: flutter test --no-pub --tags guard
+        run: flutter test --no-pub --tags guard --exclude-tags weekly,bench
 
       - id: gate
         name: Quality gate

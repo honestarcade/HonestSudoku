@@ -24,8 +24,14 @@ const List<int> goldenSeeds = [1, 2, 20260824];
 const String _comment =
     'Determinism anchors for invariant 4. Written by '
     'test/helpers/golden_recorder.dart, never by hand. Any change to rng, '
-    'full_grid or the carving order MUST fail the test that reads this file; '
-    'if a change is intended, re-record and say why in the commit.';
+    'full_grid, the carving order or the grading ladder MUST fail a test that '
+    'reads this file; if a change is intended, re-record and say why in the '
+    'commit. `boards` are ungraded carves (test/engine/golden_boards_test.dart); '
+    '`graded` pins seed 20260824 for every supported size and band '
+    '(test/guards/engine_guard_*_test.dart).';
+
+/// The seed every graded golden is pinned at: the design's.
+const int gradedGoldenSeed = 20260824;
 
 /// One `boards` entry: the ungraded carve for (shape, seed).
 Map<String, Object> boardEntry(GridShape shape, int seed) {
@@ -38,6 +44,21 @@ Map<String, Object> boardEntry(GridShape shape, int seed) {
   };
 }
 
+/// One `graded` entry: the generated board for (shape, band) at
+/// [gradedGoldenSeed].
+Map<String, Object> gradedEntry(GridShape shape, Difficulty difficulty) {
+  final p = const Generator().generate(shape, gradedGoldenSeed, difficulty);
+  return {
+    'shape': shape.label.replaceAll('×', 'x'),
+    'difficulty': difficulty.key,
+    'seed': gradedGoldenSeed,
+    'hash': boardHash(p),
+    'technique': p.technique!.name,
+    'givenCount': p.givenCount,
+    'attempts': p.attempts!,
+  };
+}
+
 /// Every entry the fixture holds, computed from the current engine.
 Map<String, Object> computeGoldens() => {
   '_comment': _comment,
@@ -45,7 +66,23 @@ Map<String, Object> computeGoldens() => {
     for (final shape in GridShape.all)
       for (final seed in goldenSeeds) boardEntry(shape, seed),
   ],
+  'graded': [
+    for (final shape in GridShape.all)
+      for (final d in supportedDifficulties(shape)) gradedEntry(shape, d),
+  ],
 };
+
+/// The committed `graded` entry for (shape, band).
+Map<String, dynamic> committedGraded(GridShape shape, Difficulty difficulty) {
+  final label = shape.label.replaceAll('×', 'x');
+  return (readGoldens()['graded'] as List)
+      .cast<Map<String, dynamic>>()
+      .firstWhere(
+        (e) => e['shape'] == label && e['difficulty'] == difficulty.key,
+        orElse: () =>
+            throw StateError('no graded golden for $label ${difficulty.key}'),
+      );
+}
 
 /// Rewrites the fixture from [goldens].
 void writeGoldens(Map<String, Object> goldens) {

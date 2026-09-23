@@ -39,13 +39,13 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 # The guard suite, minus any `slow`-tagged test.
 #
-# ONE test carries it: `the flag the workflow sets is the flag the guard
-# reads`, which spawns a child `flutter test` (#245). So this excludes
-# exactly that one, and the entry that needs it sets `slow=True`. The
-# machinery stays because the reason for it is real and was measured: a guard
-# whose input is expensive is run once per mutation, and a 45s test turns a
-# 20-minute battery into 90. When the next expensive guard arrives it tags
-# itself and the mutations that need it set `slow=True` (#229).
+# Two kinds carry it: `the flag the workflow sets is the flag the guard
+# reads`, which spawns a child `flutter test` (#245), and the engine property
+# guards, engine_guard_*_test.dart, which generate hundreds of boards (#26).
+# The entries that need them set `slow=True`. The reason is real and was
+# measured: a guard whose input is expensive is run once per mutation, and a
+# 45s test turns a 20-minute battery into 90 (#229). The `weekly` engine tier
+# is never tagged `guard`, so neither suite here runs it.
 SUITE = ["flutter", "test", "--no-pub", "--tags", "guard",
          "--exclude-tags", "slow"]
 SUITE_SLOW = ["flutter", "test", "--no-pub", "--tags", "guard"]
@@ -137,7 +137,7 @@ MUTATIONS: list[Mutation] = [
              "a bundle signed with the wrong key would ship",
              'release-shape: `cert` must run'),
     Mutation("#167", "invariant guards made advisory", ".github/workflows/ci.yml",
-             sub(r"(run: flutter test --no-pub --tags guard)$", r"\1 || true", flags=re.M),
+             sub(r"(run: flutter test --no-pub --tags guard --exclude-tags weekly,bench)$", r"\1 || true", flags=re.M),
              "a breached invariant would not fail the PR",
              'ci-shape: the invariant guards'),
 
@@ -1114,6 +1114,45 @@ MUTATIONS: list[Mutation] = [
                    append("\nfinal unseeded = Random();\n")),
              "an unseeded PRNG breaks same-seed-same-board (invariant 4)",
              'engine-random: 1 offender'),
+    # ---- #26: the engine property guards (invariants 2 and 4) ------------
+    # `slow=True`: the property guards are tagged `slow`, so the per-mutation
+    # SUITE leaves them out and these entries run SUITE_SLOW.
+    Mutation("#26", "carving keeps a removal that breaks uniqueness",
+             "lib/engine/generator.dart",
+             chain(sub(r"if \(counter\(shape, values\) == 1\) \{",
+                       "if (counter(shape, values) >= 1) {"),
+                   sub(r"      if \(_counter\(shape, values\) != 1\) \{\n"
+                       r"        throw StateError\([^;]*\);\n      \}\n", "")),
+             "boards with two solutions ship as puzzles (invariant 2)",
+             'engine-unique: ', slow=True),
+    Mutation("#26", "a board is labelled a band it does not grade to",
+             "lib/engine/generator.dart",
+             chain(sub(r"if \(band != difficulty \|\| given > ceilingCount\) "
+                       r"return null;", "if (given > ceilingCount) return null;"),
+                   sub(r"\n      if \(g\.band != difficulty\) continue;", "")),
+             "a Hard label on a board singles can finish",
+             'engine-band: ', slow=True),
+    Mutation("#26", "the givens floor drops to n", "lib/engine/generator.dart",
+             sub(r"=> shape\.n \+ shape\.n ~/ 2;", "=> shape.n;"),
+             "boards emptier than the design's n + n/2 floor",
+             'engine-floor: ', slow=True),
+    Mutation("#26", "generation depends on how often it has run",
+             "lib/engine/generator.dart",
+             chain(sub(r"(Puzzle generate\([^{]*\{(?:.|\n)*?)final rng = Rng\(seed\);",
+                       r"\1final rng = Rng(seed + _generateCalls++);"),
+                   append("\nint _generateCalls = 0;\n")),
+             "the same seed stops giving the same board (invariant 4)",
+             'engine-determinism: ', slow=True),
+    Mutation("#26", "the ladder tries pairs before locked candidates",
+             "lib/engine/human_solver.dart",
+             chain(sub(r"  Pointing\(\),\n", ""),
+                   sub(r"(  NakedSubset\.pair\(\),\n)", r"\1  Pointing(),\n")),
+             "grades, and so the pinned graded boards, change silently",
+             'engine-golden: ', slow=True),
+    Mutation("#26", "the engine reads the clock", "lib/engine/solver.dart",
+             append("\nfinal startedAt = DateTime.now();\n"),
+             "generation that depends on when it runs is not deterministic",
+             'engine-clock: 1 offender'),
 ]
 
 

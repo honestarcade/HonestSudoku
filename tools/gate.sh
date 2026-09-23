@@ -31,7 +31,7 @@ COMMANDS=(
   "flutter pub get --enforce-lockfile"
   "dart analyze --fatal-infos"
   "dart format --output=none --set-exit-if-changed ."
-  "flutter test --no-pub"
+  "flutter test --no-pub --exclude-tags weekly,bench"
   "flutter build appbundle --release --no-pub"
   "tools/check_aab.sh"
 )

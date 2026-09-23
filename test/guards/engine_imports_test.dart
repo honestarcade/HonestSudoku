@@ -2,8 +2,9 @@
 library;
 
 // The engine stays plain Dart: no Flutter, no dart:ui or dart:io, no
-// third-party package, no relative import out of lib/engine/, and no
-// dart:math `Random` (its PRNG is seeded). Each rule is first shown to fire
+// third-party package, no relative import out of lib/engine/, no dart:math
+// `Random` (its PRNG is seeded), and no clock or timer outside the off-thread
+// wrapper (generation depends on the seed alone). Each rule is first shown to fire
 // on an inline fixture, then run over every file under lib/engine/, tracked
 // or not.
 
@@ -83,6 +84,33 @@ import 'grid.dart'
     });
   });
 
+  group('the clock rule', () {
+    test('fires on each clock and timer form, outside the wrapper only', () {
+      for (final form in engineClockForms) {
+        expect(
+          engineClockOffenders('lib/engine/x.dart', 'final a = $form'),
+          hasLength(1),
+          reason: form,
+        );
+        expect(
+          engineClockOffenders(engineClockAllowed, 'final a = $form'),
+          isEmpty,
+        );
+      }
+      expect(
+        engineClockOffenders('lib/engine/x.dart', '// DateTime.now()'),
+        isEmpty,
+      );
+    });
+
+    test('the wrapper may use the clock but still never Random', () {
+      expect(
+        engineRandomOffenders(engineClockAllowed, 'final r = Random();'),
+        hasLength(1),
+      );
+    });
+  });
+
   group('lib/engine/', () {
     final files = filesUnder('lib/engine')
         .where((p) => p.endsWith('.dart'))
@@ -117,6 +145,17 @@ import 'grid.dart'
         offenders,
         isEmpty,
         reason: describeOffenders('engine-random', offenders),
+      );
+    });
+
+    test('uses no clock or timer outside the off-thread wrapper', () {
+      final offenders = [
+        for (final f in files) ...engineClockOffenders(f, readFile(f)),
+      ];
+      expect(
+        offenders,
+        isEmpty,
+        reason: describeOffenders('engine-clock', offenders),
       );
     });
   });

@@ -982,3 +982,14 @@ than per-story.
 - **Decision:** The technique enum keeps the name `Technique`, and the rule interface is `TechniqueRule`. The Discretion called both `Technique`.
   **Why:** #26 pins `technique.name` in its goldens, which needs the enum.
   **Issue:** #25
+- **Correction, extending the 4×4 entry above:** the enumeration now covers all 288 4×4 grids, not 95. It found 13 269 792 unique boards with at least 6 givens: every one needs at most naked singles, and the 288 full grids grade `none` (local `dart` probe, 2026-09-23). The claim is now exhaustive.
+  **Issue:** #25
+- **Decision (owner review requested):** 16×16 Expert is exempt from the `ceil(target × 1.1)` givens ceiling, as Evil already is.
+  **Why:** On 16×16, a carve that reaches Expert stops at 87–96 givens: below that, every removal breaks uniqueness or tips the ladder into `beyond` (60 attempts, local probe, 2026-09-23). Plain uniqueness-limit carves stop at 92–96. The design's target of 79 is below what uniqueness allows, so the ceiling of 87 discarded 36 of the 38 Expert boards found, and the median generation took 7.7 s against #27's 3 s host budget. With the exemption, seeds 1–10 need 1–3 attempts, with a median of 249 ms. The setup screen will still show the design's "79 GIVENS" for 16×16 Expert, while boards arrive with about 90, the same gap the plan already accepts for Evil.
+  **Issue:** #25, #26, #27; affects M4 #41 (the givens label)
+- **Decision:** On Easy–Expert carving with the real grader, the per-step uniqueness count is replaced by the grade.
+  **Why:** The ladder only makes forced deductions. A board it finishes within the band therefore has one solution, and a board with two always leaves it stuck, which the band check reverts. The accept and revert decisions are unchanged: 16×16 Expert seeds 1–5 needed the same 16/27/41/67/177 attempts before and after. The cost fell from 66 s to 8.7 s for three 16×16 Expert attempts; the counter had taken 66.3 s of the 66.5 s (local probe, 2026-09-23). A substituted grader still gets the count, and every finished board is counted once.
+  **Issue:** #26 (Rule 3: the guard tier did not finish in 10 minutes)
+- **Decision:** The weekly 200-seed tier is tagged `weekly`, not `slow` as #26's AC says, and the gate and CI exclude `weekly,bench`, not `slow,bench`.
+  **Why:** `slow` already tags #245's guard `the flag the workflow sets is the flag the guard reads`, which runs in the gate and in CI's guards step today. Excluding `slow` there would have removed that guard from every pull request without anyone deciding to. `slow` keeps its meaning (kept out of the battery's per-mutation suite, run everywhere else), and the engine PR tier carries it too. That is exactly the battery treatment #26's Discretion prescribes.
+  **Issue:** #26
