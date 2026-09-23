@@ -2959,6 +2959,150 @@ void main() {
       timeout: const Timeout(Duration(minutes: 5)),
     );
 
+    test('every workflow pins its concurrency and its permissions', () {
+      // #261. `concurrencyOffenders` asks whether a `concurrency:` key
+      // exists — in either form — and `permissionOffenders` asks whether a
+      // `permissions:` block exists and is not `write-all`. Neither reads a
+      // VALUE, so all of these were green: a release that cancels in
+      // progress, a pull request that stops cancelling, and the gate job
+      // taking `contents: write` + `actions: write` + `packages: write`
+      // while being `workflow_call`ed with `secrets: inherit`.
+      //
+      // Values, by equality, closed against the files. The map is the
+      // decision; changing one means changing it here, which is the point.
+      const expected =
+          <String, ({String group, String cancel, Map<String, String> perms})>{
+            '.github/workflows/ci.yml': (
+              group: r'ci-${{ github.ref }}',
+              // A tag never cancels: release.yml calls this file, so its own
+              // `cancel-in-progress: false` does not cover the gate that does
+              // the work.
+              cancel: r"${{ !startsWith(github.ref, 'refs/tags/') }}",
+              perms: {'contents': 'read'},
+            ),
+            '.github/workflows/release.yml': (
+              group: 'play-release',
+              cancel: 'false',
+              perms: {'contents': 'read'},
+            ),
+            '.github/workflows/play-promote.yml': (
+              group: 'play-promote',
+              cancel: 'false',
+              perms: {'contents': 'read'},
+            ),
+            '.github/workflows/play-api-check.yml': (
+              group: 'play-api-check',
+              cancel: 'false',
+              perms: {'contents': 'read'},
+            ),
+          };
+
+      // The one job that needs more than the workflow's own grant, named
+      // with the reason it needs it. Anything else is a finding.
+      const jobPermissions = <String, Map<String, String>>{
+        '.github/workflows/release.yml ship': {'contents': 'write'},
+      };
+
+      expect(
+        expected.keys.toSet(),
+        unorderedEquals(_workflowFiles()),
+        reason:
+            'concurrency-values: a workflow file is not pinned here. A new '
+            'one inherits no decision about cancellation or privilege until '
+            'it is written down',
+      );
+
+      expected.forEach((path, want) {
+        final wf = Workflow.parse(path, readFile(path));
+        expect(wf.problem, isNull, reason: '$path: ${wf.problem}');
+        expect(
+          wf.concurrencyGroup,
+          want.group,
+          reason:
+              'concurrency-values: $path groups on '
+              '`${wf.concurrencyGroup}`, not `${want.group}`',
+        );
+        expect(
+          wf.concurrencyCancelInProgress,
+          want.cancel,
+          reason:
+              'concurrency-values: $path has cancel-in-progress '
+              '`${wf.concurrencyCancelInProgress}`, not `${want.cancel}`. A '
+              'release that cancels loses the build it was asked to make; a '
+              'pull request that does not cancel burns runners on superseded '
+              'commits. #252 is what the first one costs',
+        );
+        expect(
+          wf.permissions,
+          want.perms,
+          reason:
+              'permission-values: $path grants ${wf.permissions}, not '
+              '${want.perms}. Every one of these files is reachable with the '
+              'repository\'s secrets in scope',
+        );
+
+        for (final job in wf.jobs) {
+          final key = '$path ${job.name}';
+          final allowed = jobPermissions[key] ?? const <String, String>{};
+          expect(
+            job.permissions,
+            allowed,
+            reason:
+                'permission-values: job `${job.name}` of $path grants '
+                '${job.permissions}. A job-level block replaces the '
+                'workflow\'s, so this is the whole grant that job runs with',
+          );
+        }
+      });
+    });
+
+    test('every job that sets up Flutter reads the pinned version', () {
+      // #261, and the coverage map's item 10 — "no floating downloads,
+      // guarded by a test" — which was true of `uses:` and false of the
+      // runtime download it names. Deleting `flutter-version-file: .fvmrc`
+      // and floating to `channel: master` left the suite green, so the
+      // version the gate actually ran was whatever `master` happened to be
+      // that morning.
+      var found = 0;
+      for (final path in _workflowFiles()) {
+        final wf = Workflow.parse(path, readFile(path));
+        expect(wf.problem, isNull, reason: '$path: ${wf.problem}');
+        for (final job in wf.jobs) {
+          for (final step in job.steps) {
+            final uses = step.uses;
+            if (uses == null || !uses.startsWith('subosito/flutter-action')) {
+              continue;
+            }
+            found++;
+            expect(
+              step.with_['flutter-version-file'],
+              '.fvmrc',
+              reason:
+                  'flutter-pin: $path job `${job.name}` sets up Flutter '
+                  'without reading `.fvmrc`, so the version it builds with '
+                  'is whatever the channel holds that day. The pin is the '
+                  'only reason a local gate and CI agree',
+            );
+            expect(
+              step.with_['channel'],
+              'stable',
+              reason:
+                  'flutter-pin: $path job `${job.name}` is on channel '
+                  '`${step.with_['channel']}`',
+            );
+          }
+        }
+      }
+      expect(
+        found,
+        3,
+        reason:
+            'flutter-pin: expected three Flutter setups (ci.yml\'s two jobs '
+            'and release.yml\'s ship); found $found. A new one is unpinned '
+            'until it is counted here',
+      );
+    });
+
     test('every declared key link is actually wired', () {
       // The scripts with the most thorough tests here are worth nothing if
       // no workflow invokes them — and nothing checked that. `release.yml`

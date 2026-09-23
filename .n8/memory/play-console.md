@@ -165,7 +165,7 @@ treating a dip as harmless.
 
 ### Service-account key id
 
-`af7161c7ce3e5e8e7d5ad7557f2593c1fb7715a5` — created 2026-09-20, the only
+`af7161c7ce3e5e8e7d5ad7557f2593c1fb7715a5` — created 2026-09-20, the only <!-- not-a-secret: a key ID names the key rather than being the key; the key itself was deleted after upload -->
 user-managed key on the account. It is public: it names the key rather than
 being the key, and it is what tells the owner which key to revoke when
 rotating.

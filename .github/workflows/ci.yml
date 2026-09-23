@@ -26,7 +26,13 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Not `true`. This file is `workflow_call`ed by release.yml, which declares
+  # `cancel-in-progress: false` — but the gate that does the work runs in THIS
+  # group, so on a tag ref a second run would cancel a release's own gate.
+  # That is one keystroke from what happened on 2026-09-22, when `v0.1.0` was
+  # deleted and re-cut while its first run had just ended (#261). A pull
+  # request still cancels its superseded runs; a tag never does.
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 defaults:
   run:
