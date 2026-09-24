@@ -1257,6 +1257,24 @@ MUTATIONS: list[Mutation] = [
                  "static const muted = Color(0xFFA0C0E8);"),
              "a hand-tuned value passes today and no longer says where it came from",
              'contrast-nudges: muted is #A0C0E8'),
+
+    # ---- #54: the launcher icon and the start screen ------------------------
+    Mutation("#54", "the adaptive icon loses its themed layer",
+             "android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml",
+             sub(r"\n    <monochrome [^\n]*/>", ""),
+             "Android 13 themed icons would show a generic tile",
+             'launcher-adaptive: 1 offender'),
+    Mutation("#54", "an icon corner drifts from the studio mark",
+             "assets/brand/icon-tile.svg",
+             sub(r'stroke="#8448FC"', 'stroke="#FF00FF"'),
+             "the studio's apps would stop sharing one mark",
+             'launcher-mark: 1 offender'),
+    Mutation("#54", "the Android 12 splash loses its navy",
+             "android/app/src/main/res/values-v31/styles.xml",
+             sub(r'(<style name="LaunchTheme"[^>]*>\n(?:[^\n]*\n)*?)\s*<item name="android:windowSplashScreenBackground">@color/splash_navy</item>',
+                 r"\1"),
+             "the system splash would flash the default white",
+             'launcher-splash: 1 offender'),
 ]
 
 

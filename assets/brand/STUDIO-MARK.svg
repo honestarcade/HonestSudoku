@@ -1,0 +1,13 @@
+<!-- The Honest Arcade studio mark: the four-corner group every studio app
+     shares, copied from Honest Frog Across's
+     ArtSource/brand/android-foreground-frog-mint.svg (sha256
+     bad1e3e00147db67a86bfc7d4d6e5fc18c3117b0892fb110bb8abe66b39136a6), read
+     2026-09-24. The launcher icon guard holds the icon sources to it. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <g fill="none" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+    <path stroke="#00D6B4" d="M 3 21 L 3 10 A 7 7 0 0 1 10 3 L 21 3"></path>
+    <path stroke="#8448FC" d="M 61 21 L 61 10 A 7 7 0 0 0 54 3 L 43 3"></path>
+    <path stroke="#0076F1" d="M 61 43 L 61 54 A 7 7 0 0 1 54 61 L 43 61"></path>
+    <path stroke="#0F3E86" d="M 3 43 L 3 54 A 7 7 0 0 0 10 61 L 21 61"></path>
+  </g>
+</svg>

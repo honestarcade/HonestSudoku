@@ -1103,3 +1103,12 @@ than per-story.
 - **Decision:** The win-card screenshot at 1.3× is not in #53's closing comment. The emulator's saved game is a 16×16 Expert board, and solving it through adb is impractical. The card at 1.3× on 360×640 is in the matrix, which asserts no overflow and every node on screen.
   **Why:** The manual item's purpose, a card that fits at 1.3×, is carried by an executed check.
   **Issue:** #53
+- **Decision:** `render_icons.sh` re-encodes the 512-px store icon from RGB to RGBA with a stdlib-Python pass that changes no pixel, where the plan said the PNGs are committed as emitted.
+  **Why:** rsvg-convert writes an opaque image as 24-bit RGB, while Play asks for a 32-bit PNG for the hi-res icon and the story's guard requires colour type 6. The other outputs have transparency and come out RGBA untouched.
+  **Issue:** #54
+- **Decision:** No API 31 AVD. The circle mask and the cold-start splash are screenshots from the API 34 AVD; the squircle and themed-icon views are rsvg composites of the committed layers, labelled as renders in `ArtSource/audit/icon/README.md`.
+  **Why:** API 34's launcher has no icon-shape switch, and a roughly 1 GB system image for one screenshot is disproportionate; the planner allowed recording a mask as unverified. The safe-zone arithmetic in `assets/brand/README.md` covers the geometry.
+  **Issue:** #54
+- **Decision:** The icon digits carry `dy="0.35em"` instead of `dominant-baseline="central"`, which librsvg ignores; I checked the centring by eye on the 512-px render. The guard compares the inline mark copies after stripping indentation, not byte for byte, because the copies sit at different nesting depths.
+  **Why:** The second-pass plan names the substitution. "Byte-identical" across files at different indentation would only be true of the stripped text.
+  **Issue:** #54
