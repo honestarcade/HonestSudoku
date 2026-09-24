@@ -50,7 +50,7 @@ class MenuScreen extends StatelessWidget {
           children: [
             Row(
               children: [
-                const AppMark(size: 52),
+                const AppMark(size: 52, interior: MarkInterior.board),
                 const SizedBox(width: 14),
                 Expanded(
                   child: Column(

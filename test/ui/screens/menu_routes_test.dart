@@ -7,12 +7,14 @@ import 'package:honest_sudoku/ui/routes.dart';
 import 'package:honest_sudoku/ui/screens/menu_screen.dart';
 import 'package:honest_sudoku/ui/screens/setup_screen.dart';
 import 'package:honest_sudoku/ui/screens/stats_screen.dart';
+import 'package:honest_sudoku/ui/widgets/app_mark.dart';
 
 import '../helpers.dart';
 
 void main() {
   testWidgets('without a game: New puzzle, no meta, to setup', (tester) async {
     await pumpApp(tester);
+    expectMark(tester, 52, MarkInterior.board);
     expect(find.byKey(const ValueKey('menu-new')), findsOneWidget);
     expect(find.byKey(const ValueKey('menu-meta')), findsNothing);
     expect(

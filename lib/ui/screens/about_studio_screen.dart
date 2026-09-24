@@ -55,7 +55,9 @@ class AboutStudioScreen extends StatelessWidget {
           ),
           const Padding(
             padding: EdgeInsets.only(top: 6, bottom: 2),
-            child: Center(child: AppMark(size: 120)),
+            child: Center(
+              child: AppMark(size: 120, interior: MarkInterior.none),
+            ),
           ),
           Text(
             Copy.studioIntro,

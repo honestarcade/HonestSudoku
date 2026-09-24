@@ -7,6 +7,7 @@ import 'package:honest_sudoku/ui/link_opener.dart';
 import 'package:honest_sudoku/ui/routes.dart';
 import 'package:honest_sudoku/ui/screens/about_studio_screen.dart';
 import 'package:honest_sudoku/ui/screens/menu_screen.dart';
+import 'package:honest_sudoku/ui/widgets/app_mark.dart';
 
 import '../copy_fixture.dart';
 import '../helpers.dart';
@@ -29,6 +30,7 @@ void main() {
   testWidgets('About the App: features, chips, version; links open the right '
       'places', (tester) async {
     final app = await pumpApp(tester, initialRoute: Routes.aboutApp);
+    expectMark(tester, 62, MarkInterior.board);
     for (final (k, v) in designFeatures) {
       expect(text(k), findsOneWidget, reason: k);
       expect(text(v), findsOneWidget, reason: k);
@@ -57,6 +59,7 @@ void main() {
   testWidgets('About Honest Arcade: paragraphs, promises, chips; links; a '
       'non-link tap opens nothing', (tester) async {
     final app = await pumpApp(tester, initialRoute: Routes.aboutStudio);
+    expectMark(tester, 120, MarkInterior.none);
     expect(
       text(
         'Honest Arcade makes simple games and useful apps with no ads, no '

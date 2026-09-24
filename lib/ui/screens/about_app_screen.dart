@@ -42,7 +42,11 @@ class AboutAppScreen extends StatelessWidget {
             padding: const EdgeInsets.all(16),
             child: Row(
               children: [
-                const AppMark(size: 62, boxed: true),
+                const AppMark(
+                  size: 62,
+                  boxed: true,
+                  interior: MarkInterior.board,
+                ),
                 const SizedBox(width: 14),
                 Expanded(
                   child: Column(

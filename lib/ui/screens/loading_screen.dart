@@ -196,7 +196,9 @@ class _LoadingScreenState extends State<LoadingScreen>
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const AppMark(size: 132),
+                      const RepaintBoundary(
+                        child: AppMark(size: 132, interior: MarkInterior.board),
+                      ),
                       const SizedBox(height: 30),
                       const Wordmark(size: 40),
                       const SizedBox(height: 14),
