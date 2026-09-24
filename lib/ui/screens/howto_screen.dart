@@ -32,7 +32,7 @@ class HowToScreen extends StatelessWidget {
               kickerText(
                 Copy.rules[i].tag,
                 size: 9,
-                color: i == 0 ? HsColors.teal : HsColors.kicker,
+                color: i == 0 ? HsColors.teal : HsColors.cardKicker,
               ),
               const SizedBox(height: 9),
               Text(

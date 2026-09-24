@@ -117,7 +117,7 @@ class PauseOverlay extends StatelessWidget {
                       style: plexMono(
                         8.5,
                         scale: s,
-                        color: HsColors.kicker,
+                        color: HsColors.cardKicker,
                         letterSpacingEm: .16,
                       ),
                     ),

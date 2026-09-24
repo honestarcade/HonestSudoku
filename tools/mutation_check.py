@@ -1243,6 +1243,20 @@ MUTATIONS: list[Mutation] = [
                  "MaterialPageRoute<void>(settings: settings, builder: (_) => screen)"),
              "the slide ignores Remove animations and is not the design's motion",
              'motion-routes: 1 sliding route'),
+
+    # ---- #52: text contrast on the board ------------------------------------
+    Mutation("#52", "the Paper pencil marks slip back to the design's colour",
+             "lib/ui/theme/tokens.dart",
+             sub(r"static const paperNoteFg = Color\(0xFF3C6295\);",
+                 "static const paperNoteFg = Color(0xFF6E93C4);"),
+             "pencil marks at 2.3:1 on Paper, unreadable for low vision",
+             'paper: pencil marks: #6E93C4'),
+    Mutation("#52", "a nudged token drifts from what the rule derives",
+             "lib/ui/theme/tokens.dart",
+             sub(r"static const muted = Color\(0xFF8FB1DD\);",
+                 "static const muted = Color(0xFFA0C0E8);"),
+             "a hand-tuned value passes today and no longer says where it came from",
+             'contrast-nudges: muted is #A0C0E8'),
 ]
 
 

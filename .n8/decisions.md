@@ -1085,3 +1085,12 @@ than per-story.
 - **Decision:** The `placeholder_audio` release step is a `[]` step in `_dependsOn`, covered by two `_claims` cases: one where placeholders ship and are named, one where only a real clip ships and nothing is flagged. A battery mutation silences it.
   **Why:** The workflow guard requires every `[]` step to be exercised by a named test.
   **Issue:** #49
+- **Decision:** #52's contrast enforcement is the ratio guard (`token_contrast_test.dart`, tagged guard, two mutations). The pixel guideline test (`contrast_test.dart`) runs in the eight planned states and passes, but it passed before any nudge too.
+  **Why:** Flutter's `textContrastGuideline` only samples a `Text` whose semantics label equals its own string. Since #51, the digits, keys, chips and card titles speak their own labels, so the guideline never sees them; it sees only card button texts and bodies. The planner anticipated this for the grid digits; it turned out to cover almost every text on the board.
+  **Issue:** #52
+- **Decision:** Eleven tokens nudged rather than the AC's five: also navy pencil marks and wrong digits (both fail on the selected-cell tint), `wrongRed` (strike chip), the ZEN chip (a new `zenChipFg`; teal stays the brand swatch), `muted` (tile labels on the card fill), and Paper's hinted pencil marks (a new `paperHintNote`). Every pair is in the guard's table, and every nudged value is re-derived by the rule in the test.
+  **Why:** The planner's rule is that each token must pass on every surface it is drawn on, and it names unlisted failures as in scope. `kicker` is renamed `cardKicker` app-wide, and `labelDim` and `muted` change app-wide, so #56 starts from passing values.
+  **Issue:** #52
+- **Decision:** No `@visibleForTesting` state setter on the controller. The contrast states (hint, wrong entry, note mode, pause, win, out of strikes) are staged through the real verbs on the fixture board.
+  **Why:** Every state is reachable in a few verbs, and a setter would be a second way into the controller that nothing but tests uses.
+  **Issue:** #52

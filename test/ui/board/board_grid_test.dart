@@ -19,11 +19,19 @@ Future<void> pumpGrid(
   BoardGrid(state: state, theme: theme, scale: 1, onTapCell: onTap ?? (_) {}),
 );
 
-GridLinesPainter painter(WidgetTester tester) => tester
+T painterOf<T>(WidgetTester tester) => tester
     .widgetList<CustomPaint>(find.byType(CustomPaint))
     .map((c) => c.painter)
-    .whereType<GridLinesPainter>()
+    .whereType<T>()
     .single;
+
+GridLinesPainter painter(WidgetTester tester) =>
+    painterOf<GridLinesPainter>(tester);
+
+RingPainter ring(WidgetTester tester) => painterOf<RingPainter>(tester);
+
+BoardMarksPainter marks(WidgetTester tester) =>
+    painterOf<BoardMarksPainter>(tester);
 
 void main() {
   final p = fixturePuzzle(GridShape.classic);
@@ -177,7 +185,7 @@ void main() {
     final cell = hinted.hintedCell!;
     final notes = [...hinted.notes]..[cell] = const [1, 2];
     await pumpGrid(tester, hinted.copyWith(notes: notes));
-    expect(painter(tester).ringColor, HsColors.hintYellow);
+    expect(ring(tester).ringColor, HsColors.hintYellow);
     final note = tester.widget<Text>(
       find.descendant(
         of: find.byKey(ValueKey('cell-$cell')),
@@ -187,11 +195,11 @@ void main() {
     expect(note.style!.color, HsColors.hintYellow);
 
     await pumpGrid(tester, GameState.start(p).select(1));
-    expect(painter(tester).ringColor, navy.ring);
-    expect(painter(tester).ringRect, isNotNull);
+    expect(ring(tester).ringColor, navy.ring);
+    expect(ring(tester).ringRect, isNotNull);
 
     await pumpGrid(tester, GameState.start(p));
-    expect(painter(tester).ringRect, isNull, reason: 'no ring, no selection');
+    expect(ring(tester).ringRect, isNull, reason: 'no ring, no selection');
   });
 
   testWidgets('pencil marks sit in fixed slots and hide under a value', (
@@ -237,5 +245,64 @@ void main() {
     await pumpGrid(tester, GameState.start(p), onTap: (i) => tapped = i);
     await tester.tap(find.byKey(const ValueKey('cell-40')));
     expect(tapped, 40);
+  });
+
+  group('marks that do not depend on colour (#52)', () {
+    // The fixture's givens sit on even cells; cell 1 is empty.
+    int wrong(int i) => p.solution[i] % 9 + 1;
+
+    for (final (mode, settings, want) in [
+      ('Immediately', const GameSettings(), {1}),
+      (
+        'At the end, before the reveal',
+        const GameSettings(announce: AnnounceMode.atEnd),
+        <int>{},
+      ),
+      ('Zen', const GameSettings(strikeMode: StrikeMode.zen), <int>{}),
+    ]) {
+      testWidgets('a wrong entry is underlined: $mode', (tester) async {
+        final s = GameState.start(p, settings).select(1).place(wrong(1));
+        await pumpGrid(tester, s);
+        expect(marks(tester).underlinedCells, want);
+      });
+    }
+
+    testWidgets('a correct entry is never underlined', (tester) async {
+      await pumpGrid(tester, GameState.start(p).select(1).place(p.solution[1]));
+      expect(marks(tester).underlinedCells, isEmpty);
+    });
+
+    testWidgets('the conflicting peers are dotted, and none with conflicts '
+        'off', (tester) async {
+      // Cell 1 takes the value given at cell 0, its row-mate.
+      final s = GameState.start(p).select(1).place(p.solution[0]);
+      await pumpGrid(tester, s);
+      expect(s.conflictCells, isNotEmpty);
+      expect(marks(tester).dottedCells, s.conflictCells);
+      await pumpGrid(
+        tester,
+        GameState.start(
+          p,
+          const GameSettings(conflicts: false),
+        ).select(1).place(p.solution[0]),
+      );
+      expect(marks(tester).dottedCells, isEmpty);
+    });
+
+    testWidgets('both themes mark the same cells', (tester) async {
+      final s = GameState.start(p).select(1).place(p.solution[0]);
+      final counts = <(Set<int>, Set<int>)>[];
+      for (final theme in BoardTheme.all) {
+        await pumpGrid(tester, s, theme: theme);
+        counts.add((
+          {...marks(tester).underlinedCells},
+          {...marks(tester).dottedCells},
+        ));
+        expect(marks(tester).color, theme.wrongFg);
+      }
+      expect(counts.first.$1, counts.last.$1);
+      expect(counts.first.$2, counts.last.$2);
+      expect(counts.first.$1, isNotEmpty);
+    });
   });
 }

@@ -101,4 +101,4 @@ ChipStyle strikeChipStyle(int mistakes) => mistakes > 0
     : plainChipStyle;
 
 /// The Zen chip.
-const ChipStyle zenChipStyle = (bg: HsColors.zenBg, fg: HsColors.teal);
+const ChipStyle zenChipStyle = (bg: HsColors.zenBg, fg: HsColors.zenChipFg);

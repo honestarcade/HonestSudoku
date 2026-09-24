@@ -3,6 +3,35 @@
 // Everything is transcribed from Honest Sudoku.dc.html: the brand palette
 // from its brand sheet, the rest from the board template's inline styles.
 // rgba values are stored 8-bit through Color.fromRGBO, as the CSS gives them.
+//
+// ## Contrast nudges
+//
+// Every text colour on the board screen and its cards reaches 4.5:1 against
+// each surface it is drawn on (#52). Where a design colour fell short, it
+// was replaced by the nearest passing shade: hue and saturation kept, HSL
+// lightness moved in 1 % steps away from the surface (contrast.dart's
+// `nudge`). Surfaces are the translucent fills composited over the grid,
+// the card's two gradient stops or the screen gradient's two stops. The six
+// brand swatches are untouched; a nudged shade of one is its own token.
+// test/ui/theme/token_contrast_test.dart re-derives each new value from its
+// design value and asserts it equal, so the arithmetic below is executed.
+//
+// | token          | design  | new     | ratio before → after | L (steps)          | where |
+// |----------------|---------|---------|----------------------|--------------------|-------|
+// | paperUserFg    | #0076F1 | #005DBE | 3.13 → 4.61 | 47.3 → 37.3 % (10) | Paper digits; worst on the selected tint |
+// | paperWrongFg   | #C6483D | #A93B32 | 3.47 → 4.54 | 50.8 → 42.8 % (8)  | Paper wrong digits on the wrong tint |
+// | paperNoteFg    | #6E93C4 | #3C6295 | 2.30 → 4.52 | 60.0 → 41.0 % (19) | Paper pencil marks |
+// | paperHintNote  | #FFC94A | #7D5800 | 1.11 → 4.66 | 64.5 → 24.5 % (40) | Paper hinted cell's pencil marks |
+// | navyNoteFg     | #7FA6D8 | #96B6DF | 3.79 → 4.57 | 67.3 → 73.3 % (6)  | Navy pencil marks on the selected tint |
+// | navyWrongFg    | #FF8C7E | #FF9588 | 4.23 → 4.50 | 74.7 → 76.7 % (2)  | Navy wrong digits on the selected tint |
+// | wrongRed       | #FF8C7E | #FF9588 | 4.32 → 4.60 | 74.7 → 76.7 % (2)  | strike chip, error kicker, lost kicker |
+// | zenChipFg      | #00D6B4 | #00DBB8 | 4.33 → 4.54 | 42.0 → 43.0 % (1)  | the ZEN chip (teal stays the brand's) |
+// | labelDim       | #5C7FB0 | #93AACB | 2.65 → 4.59 | 52.5 → 68.5 % (16) | loading phase, setup meta: gradient and card |
+// | cardKicker     | #6E93C4 | #96B1D4 | 3.16 → 4.55 | 60.0 → 71.0 % (11) | card and panel kickers, on the card's tile fill |
+// | muted          | #7FA6D8 | #8FB1DD | 3.98 → 4.53 | 67.3 → 71.3 % (4)  | tile labels, pause meta, ghost buttons |
+//
+// Ratios computed on 2026-09-24 with contrast.dart; the table is a record,
+// the test is the check.
 
 import 'package:flutter/painting.dart';
 
@@ -33,14 +62,14 @@ abstract final class HsColors {
   /// Hinted cell, note-mode keys and the active notes tool.
   static const hintYellow = Color(0xFFFFC94A);
 
-  /// Wrong entries on navy and the strike chip once counting.
-  static const wrongRed = Color(0xFFFF8C7E);
+  /// The strike chip once counting, error kickers (nudged; see the header).
+  static const wrongRed = Color(0xFFFF9588);
 
   /// Chip and soft-button text.
   static const chipFg = Color(0xFF9FC3EE);
 
-  /// Muted labels.
-  static const muted = Color(0xFF7FA6D8);
+  /// Muted labels (nudged; see the header).
+  static const muted = Color(0xFF8FB1DD);
 
   /// Pad digits.
   static const textBright = Color(0xFFEAF2FC);
@@ -54,8 +83,31 @@ abstract final class HsColors {
   /// Card body text.
   static const bodySoft = Color(0xFFBBD2EC);
 
-  /// Pause-card and panel kicker.
-  static const kicker = Color(0xFF6E93C4);
+  /// Card and panel kickers (the design's #6E93C4, nudged).
+  static const cardKicker = Color(0xFF96B1D4);
+
+  // Nudged shades for text on the board (see the header).
+
+  /// Paper: the player's digits.
+  static const paperUserFg = Color(0xFF005DBE);
+
+  /// Paper: wrong digits.
+  static const paperWrongFg = Color(0xFFA93B32);
+
+  /// Paper: pencil marks.
+  static const paperNoteFg = Color(0xFF3C6295);
+
+  /// Paper: the hinted cell's pencil marks.
+  static const paperHintNote = Color(0xFF7D5800);
+
+  /// Navy: pencil marks.
+  static const navyNoteFg = Color(0xFF96B6DF);
+
+  /// Navy: wrong digits.
+  static const navyWrongFg = Color(0xFFFF9588);
+
+  /// The ZEN chip's text.
+  static const zenChipFg = Color(0xFF00DBB8);
 
   /// Card surface.
   static const cardNavy = Color(0xFF0B3670);
@@ -137,7 +189,7 @@ abstract final class HsColors {
   // The other screens (M4).
 
   /// Dim mono labels: the loading phase, the unselected difficulty meta.
-  static const labelDim = Color(0xFF5C7FB0);
+  static const labelDim = Color(0xFF93AACB);
 
   /// Descriptions under a card's title.
   static const desc = Color(0xFF87A9D0);

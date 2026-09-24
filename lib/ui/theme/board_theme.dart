@@ -1,10 +1,13 @@
-// The two board themes, every value from the design's THEMES table.
+// The two board themes, every value from the design's THEMES table except
+// the text colours nudged for contrast (tokens.dart's header, #52).
 //
 // A theme restyles the grid and nothing else: the top bar, pad, tools,
 // notice and overlays draw with fixed colours in the design, and the screen
 // gradient is the same in both themes.
 
 import 'package:flutter/rendering.dart';
+
+import 'tokens.dart';
 
 /// A board colour scheme.
 final class BoardTheme {
@@ -24,6 +27,7 @@ final class BoardTheme {
     required this.peerBg,
     required this.sameBg,
     required this.noteFg,
+    required this.hintNoteFg,
     required this.ring,
   });
 
@@ -38,12 +42,13 @@ final class BoardTheme {
     thick: Color.fromRGBO(255, 255, 255, .42),
     givenFg: Color(0xFFEAF2FC),
     userFg: Color(0xFF00D6B4),
-    wrongFg: Color(0xFFFF8C7E),
+    wrongFg: HsColors.navyWrongFg,
     wrongBg: Color.fromRGBO(224, 90, 78, .22),
     selBg: Color.fromRGBO(0, 214, 180, .24),
     peerBg: Color.fromRGBO(255, 255, 255, .09),
     sameBg: Color.fromRGBO(0, 118, 241, .28),
-    noteFg: Color(0xFF7FA6D8),
+    noteFg: HsColors.navyNoteFg,
+    hintNoteFg: HsColors.hintYellow,
     ring: Color(0xFF00D6B4),
   );
 
@@ -57,13 +62,14 @@ final class BoardTheme {
     thin: Color.fromRGBO(5, 40, 95, .22),
     thick: Color(0xFF05285F),
     givenFg: Color(0xFF16202B),
-    userFg: Color(0xFF0076F1),
-    wrongFg: Color(0xFFC6483D),
+    userFg: HsColors.paperUserFg,
+    wrongFg: HsColors.paperWrongFg,
     wrongBg: Color.fromRGBO(198, 72, 61, .16),
     selBg: Color.fromRGBO(0, 118, 241, .18),
     peerBg: Color.fromRGBO(5, 40, 95, .07),
     sameBg: Color.fromRGBO(0, 214, 180, .3),
-    noteFg: Color(0xFF6E93C4),
+    noteFg: HsColors.paperNoteFg,
+    hintNoteFg: HsColors.paperHintNote,
     ring: Color(0xFF0076F1),
   );
 
@@ -121,6 +127,9 @@ final class BoardTheme {
 
   /// Pencil marks.
   final Color noteFg;
+
+  /// The hinted cell's pencil marks.
+  final Color hintNoteFg;
 
   /// The selection ring.
   final Color ring;

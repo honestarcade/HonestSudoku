@@ -114,7 +114,7 @@ class ChoiceRow<T> extends StatelessWidget {
                 style: plexMono(
                   8.5,
                   scale: 1,
-                  color: HsColors.kicker,
+                  color: HsColors.cardKicker,
                   letterSpacingEm: .08,
                 ),
               ),

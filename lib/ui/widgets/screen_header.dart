@@ -70,7 +70,7 @@ class ScreenHeader extends StatelessWidget {
                 style: plexMono(
                   9.5,
                   scale: 1,
-                  color: HsColors.kicker,
+                  color: HsColors.cardKicker,
                   letterSpacingEm: .16,
                 ),
               ),

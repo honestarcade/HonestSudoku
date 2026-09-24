@@ -132,7 +132,7 @@ Text panelDesc(String text, {double size = 11, double lineHeight = 1.4}) =>
 /// A mono kicker (`BY GRID SIZE`).
 Text kickerText(
   String text, {
-  Color color = HsColors.kicker,
+  Color color = HsColors.cardKicker,
   double size = 9.5,
   Key? key,
 }) => Text(
