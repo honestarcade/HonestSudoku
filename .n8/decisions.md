@@ -1061,3 +1061,27 @@ than per-story.
 - **Decision:** The 4×4 setup tests assert Medium through Evil greyed, and a move from Evil to Easy.
   **Why:** #25's narrowed support table. 4×4 offers Easy only, so #41's "4×4 shows Expert and Evil greyed … moves to Hard" became Medium, Hard, Expert and Evil greyed, with a move to Easy.
   **Issue:** #41
+
+## /n8-exec M5 — 2026-09-23
+
+- **Decision:** Fonts pinned at Outfitio/Outfit-Fonts `902773808eb3` (committed 2023-03-26) and google/fonts `b5efa9c32e8f` (committed 2026-09-23), each the default branch's head on 2026-09-23. `SOURCES.tsv` records each file's commit date beside its download date.
+  **Why:** #47's pin rule. The Outfit repository's head still carries all five static TTFs, so there was no need to fall back to an older commit.
+  **Issue:** #47
+- **Decision (Rule 1):** `.gitattributes` marks `assets/fonts/OFL-*.txt` as `-text`, beyond the story's `*.ttf`/`*.otf` lines.
+  **Why:** IBM Plex Mono's upstream licence has CRLF endings. `* text=auto eol=lf` normalised the blob, so a fresh clone's copy failed `fetch_fonts.sh --check`, which was caught by the commit's CRLF warning and a clone check. The hashes are over bytes, so the bytes must survive checkout.
+  **Issue:** #47
+- **Decision:** The font weight scan attributes a weight to its innermost call. A style helper's family comes from its `fontFamily:`, then from the call's own `fontFamily:` argument, then from the file's single family. `cardButton(weight:)` in files naming both families is left unattributed (three places today), as the story's rule says.
+  **Why:** The code styles text through `outfit()`/`plexMono()` helpers rather than bare `TextStyle(fontFamily:)`, so the planned per-`TextStyle` scan would have seen almost nothing. Helper discovery follows the planner's "resolve through the token constants" line.
+  **Issue:** #47
+- **Decision:** The mark's digit rows use the SVG's +0.15 offset (row centre 13.93 against column centre 13.78) and the exact 41/9 pitch. The data was re-extracted from the design file on 2026-09-23 and matched the story's table. The design's fifth copy (light tile) is not shipped.
+  **Why:** #48's transcription rule.
+  **Issue:** #48
+- **Decision:** `GameAction` also clears to `null` on the two notifications that are not about play (the statistics tab and the statistics reset), so a feedback listener never re-reads a stale `place`.
+  **Why:** Every notifying path must set something. `null` is the controller's "not play" and needs no enum value the story did not list.
+  **Issue:** #49
+- **Decision:** `*.wav binary` in `.gitattributes`.
+  **Why:** The placeholders' digests are over exact bytes, the same reason as the font licences.
+  **Issue:** #49
+- **Decision:** The `placeholder_audio` release step is a `[]` step in `_dependsOn`, covered by two `_claims` cases: one where placeholders ship and are named, one where only a real clip ships and nothing is flagged. A battery mutation silences it.
+  **Why:** The workflow guard requires every `[]` step to be exercised by a named test.
+  **Issue:** #49

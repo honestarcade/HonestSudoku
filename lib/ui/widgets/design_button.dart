@@ -5,6 +5,7 @@
 import 'package:flutter/widgets.dart';
 
 import '../board/board_styles.dart';
+import '../motion.dart';
 import '../theme/tokens.dart';
 
 /// The design's recurring button looks.
@@ -165,7 +166,13 @@ class _DesignButtonState extends State<DesignButton> {
         child: widget.child,
       ),
     );
-    box = Opacity(opacity: spec.opacity * (_down ? .85 : 1), child: box);
+    // The dip is feedback, so under reduced motion it still happens, at once.
+    box = AnimatedOpacity(
+      opacity: spec.opacity * (_down ? .85 : 1),
+      duration: motionDuration(context, kPressDip),
+      curve: kMotionCurve,
+      child: box,
+    );
     if (widget.semanticsLabel != null) {
       box = Semantics(
         button: true,

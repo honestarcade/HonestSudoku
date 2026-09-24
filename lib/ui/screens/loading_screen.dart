@@ -14,6 +14,7 @@ import '../board/board_layout.dart';
 import '../board/game_controller.dart';
 import '../board/notice_banner.dart';
 import '../copy.dart';
+import '../motion.dart';
 import '../routes.dart';
 import '../strings.dart';
 import '../theme/board_theme.dart';
@@ -57,7 +58,7 @@ class _LoadingScreenState extends State<LoadingScreen>
     vsync: this,
     duration: widget.mode == LoadingMode.launch
         ? kSplashMinimum
-        : const Duration(milliseconds: 200),
+        : kProgressTween,
   );
   GameController? _controller;
   Timer? _minimum;
@@ -78,7 +79,9 @@ class _LoadingScreenState extends State<LoadingScreen>
       _maybeHandOver();
     });
     if (_launch) {
-      _bar.forward();
+      // The splash's sweep is decoration, not progress: under reduced
+      // motion the bar is simply full.
+      reducedMotion(context) ? _bar.value = 1 : _bar.forward();
       _startLaunch();
     } else {
       c.addListener(_onProgress);

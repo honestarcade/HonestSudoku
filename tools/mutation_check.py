@@ -1235,6 +1235,14 @@ MUTATIONS: list[Mutation] = [
                  r'\1/dev/null\2', flags=re.M),
              "a build carrying placeholders would ship without a word",
              'honesty: `placeholder_audio` no longer says'),
+
+    # ---- #50: one fade for every screen change ------------------------------
+    Mutation("#50", "a screen change slides instead of fading",
+             "lib/ui/app.dart",
+             sub(r"FadeRouteTransition<void>\(settings: settings, page: screen\)",
+                 "MaterialPageRoute<void>(settings: settings, builder: (_) => screen)"),
+             "the slide ignores Remove animations and is not the design's motion",
+             'motion-routes: 1 sliding route'),
 ]
 
 

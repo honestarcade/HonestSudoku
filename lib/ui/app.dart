@@ -15,6 +15,7 @@ import 'app_scope.dart';
 import 'board/board_screen.dart';
 import 'board/game_controller.dart';
 import 'link_opener.dart';
+import 'motion.dart';
 import 'routes.dart';
 import 'screens/about_app_screen.dart';
 import 'screens/about_studio_screen.dart';
@@ -104,14 +105,7 @@ class _HonestSudokuAppState extends State<HonestSudokuApp> {
   }
 
   Route<void> _page(RouteSettings settings, Widget screen) =>
-      PageRouteBuilder<void>(
-        settings: settings,
-        transitionDuration: const Duration(milliseconds: 150),
-        reverseTransitionDuration: const Duration(milliseconds: 150),
-        pageBuilder: (_, _, _) => screen,
-        transitionsBuilder: (_, animation, _, child) =>
-            FadeTransition(opacity: animation, child: child),
-      );
+      FadeRouteTransition<void>(settings: settings, page: screen);
 
   Route<void> _route(RouteSettings settings) => switch (settings.name) {
     Routes.loading => _page(
@@ -145,6 +139,15 @@ class _HonestSudokuAppState extends State<HonestSudokuApp> {
       brightness: Brightness.dark,
       scaffoldBackgroundColor: HsColors.navy,
       fontFamily: kFontOutfit,
+      // Every route is a FadeRouteTransition; this is the backstop for any
+      // page route that is not, and there is no ink splash anywhere.
+      pageTransitionsTheme: PageTransitionsTheme(
+        builders: {
+          for (final p in TargetPlatform.values)
+            p: _FadePageTransitionsBuilder(),
+        },
+      ),
+      splashFactory: NoSplash.splashFactory,
     );
     return base.copyWith(
       textTheme: base.textTheme.apply(fontFamilyFallback: kFontFallback),
@@ -162,6 +165,7 @@ class _HonestSudokuAppState extends State<HonestSudokuApp> {
       title: 'Honest Sudoku',
       debugShowCheckedModeBanner: false,
       theme: _theme,
+      themeAnimationDuration: motionDuration(context, kRouteFade),
       navigatorObservers: [_routeNames, _routeObserver],
       onGenerateInitialRoutes: (_) => [
         _route(
@@ -178,4 +182,24 @@ class _HonestSudokuAppState extends State<HonestSudokuApp> {
           _route(const RouteSettings(name: Routes.menu)),
     ),
   );
+}
+
+/// Fades a page in, or shows it at once when the phone asks for no
+/// animations.
+class _FadePageTransitionsBuilder extends PageTransitionsBuilder {
+  const _FadePageTransitionsBuilder();
+
+  @override
+  Widget buildTransitions<T>(
+    PageRoute<T> route,
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) => reducedMotion(context)
+      ? child
+      : FadeTransition(
+          opacity: CurvedAnimation(parent: animation, curve: kRouteCurve),
+          child: child,
+        );
 }

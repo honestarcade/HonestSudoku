@@ -1,8 +1,9 @@
 // The settings switch: a 46×26 track, teal when on, with a 20-point knob
-// that slides from x 3 to 23 in 120 ms.
+// that slides from x 3 to 23 (kToggleSlide).
 
 import 'package:flutter/widgets.dart';
 
+import '../motion.dart';
 import '../theme/tokens.dart';
 
 /// A switch.
@@ -33,7 +34,8 @@ class Toggle extends StatelessWidget {
       behavior: HitTestBehavior.opaque,
       onTap: () => onChanged(!value),
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 120),
+        duration: motionDuration(context, kToggleSlide),
+        curve: kMotionCurve,
         width: 46,
         height: 26,
         decoration: BoxDecoration(
@@ -43,7 +45,8 @@ class Toggle extends StatelessWidget {
         child: Stack(
           children: [
             AnimatedPositioned(
-              duration: const Duration(milliseconds: 120),
+              duration: motionDuration(context, kToggleSlide),
+              curve: kMotionCurve,
               left: value ? 23 : 3,
               top: 3,
               child: Container(

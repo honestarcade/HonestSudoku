@@ -5,6 +5,7 @@
 import 'package:flutter/widgets.dart';
 import 'package:honest_sudoku/game/game.dart';
 
+import '../motion.dart';
 import '../strings.dart';
 import '../theme/tokens.dart';
 import 'overlay_parts.dart';
@@ -48,11 +49,11 @@ class _GameOverOverlayState extends State<GameOverOverlay>
     with SingleTickerProviderStateMixin {
   late final AnimationController _rise = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 350),
+    duration: kCardRise,
   );
   late final CurvedAnimation _curve = CurvedAnimation(
     parent: _rise,
-    curve: Curves.easeOut,
+    curve: kMotionCurve,
   );
   late final int _streak;
 
@@ -69,7 +70,8 @@ class _GameOverOverlayState extends State<GameOverOverlay>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (MediaQuery.maybeDisableAnimationsOf(context) ?? false) {
+    _rise.duration = motionDuration(context, kCardRise);
+    if (reducedMotion(context)) {
       _rise.value = 1;
     } else if (!_rise.isAnimating && _rise.value == 0) {
       _rise.forward();
