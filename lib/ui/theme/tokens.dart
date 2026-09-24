@@ -29,6 +29,7 @@
 // | labelDim       | #5C7FB0 | #93AACB | 2.65 → 4.59 | 52.5 → 68.5 % (16) | loading phase, setup meta: gradient and card |
 // | cardKicker     | #6E93C4 | #96B1D4 | 3.16 → 4.55 | 60.0 → 71.0 % (11) | card and panel kickers, on the card's tile fill |
 // | muted          | #7FA6D8 | #8FB1DD | 3.98 → 4.53 | 67.3 → 71.3 % (4)  | tile labels, pause meta, ghost buttons |
+// | versionText    | #4E739F | #A1B7D1 | 1.94 → 4.63 | 46.5 → 72.5 % (26) | version line, link separators (#56): gradient and panel fill |
 //
 // Ratios computed on 2026-09-24 with contrast.dart; the table is a record,
 // the test is the check.
@@ -195,7 +196,7 @@ abstract final class HsColors {
   static const desc = Color(0xFF87A9D0);
 
   /// The version line and the MADE BY row.
-  static const versionText = Color(0xFF4E739F);
+  static const versionText = Color(0xFFA1B7D1);
 
   /// The studio screen's body text.
   static const studioText = Color(0xFFC6DAF0);

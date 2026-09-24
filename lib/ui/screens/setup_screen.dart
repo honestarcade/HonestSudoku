@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:honest_sudoku/engine/engine.dart';
 import 'package:honest_sudoku/game/game.dart';
 
+import '../a11y/speak.dart';
 import '../app_scope.dart';
 import '../board/board_styles.dart';
 import '../board/game_controller.dart';
@@ -229,6 +230,9 @@ class _DifficultyCard extends StatelessWidget {
       alignment: Alignment.centerLeft,
       padding: const EdgeInsets.symmetric(vertical: 13, horizontal: 14),
       onPressed: offered ? onPick : null,
+      semanticsSelected: selected,
+      semanticsLabel:
+          '${difficulty.label}. ${difficulty.description} ${speak(offered ? '${targetGivens(shape, difficulty)} GIVENS' : Copy.notOn(shape.label))}',
       child: Row(
         children: [
           Expanded(
@@ -273,7 +277,8 @@ class _DifficultyCard extends StatelessWidget {
         ],
       ),
     );
+    // An unoffered band is inert, so the button announces itself disabled.
     if (offered) return card;
-    return Semantics(enabled: false, child: Opacity(opacity: .4, child: card));
+    return Opacity(opacity: .4, child: card);
   }
 }

@@ -17,6 +17,7 @@ import '../a11y/labels.dart';
 import '../routes.dart';
 import '../strings.dart';
 import '../theme/board_theme.dart';
+import '../widgets/tap_target.dart';
 import 'board_grid.dart';
 import 'board_layout.dart';
 import 'board_overlays.dart';
@@ -229,7 +230,7 @@ class _BoardScreenState extends State<BoardScreen> with RouteAware {
     return Stack(
       key: const ValueKey('board-frame'),
       children: [
-        Positioned(
+        _outset(
           left: 0,
           top: kTopBarY * s,
           child: TopBar(
@@ -279,7 +280,7 @@ class _BoardScreenState extends State<BoardScreen> with RouteAware {
                   ),
           ),
         ),
-        Positioned(
+        _outset(
           left: kSideInset * s,
           top: padY,
           child: NumberPad(
@@ -290,7 +291,7 @@ class _BoardScreenState extends State<BoardScreen> with RouteAware {
             onErase: _c.erase,
           ),
         ),
-        Positioned(
+        _outset(
           left: 0,
           top: kToolBarY * s,
           child: ToolBar(
@@ -308,6 +309,24 @@ class _BoardScreenState extends State<BoardScreen> with RouteAware {
       ],
     );
   }
+}
+
+/// [child] at ([left], [top]) with room around it for its controls' 48-dp
+/// tap targets (#56): a hit in a key's grown margin must reach the key, and a
+/// parent rejects any hit outside its own box. Painting does not move.
+Positioned _outset({
+  required double left,
+  required double top,
+  required Widget child,
+}) {
+  const m = kMinTapTarget / 2;
+  return Positioned(
+    left: left - m,
+    top: top - m,
+    child: TapTargetGroup(
+      child: Padding(padding: const EdgeInsets.all(m), child: child),
+    ),
+  );
 }
 
 /// What the overlays' live region says: the card's title, or nothing while

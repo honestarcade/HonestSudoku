@@ -4,6 +4,7 @@
 
 import 'package:flutter/material.dart';
 
+import '../a11y/speak.dart';
 import '../theme/tokens.dart';
 
 /// A scrolling screen.
@@ -114,8 +115,10 @@ class Panel extends StatelessWidget {
 }
 
 /// A panel's title.
-Text panelTitle(String text, {double size = 13.5}) =>
-    Text(text, style: outfit(size, scale: 1, weight: FontWeight.w600));
+Widget panelTitle(String text, {double size = 13.5}) => Semantics(
+  header: true,
+  child: Text(text, style: outfit(size, scale: 1, weight: FontWeight.w600)),
+);
 
 /// A panel's description.
 Text panelDesc(String text, {double size = 11, double lineHeight = 1.4}) =>
@@ -130,13 +133,19 @@ Text panelDesc(String text, {double size = 11, double lineHeight = 1.4}) =>
     );
 
 /// A mono kicker (`BY GRID SIZE`).
-Text kickerText(
+/// A section heading: spoken in sentence case, not spelled out.
+Widget kickerText(
   String text, {
   Color color = HsColors.cardKicker,
   double size = 9.5,
   Key? key,
-}) => Text(
-  text,
-  key: key,
-  style: plexMono(size, scale: 1, color: color, letterSpacingEm: .16),
+}) => Semantics(
+  header: true,
+  label: speak(text),
+  excludeSemantics: true,
+  child: Text(
+    text,
+    key: key,
+    style: plexMono(size, scale: 1, color: color, letterSpacingEm: .16),
+  ),
 );

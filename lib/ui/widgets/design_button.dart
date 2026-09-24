@@ -7,6 +7,7 @@ import 'package:flutter/widgets.dart';
 import '../board/board_styles.dart';
 import '../motion.dart';
 import '../theme/tokens.dart';
+import 'tap_target.dart';
 
 /// The design's recurring button looks.
 enum DesignButtonVariant {
@@ -77,6 +78,7 @@ class DesignButton extends StatefulWidget {
     this.height,
     this.semanticsLabel,
     this.semanticsToggled,
+    this.semanticsSelected,
     this.borderWidth = 1,
     this.alignment = Alignment.center,
     super.key,
@@ -133,6 +135,10 @@ class DesignButton extends StatefulWidget {
   /// On or off, for a button that switches something (the notes tool).
   final bool? semanticsToggled;
 
+  /// Chosen or not, for one option of several (setup, stats, theme cards);
+  /// null for a plain button.
+  final bool? semanticsSelected;
+
   /// The edge's width in design points.
   final double borderWidth;
 
@@ -187,17 +193,23 @@ class _DesignButtonState extends State<DesignButton> {
       onTapCancel: enabled ? () => _set(false) : null,
       child: box,
     );
-    // One node per button, carrying its own tap. An inert button is
-    // announced as disabled and has no tap action.
-    return Semantics(
-      container: true,
-      button: true,
-      enabled: enabled,
-      toggled: widget.semanticsToggled,
-      label: widget.semanticsLabel,
-      onTap: widget.onPressed,
-      excludeSemantics: widget.semanticsLabel != null,
-      child: pressable,
+    // One node per button, carrying its own tap, at least 48 dp however
+    // small the design scale paints it (#56). An inert button is announced as
+    // disabled and has no tap action.
+    return TapTarget(
+      child: Semantics(
+        button: true,
+        enabled: enabled,
+        toggled: widget.semanticsToggled,
+        selected: widget.semanticsSelected,
+        inMutuallyExclusiveGroup: widget.semanticsSelected == null
+            ? null
+            : true,
+        label: widget.semanticsLabel,
+        onTap: widget.onPressed,
+        excludeSemantics: widget.semanticsLabel != null,
+        child: pressable,
+      ),
     );
   }
 }

@@ -7,7 +7,15 @@ import '../theme/tokens.dart';
 /// The wordmark at [size] points.
 class Wordmark extends StatelessWidget {
   /// Creates the wordmark.
-  const Wordmark({required this.size, this.textScaler, super.key});
+  const Wordmark({
+    required this.size,
+    this.textScaler,
+    this.header = false,
+    super.key,
+  });
+
+  /// Whether it is the screen's heading (the menu's).
+  final bool header;
 
   /// Font size.
   final double size;
@@ -23,19 +31,25 @@ class Wordmark extends StatelessWidget {
       weight: FontWeight.w700,
       letterSpacingEm: -.03,
     );
-    return Text.rich(
-      TextSpan(
-        style: style,
-        children: [
-          const TextSpan(text: 'Honest'),
-          TextSpan(
-            text: 'Sudoku',
-            style: style.copyWith(color: HsColors.teal),
-          ),
-        ],
+    // Spoken as two words; its two colours are decoration (#56).
+    return Semantics(
+      label: 'Honest Sudoku',
+      header: header,
+      excludeSemantics: true,
+      child: Text.rich(
+        TextSpan(
+          style: style,
+          children: [
+            const TextSpan(text: 'Honest'),
+            TextSpan(
+              text: 'Sudoku',
+              style: style.copyWith(color: HsColors.teal),
+            ),
+          ],
+        ),
+        textScaler: textScaler,
+        softWrap: false,
       ),
-      textScaler: textScaler,
-      softWrap: false,
     );
   }
 }

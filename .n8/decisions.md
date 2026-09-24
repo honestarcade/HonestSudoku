@@ -1112,3 +1112,18 @@ than per-story.
 - **Decision:** The icon digits carry `dy="0.35em"` instead of `dominant-baseline="central"`, which librsvg ignores; I checked the centring by eye on the 512-px render. The guard compares the inline mark copies after stripping indentation, not byte for byte, because the copies sit at different nesting depths.
   **Why:** The second-pass plan names the substitution. "Byte-identical" across files at different indentation would only be true of the stripped text.
   **Issue:** #54
+- **Decision:** 48-dp tap targets come from a `TapTarget` render object: layout and paint unchanged, hit area and semantics rect grown to at least 48 around the painted box. A `TapTargetGroup` (one at the app root, one on each board component) lets a hit in a grown margin reach its control. The planner's per-widget overlap layouts (a pad `Stack` of inflated keys, `padKeyRect`) were not built.
+  **Why:** The design scales the whole frame to the phone, so at 360×640 nearly every control paints under 48 (a 9×9 key is 39 px). One mechanism covers the pad, tools, top bar, choice rows, tabs, toggles and the back button without touching M3/M4 layouts. The group forwards a margin hit only when every pointer listener the ordinary hit finds is an ancestor of the target, and it collects targets through the semantics traversal. That rule was found by a test: a scrim in front must win, and offstage routes must not count.
+  **Issue:** #56
+- **Decision:** Text links carry no `TapTarget`.
+  **Why:** WCAG 2.5.5 and Flutter's guideline exempt inline links, and the About screens' wrapped link row put two links' grown margins over each other: the first run tapped the source link when the site link was meant. An existing about-screen test caught it.
+  **Issue:** #56
+- **Decision:** `selected` moved into `DesignButton`'s own node (`semanticsSelected`). The choice row's and stats tabs' outer `Semantics(selected:)` sat above the button's container node, so the flag landed on the parent.
+  **Why:** Found by the per-screen semantics dump; #51's change to one node per button exposed it.
+  **Issue:** #56
+- **Decision:** The pre-fix guideline run failed 28 of 28 route cases, on tap-target size on every screen and on text contrast (the wordmark's two colours, and the 1.94:1 `versionText`). `versionText` is nudged to `#A1B7D1` under #52's rule and added to the ratio guard. The wordmark now speaks "Honest Sudoku" with its two-colour text excluded (a header on the menu).
+  **Why:** #56's test plan asks for the first failures; these are they.
+  **Issue:** #56
+- **Decision:** The manual TalkBack pass records the accessibility tree along menu → setup → Start → board → pause → Settings → back (uiautomator), not TalkBack's speech. TalkBack was enabled and speaking (the TTS service's dispatch lines are in logcat), but its utterance text is not logged where adb can read it.
+  **Why:** It reads the same node labels TalkBack speaks; the difference is recorded rather than glossed.
+  **Issue:** #56

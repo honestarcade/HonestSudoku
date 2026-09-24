@@ -2,6 +2,7 @@
 
 import 'package:flutter/widgets.dart';
 
+import '../a11y/speak.dart';
 import '../board/board_styles.dart';
 import '../theme/tokens.dart';
 import 'design_button.dart';
@@ -61,17 +62,29 @@ class ScreenHeader extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(title, style: outfit(19, scale: 1, weight: FontWeight.w600)),
+            Semantics(
+              header: true,
+              child: Text(
+                title,
+                style: outfit(19, scale: 1, weight: FontWeight.w600),
+              ),
+            ),
             if (meta != null) ...[
               const SizedBox(height: 6),
-              Text(
-                meta!,
-                key: ValueKey('$keyPrefix-meta'),
-                style: plexMono(
-                  9.5,
-                  scale: 1,
-                  color: HsColors.cardKicker,
-                  letterSpacingEm: .16,
+              // Announced when it changes (setup's summary line).
+              Semantics(
+                label: speak(meta!),
+                liveRegion: true,
+                excludeSemantics: true,
+                child: Text(
+                  meta!,
+                  key: ValueKey('$keyPrefix-meta'),
+                  style: plexMono(
+                    9.5,
+                    scale: 1,
+                    color: HsColors.cardKicker,
+                    letterSpacingEm: .16,
+                  ),
                 ),
               ),
             ],

@@ -3,6 +3,7 @@
 
 import 'package:flutter/widgets.dart';
 
+import '../a11y/speak.dart';
 import '../board/board_styles.dart';
 import '../theme/tokens.dart';
 import 'design_button.dart';
@@ -82,45 +83,45 @@ class ChoiceRow<T> extends StatelessWidget {
   Widget _choice(ChoiceOption<T> o) {
     final on = o.value == selected;
     final spec = on ? selectedChoiceSpec : choiceSpec;
-    return Semantics(
-      selected: on,
-      inMutuallyExclusiveGroup: true,
-      child: DesignButton(
-        key: o.key == null ? null : ValueKey<String>(o.key!),
-        spec: spec,
-        scale: 1,
-        radius: 11,
-        borderWidth: 1.5,
-        padding: const EdgeInsets.symmetric(vertical: 11, horizontal: 4),
-        onPressed: () => onSelect(o.value),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
+    return DesignButton(
+      key: o.key == null ? null : ValueKey<String>(o.key!),
+      semanticsSelected: on,
+      semanticsLabel: o.sub == null
+          ? speak(o.label)
+          : '${speak(o.label)}, ${speak(o.sub!)}',
+      spec: spec,
+      scale: 1,
+      radius: 11,
+      borderWidth: 1.5,
+      padding: const EdgeInsets.symmetric(vertical: 11, horizontal: 4),
+      onPressed: () => onSelect(o.value),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            o.label,
+            textAlign: TextAlign.center,
+            style: outfit(
+              fontSize,
+              scale: 1,
+              weight: FontWeight.w600,
+              color: spec.fg,
+            ),
+          ),
+          if (o.sub != null) ...[
+            const SizedBox(height: 5),
             Text(
-              o.label,
+              o.sub!,
               textAlign: TextAlign.center,
-              style: outfit(
-                fontSize,
+              style: plexMono(
+                8.5,
                 scale: 1,
-                weight: FontWeight.w600,
-                color: spec.fg,
+                color: HsColors.cardKicker,
+                letterSpacingEm: .08,
               ),
             ),
-            if (o.sub != null) ...[
-              const SizedBox(height: 5),
-              Text(
-                o.sub!,
-                textAlign: TextAlign.center,
-                style: plexMono(
-                  8.5,
-                  scale: 1,
-                  color: HsColors.cardKicker,
-                  letterSpacingEm: .08,
-                ),
-              ),
-            ],
           ],
-        ),
+        ],
       ),
     );
   }

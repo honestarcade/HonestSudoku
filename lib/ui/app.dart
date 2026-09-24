@@ -26,6 +26,7 @@ import 'screens/settings_screen.dart';
 import 'screens/setup_screen.dart';
 import 'screens/stats_screen.dart';
 import 'theme/tokens.dart';
+import 'widgets/tap_target.dart';
 
 Future<AppStore> _openStore() async => AppStore.open(await storeDirectory());
 
@@ -171,6 +172,8 @@ class _HonestSudokuAppState extends State<HonestSudokuApp> {
       debugShowCheckedModeBanner: false,
       theme: _theme,
       themeAnimationDuration: motionDuration(context, kRouteFade),
+      // Grown tap-target margins reach their controls on every screen (#56).
+      builder: (context, child) => TapTargetGroup(child: child!),
       navigatorObservers: [_routeNames, _routeObserver],
       onGenerateInitialRoutes: (_) => [
         _route(

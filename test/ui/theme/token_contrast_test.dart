@@ -106,6 +106,11 @@ List<(String, Color, List<Color>)> _pairs() => [
   ('secondary buttons', HsColors.white, _onCard(HsColors.fill05)),
   ('soft buttons', HsColors.chipFg, _onCard(HsColors.fill04)),
   ('primary buttons', HsColors.deepNavy, [HsColors.teal]),
+  (
+    'version line and link separators',
+    HsColors.versionText,
+    [_gradientTop, _gradientLow, ..._onGradient(HsColors.fill05)],
+  ),
   ('win kicker', HsColors.teal, _onCard(_clear)),
   ('out-of-strikes kicker', HsColors.wrongRed, _onCard(_clear)),
 ];
@@ -183,6 +188,12 @@ List<(String, Color, Color, List<Color>)> _nudges() {
         _gradientTop,
         _gradientLow,
       ],
+    ),
+    (
+      'versionText',
+      const Color(0xFF4E739F),
+      HsColors.versionText,
+      [_gradientTop, _gradientLow, ..._onGradient(HsColors.fill05)],
     ),
     (
       'muted',

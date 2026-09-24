@@ -4,6 +4,7 @@
 
 import 'package:flutter/material.dart';
 
+import '../a11y/speak.dart';
 import '../app_scope.dart';
 import '../board/board_styles.dart';
 import '../copy.dart';
@@ -57,14 +58,18 @@ class AboutAppScreen extends StatelessWidget {
                         style: outfit(20, scale: 1, weight: FontWeight.w700),
                       ),
                       const SizedBox(height: 7),
-                      Text(
-                        scope.buildInfo.aboutLine,
-                        key: const ValueKey('about-version'),
-                        style: plexMono(
-                          10,
-                          scale: 1,
-                          color: HsColors.muted,
-                          letterSpacingEm: .14,
+                      Semantics(
+                        label: speak(scope.buildInfo.aboutLine),
+                        excludeSemantics: true,
+                        child: Text(
+                          scope.buildInfo.aboutLine,
+                          key: const ValueKey('about-version'),
+                          style: plexMono(
+                            10,
+                            scale: 1,
+                            color: HsColors.muted,
+                            letterSpacingEm: .14,
+                          ),
                         ),
                       ),
                     ],
@@ -88,51 +93,53 @@ class AboutAppScreen extends StatelessWidget {
               kickerText(Copy.whatsInIt),
               for (final f in Copy.features) ...[
                 const SizedBox(height: 8),
-                Panel(
-                  radius: 11,
-                  padding: const EdgeInsets.symmetric(
-                    vertical: 11,
-                    horizontal: 13,
-                  ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Container(
-                        width: 6,
-                        height: 6,
-                        margin: const EdgeInsets.only(top: 6),
-                        decoration: const BoxDecoration(
-                          color: HsColors.teal,
-                          shape: BoxShape.circle,
+                MergeSemantics(
+                  child: Panel(
+                    radius: 11,
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 11,
+                      horizontal: 13,
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          width: 6,
+                          height: 6,
+                          margin: const EdgeInsets.only(top: 6),
+                          decoration: const BoxDecoration(
+                            color: HsColors.teal,
+                            shape: BoxShape.circle,
+                          ),
                         ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              f.title,
-                              style: outfit(
-                                12,
-                                scale: 1,
-                                weight: FontWeight.w600,
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                f.title,
+                                style: outfit(
+                                  12,
+                                  scale: 1,
+                                  weight: FontWeight.w600,
+                                ),
                               ),
-                            ),
-                            const SizedBox(height: 5),
-                            Text(
-                              f.body,
-                              style: outfit(
-                                11,
-                                scale: 1,
-                                color: HsColors.chipFg,
-                                lineHeight: 1.4,
+                              const SizedBox(height: 5),
+                              Text(
+                                f.body,
+                                style: outfit(
+                                  11,
+                                  scale: 1,
+                                  color: HsColors.chipFg,
+                                  lineHeight: 1.4,
+                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ],
@@ -215,36 +222,41 @@ class _PromiseChip extends StatelessWidget {
   final String text;
 
   @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(vertical: 7, horizontal: 10),
-    decoration: BoxDecoration(
-      color: HsColors.fill07,
-      borderRadius: BorderRadius.circular(999),
-    ),
-    child: Row(
-      children: [
-        Text(
-          '✓',
-          style: outfit(
-            10,
-            scale: 1,
-            weight: FontWeight.w600,
-            color: HsColors.teal,
-          ),
-        ),
-        const SizedBox(width: 6),
-        Expanded(
-          child: Text(
-            text,
-            style: plexMono(
+  Widget build(BuildContext context) => Semantics(
+    container: true,
+    label: speak(text),
+    excludeSemantics: true,
+    child: Container(
+      padding: const EdgeInsets.symmetric(vertical: 7, horizontal: 10),
+      decoration: BoxDecoration(
+        color: HsColors.fill07,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        children: [
+          Text(
+            '✓',
+            style: outfit(
               10,
               scale: 1,
-              color: HsColors.bodyBlue,
-              lineHeight: 1.2,
+              weight: FontWeight.w600,
+              color: HsColors.teal,
             ),
           ),
-        ),
-      ],
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              text,
+              style: plexMono(
+                10,
+                scale: 1,
+                color: HsColors.bodyBlue,
+                lineHeight: 1.2,
+              ),
+            ),
+          ),
+        ],
+      ),
     ),
   );
 }
