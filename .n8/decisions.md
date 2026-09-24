@@ -1127,3 +1127,6 @@ than per-story.
 - **Decision:** The manual TalkBack pass records the accessibility tree along menu → setup → Start → board → pause → Settings → back (uiautomator), not TalkBack's speech. TalkBack was enabled and speaking (the TTS service's dispatch lines are in logcat), but its utterance text is not logged where adb can read it.
   **Why:** It reads the same node labels TalkBack speaks; the difference is recorded rather than glossed.
   **Issue:** #56
+- **Decision (Rule 1):** #54's icons are re-rendered with `PANGOCAIRO_BACKEND=fc`. The first render drew the board digits in a macOS system font: Homebrew's Pango defaults to CoreText and ignores fontconfig, so the `fc-match` refusal passed while proving nothing. The check now lives in `tools/lib/fonts_check.sh`, shared with #57's renderer. It also renders one word in Outfit and in a family that does not exist, and refuses (exit 2) if they are identical. Deleting the backend line makes it refuse, as checked by hand before commit.
+  **Why:** Found while rendering #57's feature graphic, whose wordmark came out in Helvetica. The committed icons were wrong in exactly the way #54's fonts.conf existed to prevent.
+  **Issue:** #54, #57

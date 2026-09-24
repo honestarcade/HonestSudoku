@@ -10,34 +10,14 @@
 #   tools/render_icons.sh --check         render into build/icon-check/ and
 #                                         list byte differences (exit 0)
 #
-# Exit: 0 rendered, 2 Outfit does not resolve to assets/fonts/, 3 a tool is
-#       missing, 5 an output's pixel size is wrong.
+# Exit: 0 rendered, 2 rsvg-convert would not draw with assets/fonts/, 3 a
+#       tool is missing, 5 an output's pixel size is wrong.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
 
-for tool in rsvg-convert fc-match python3; do
-  if ! command -v "$tool" >/dev/null 2>&1; then
-    echo "render_icons: $tool is missing (brew install librsvg fontconfig)" >&2
-    exit 3
-  fi
-done
-
-# Absolute: fontconfig resolves a relative FONTCONFIG_FILE against its own
-# configuration directory, not the working directory.
-export FONTCONFIG_FILE="$ROOT/assets/brand/fonts.conf"
-mkdir -p build/fontconfig-cache
-resolved="$(fc-match -f '%{file}' Outfit)"
-fonts="$(cd assets/fonts && pwd -P)"
-case "$(cd "$(dirname "$resolved")" 2>/dev/null && pwd -P)/" in
-"$fonts"/) ;;
-*)
-  echo "render_icons: Outfit resolves to $resolved, not a file under" >&2
-  echo "  assets/fonts/ -- run tools/fetch_fonts.sh, and check" >&2
-  echo "  assets/brand/fonts.conf lists only that directory" >&2
-  exit 2
-  ;;
-esac
+# shellcheck source=tools/lib/fonts_check.sh
+. "$ROOT/tools/lib/fonts_check.sh"
 
 CHECK=0
 OUT="$ROOT"
