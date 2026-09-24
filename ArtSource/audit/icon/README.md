@@ -1,6 +1,6 @@
 # Launcher icon audit (#54)
 
-Taken 2026-09-24 on the `sudoku-dev` AVD (API 34, Google APIs, Pixel launcher):
+Taken 2026-09-24 (re-taken after the icons were re-rendered in Outfit) on the `sudoku-dev` AVD (API 34, Google APIs, Pixel launcher):
 
 - `circle.png`: screenshot of the app drawer. This launcher masks icons to a
   circle; the four corners stay whole inside it.
