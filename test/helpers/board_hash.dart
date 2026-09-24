@@ -7,9 +7,13 @@ const int _fnvOffset = 0xcbf29ce484222325;
 const int _fnvPrime = 0x100000001b3;
 
 /// 64-bit FNV-1a of [text]'s code units, as 16 lower-case hex digits.
-String fnv1a64(String text) {
+String fnv1a64(String text) => fnv1a64Of(text.codeUnits);
+
+/// 64-bit FNV-1a of [units] (code units or bytes), as 16 lower-case hex
+/// digits; the audio placeholders' digests use it over file bytes (#49).
+String fnv1a64Of(Iterable<int> units) {
   var h = _fnvOffset;
-  for (final unit in text.codeUnits) {
+  for (final unit in units) {
     h ^= unit;
     h *= _fnvPrime; // wraps at 64 bits on the VM
   }

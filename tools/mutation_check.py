@@ -1217,6 +1217,24 @@ MUTATIONS: list[Mutation] = [
              sub(r"^OFL-IBMPlexMono\.txt\t[^\n]*\n", "", flags=re.M),
              "the OFL requires the licence to travel with the fonts",
              'fonts-provenance: 1 offender'),
+
+    # ---- #49: the audio assets and the placeholder flag --------------------
+    Mutation("#49", "a placeholder clip loses its recorded digest",
+             "assets/audio/LICENSES.md",
+             sub(r"^\| `placeholder-mistake\.wav` \|[^\n]*\n", "", flags=re.M),
+             "an unrecorded clip could be swapped for anything",
+             'audio-assets: 1 offender'),
+    Mutation("#49", "the pubspec stops bundling the audio directory",
+             "pubspec.yaml",
+             sub(r"^  assets:\n    - assets/audio/\n", "", flags=re.M),
+             "the game would ship silent, and a dropped-in clip would not ship",
+             'audio-declared: flutter: assets: does not list assets/audio/'),
+    Mutation("#49", "the release stops flagging placeholder audio",
+             ".github/workflows/release.yml",
+             sub(r'(\} >> )"\$GITHUB_STEP_SUMMARY"(\n          fi\n)$',
+                 r'\1/dev/null\2', flags=re.M),
+             "a build carrying placeholders would ship without a word",
+             'honesty: `placeholder_audio` no longer says'),
 ]
 
 

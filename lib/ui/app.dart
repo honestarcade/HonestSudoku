@@ -2,12 +2,15 @@
 // shares. The loading screen covers the store opening at launch, then hands
 // over to the menu.
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:honest_sudoku/game/game.dart';
 import 'package:honest_sudoku/store/app_store.dart';
 import 'package:honest_sudoku/store/store_directory.dart';
 
 import '../build_info.dart';
+import '../feedback/game_feedback.dart';
 import 'app_scope.dart';
 import 'board/board_screen.dart';
 import 'board/game_controller.dart';
@@ -34,6 +37,8 @@ class HonestSudokuApp extends StatefulWidget {
     this.seeds,
     this.links,
     this.buildInfo,
+    this.sound,
+    this.assetManifest,
     this.initialRoute = Routes.loading,
     super.key,
   });
@@ -54,6 +59,12 @@ class HonestSudokuApp extends StatefulWidget {
   /// Replaces the build's version.
   final BuildInfo? buildInfo;
 
+  /// Plays the game's sounds; silent when absent.
+  final SoundPlayer? sound;
+
+  /// Lists the bundled assets, to find each sound's clip; none when absent.
+  final AssetManifestReader? assetManifest;
+
   /// Where the app opens: the launch splash.
   final String initialRoute;
 
@@ -67,11 +78,27 @@ class _HonestSudokuAppState extends State<HonestSudokuApp> {
     seeds: widget.seeds,
     store: widget.store ?? _openStore,
   );
+  late final SoundPlayer _sound = widget.sound ?? const NoSoundPlayer();
+  late final GameFeedback _feedback = GameFeedback(
+    player: _sound,
+    manifest: widget.assetManifest,
+  );
   final _routeNames = RouteNames();
   final _routeObserver = RouteObserver<ModalRoute<void>>();
 
   @override
+  void initState() {
+    super.initState();
+    // Loading the clips waits for the first frame, so it never delays it.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_feedback.attach(_controller));
+    });
+  }
+
+  @override
   void dispose() {
+    _feedback.detach();
+    unawaited(_sound.dispose());
     _controller.dispose();
     super.dispose();
   }

@@ -289,6 +289,29 @@ jobs:
         if: always()
         run: rm -f "$RUNNER_TEMP/upload.keystore"
 
+      # A warning, not a failure, until the owner's licensed clips land; M7
+      # turns it into a failure. Always, so a failed build still says what
+      # it would have shipped (#49).
+      - id: placeholder_audio
+        name: Flag placeholder audio
+        if: always()
+        run: |
+          set -euo pipefail
+          found=""
+          if [ -d assets/audio ]; then
+            found=$(find assets/audio -name 'placeholder-*.wav' | sort)
+          fi
+          if [ -n "$found" ]; then
+            {
+              echo "### Placeholder audio shipped"
+              echo ""
+              echo "These synthesised clips are in the bundle; the owner's"
+              echo "licensed audio replaces them (assets/audio/LICENSES.md)."
+              echo ""
+              echo "$found" | sed 's/^/- /'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   report-gate-failure:
     needs: gate
     # `needs.gate.result` rather than `failure()`: a CANCELLED gate is not a

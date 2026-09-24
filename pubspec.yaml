@@ -28,6 +28,11 @@ dev_dependencies:
 flutter:
   uses-material-design: true
 
+  # The whole directory, so a real clip replaces its placeholder by dropping
+  # the file in, with no change here (#49).
+  assets:
+    - assets/audio/
+
   # Bundled, never fetched (invariant 1). tools/fetch_fonts.sh downloaded them
   # from pinned commits; assets/fonts/README.md records where from (#47).
   fonts:

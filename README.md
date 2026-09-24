@@ -155,10 +155,11 @@ ship your own.
 
 Three things are held back, because they are not ours to give away:
 
-**Audio.** When licensed sound effects ship, they will not be covered by the
-MIT licence, and their provenance will be recorded in the audio licence file
-that ships beside them. Synthesised placeholder sounds are MIT-covered like the
-rest of the code.
+**Audio.** The files listed in `assets/audio/LICENSES.md`'s Licensed table
+are **not** covered by the MIT licence: they are licensed to Honest Arcade for
+use in Honest Sudoku, and no licence is granted to use them in another
+project. The synthesised placeholders in the same directory are MIT-covered
+like the code.
 
 **Fonts.** Outfit and IBM Plex Mono, bundled in `assets/fonts/`, are under
 the SIL Open Font License 1.1, whose texts sit beside them; they are neither
@@ -170,6 +171,10 @@ licence reserves the font name "Plex" (Outfit's reserves none), and
 mark shared across the studio's apps, and the launcher icons built from it are
 trademarks of Honest Arcade. A copyright licence does not grant trademark
 rights: fork the game freely, but ship it under your own name and mark.
+
+**Sound tooling.** `tools/make_placeholder_sfx.py` synthesises the
+placeholders; `tools/sfx.py` generates candidate clips with the owner's
+ElevenLabs key and `--install` swaps one in for its placeholder.
 
 ## Security
 
