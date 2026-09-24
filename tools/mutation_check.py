@@ -1173,6 +1173,12 @@ MUTATIONS: list[Mutation] = [
              append("\nfinal startedAt = DateTime.now();\n"),
              "generation that depends on when it runs is not deterministic",
              'engine-clock: 1 offender'),
+    # ---- #28: the game model stays plain Dart ------------------------------
+    Mutation("#28", "the game model imports Flutter", "lib/game/notice.dart",
+             sub(r"^(import 'package:honest_sudoku/engine/engine\.dart';)$",
+                 r"import 'package:flutter/foundation.dart';\n\1", flags=re.M),
+             "the rules could no longer be proven without a screen",
+             'game-imports: 1 offender'),
 ]
 
 

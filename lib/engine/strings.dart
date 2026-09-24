@@ -72,3 +72,9 @@ String mistakeBody(int mistakes, int? limit) =>
 const String kGridFullBody =
     'Some numbers are wrong — the ones in red. Fix them and the puzzle '
     'finishes itself.';
+
+/// A full grid with wrong entries in Zen, where nothing is ever tinted red,
+/// so the design's "the ones in red" would point at nothing (owner's call,
+/// 2026-09-18).
+const String kGridFullBodyZen =
+    'Some numbers are wrong. Fix them and the puzzle finishes itself.';
