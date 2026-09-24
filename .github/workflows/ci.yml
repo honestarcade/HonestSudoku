@@ -162,10 +162,14 @@ jobs:
     #
     # Each mutation is one run of the guard suite, so the cost is linear in
     # the battery's size and the run-to-run variance is minutes, not seconds.
-    # 60 is headroom for the current count; a pass that adds entries re-reads
-    # this line, and when the headroom is gone the answer is to split the
-    # battery across jobs rather than to keep raising the ceiling.
-    timeout-minutes: 60
+    # 60 was the limit until run 35932979896 (2026-09-23) reached entry 131
+    # of 147 when it expired, every entry caught, at about 26 s an entry.
+    # Splitting across jobs is the lasting answer, but the one required
+    # `mutations` check would then hang on an aggregating job that must run
+    # even when a shard fails -- a job-level `if:` that ci-shape refuses,
+    # for good reason -- so it waits on #286. 90 is the stopgap;
+    # a pass that adds entries re-reads this line.
+    timeout-minutes: 90
     env:
       FLUTTER_SUPPRESS_ANALYTICS: "true"
     steps:

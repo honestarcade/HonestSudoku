@@ -1004,3 +1004,6 @@ than per-story.
   **Issue:** #26
 - **Finding (pre-existing, not from this run):** `#245 the verdict is handed an empty environment` SURVIVED in the local battery, and also survives on unchanged `main` locally (`tools/mutation_check.py --only 'empty environment'` against `origin/main`, 2026-09-23). It depends on the token environment the CI job provides; the CI battery has passed it on every recent run.
   **Issue:** #245
+
+### 2026-09-24 — #26 (Rule 3): the mutations job's limit raised to 90 minutes
+PR #285's `mutations` job (run 35932979896) was cancelled at its 60-minute `timeout-minutes` after 131 of 147 entries, every one caught (about 26 s each). Raised to 90 as a stopgap. Splitting across jobs is the lasting fix, but the required `mutations` check would then need an `if: always()` aggregator, which ci-shape refuses by design; that guard exception is an owner call, filed as #286 (needs-triage). Every later milestone adds entries, so M3–M5's PRs each wait roughly 65–75 minutes on this job.
