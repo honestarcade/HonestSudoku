@@ -9,3 +9,13 @@ bool listEquals<T>(List<T>? a, List<T>? b) {
   }
   return true;
 }
+
+/// True when [a] and [b] hold equal values under equal keys.
+bool mapEquals<K, V>(Map<K, V>? a, Map<K, V>? b) {
+  if (identical(a, b)) return true;
+  if (a == null || b == null || a.length != b.length) return false;
+  for (final entry in a.entries) {
+    if (!b.containsKey(entry.key) || b[entry.key] != entry.value) return false;
+  }
+  return true;
+}

@@ -1177,11 +1177,35 @@ dev_dependencies:
     }
   });
 
+  test('dart:io is allowed in lib/store/ and nowhere else in lib/', () {
+    // #38's store reads and writes the player's files. The allowance is one
+    // folder: the screens next to it are still refused, and a networking
+    // name inside the store is still caught.
+    expect(
+      sourceOffenders('lib/store/app_store.dart', "import 'dart:io';\n"),
+      isEmpty,
+      reason: 'dart-io-store: the store may not read its own files',
+    );
+    expect(
+      sourceOffenders('lib/ui/board/board_screen.dart', "import 'dart:io';\n"),
+      isNotEmpty,
+      reason: 'dart-io-scope: dart:io is allowed outside lib/store/',
+    );
+    expect(
+      sourceOffenders(
+        'lib/store/app_store.dart',
+        "import 'dart:io';\nfinal c = HttpClient();\n",
+      ),
+      isNotEmpty,
+      reason: 'dart-io-scope: a socket inside the store passes',
+    );
+  });
+
   test('importing dart:io in lib/ is refused outright', () {
     // The class list is a floor: no name list catches
     // Process.run('curl', [url]). Banning the import is one line and
     // catches every one of them, at the cost of refusing legitimate file
-    // IO — which this app does not do (#118).
+    // IO — which only lib/store/ does (#38).
     expect(
       sourceOffenders('lib/main.dart', "import 'dart:io';\n"),
       isNotEmpty,

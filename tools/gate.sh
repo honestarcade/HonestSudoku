@@ -18,6 +18,21 @@ set -euo pipefail
 export LC_ALL=C
 cd "$(dirname "$0")/.."
 
+# The version the bundle carries, from pubspec.yaml. The build gets it three
+# ways: the Android version name and code, and HS_VERSION, which the Settings
+# and About screens read (lib/build_info.dart, #42). A version without a
+# `+<build>` would leave the bundle's code unset, so the gate refuses it.
+PUBSPEC_VERSION="$(sed -n 's/^version:[[:space:]]*\([^[:space:]#]*\).*/\1/p' pubspec.yaml | head -1)"
+case "$PUBSPEC_VERSION" in
+*+*) ;;
+*)
+  echo "gate: pubspec.yaml version '$PUBSPEC_VERSION' has no +<build> number" >&2
+  exit 1
+  ;;
+esac
+VERSION_NAME="${PUBSPEC_VERSION%%+*}"
+VERSION_CODE="${PUBSPEC_VERSION##*+}"
+
 LABELS=(
   "resolve dependencies"
   "analyze"
@@ -32,7 +47,7 @@ COMMANDS=(
   "dart analyze --fatal-infos"
   "dart format --output=none --set-exit-if-changed ."
   "flutter test --no-pub --exclude-tags weekly,bench"
-  "flutter build appbundle --release --no-pub"
+  "flutter build appbundle --release --no-pub --build-name=$VERSION_NAME --build-number=$VERSION_CODE --dart-define=HS_VERSION=$VERSION_NAME+$VERSION_CODE"
   "tools/check_aab.sh"
 )
 

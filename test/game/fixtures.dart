@@ -3,6 +3,7 @@
 // change to the generator cannot move them.
 
 import 'package:honest_sudoku/engine/engine.dart';
+import 'package:honest_sudoku/game/game.dart';
 
 import '../engine/grid_strings.dart';
 
@@ -38,3 +39,19 @@ final Puzzle monster = fixturePuzzle(GridShape.monster);
 
 /// A value for [cell] of [p] that is not its solution.
 int wrongValue(Puzzle p, int cell) => p.solution[cell] % p.shape.n + 1;
+
+/// The design's Easy statistics (STATS.easy): 66 started, 64 solved, best
+/// 2:14, average 4:38, streak 12, 5h 06m played — all on 9×9, the other
+/// difficulties empty.
+final StatsBook sampleStatsBook = StatsBook(
+  shapes: {
+    (Difficulty.easy, GridShape.classic): ShapeStats(
+      started: 66,
+      solved: 64,
+      bestSeconds: 134,
+      solvedSecondsTotal: 17792,
+      timePlayedSeconds: 18360,
+    ),
+  },
+  streaks: {Difficulty.easy: 12},
+);

@@ -98,7 +98,7 @@ class _GameOverOverlayState extends State<GameOverOverlay>
             ('time', UiStrings.time, fmt(state.elapsedSeconds)),
             ('entries', UiStrings.entries, '${state.moves}'),
             ('mistakes', UiStrings.mistakes, zen ? '—' : '${state.mistakes}'),
-            ('streak', UiStrings.streak, '${_streak + 1}'),
+            ('streak', UiStrings.streak, '$_streak'),
           ]
         : [
             ('time', UiStrings.time, fmt(state.elapsedSeconds)),

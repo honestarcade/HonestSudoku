@@ -2,25 +2,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:honest_sudoku/engine/engine.dart';
 import 'package:honest_sudoku/game/game.dart';
-import 'package:honest_sudoku/ui/app.dart';
 import 'package:honest_sudoku/ui/board/board_grid.dart';
 import 'package:honest_sudoku/ui/board/board_screen.dart';
 import 'package:honest_sudoku/ui/board/game_controller.dart';
 
+import 'helpers.dart';
 import 'stub_generator.dart';
-
-void setScreen(WidgetTester tester, double w, double h) {
-  tester.view.physicalSize = Size(w, h);
-  tester.view.devicePixelRatio = 1;
-  addTearDown(tester.view.reset);
-}
 
 /// Pumps a BoardScreen over [c], starts [shape], and returns once the board
 /// shows. Unmounts and disposes at the end of the test body via [run].
 Future<void> screenTest(
   WidgetTester tester,
   Future<void> Function(GameController c, StubGenerator gen) body, {
-  GameSettings settings = const GameSettings(),
+  AppSettings settings = const AppSettings(),
   GridShape shape = GridShape.classic,
   double width = 390,
   double height = 844,
@@ -62,15 +56,10 @@ Future<void> tapCellAndKey(WidgetTester tester, int cell, int value) async {
 
 void main() {
   group('through the app root', () {
-    testWidgets('launch, place, tick, pause, resume, back, background', (
-      tester,
-    ) async {
-      setScreen(tester, 390, 844);
-      final gen = StubGenerator();
-      await tester.pumpWidget(
-        HonestSudokuApp(generator: gen.call, seeds: CountingSeeds()),
-      );
-      await tester.pump();
+    testWidgets('menu, setup, board; place, tick, pause, resume, back, '
+        'background', (tester) async {
+      await pumpApp(tester);
+      await startFromMenu(tester);
       expect(find.byType(BoardGrid), findsOneWidget);
       expect(find.text('❚❚ 9×9 · Medium'), findsOneWidget);
 
@@ -87,9 +76,22 @@ void main() {
         findsOneWidget,
       );
 
-      // The clock runs only while unpaused.
+      // The clock runs only while unpaused. The controller's one-second
+      // timer runs from its own start, so read the clock rather than assume
+      // it is at zero.
+      String clock() => tester
+          .widget<Text>(
+            find.descendant(
+              of: find.byKey(const ValueKey('chip-timer')),
+              matching: find.byType(Text),
+            ),
+          )
+          .data!;
+      int seconds(String t) =>
+          int.parse(t.split(':')[0]) * 60 + int.parse(t.split(':')[1]);
+      final start = seconds(clock());
       await tester.pump(const Duration(seconds: 2));
-      expect(find.text('0:02'), findsOneWidget);
+      expect(seconds(clock()), start + 2);
       await tester.tap(find.byKey(const ValueKey('pause-button')));
       await tester.pump();
       expect(find.text('Paused'), findsOneWidget);
@@ -97,7 +99,12 @@ void main() {
       await tester.pump(const Duration(seconds: 3));
       await tester.tap(find.text('Resume'));
       await tester.pump();
-      expect(find.text('0:02'), findsOneWidget);
+      expect(
+        seconds(clock()),
+        start + 2,
+        reason: 'no time passed while paused',
+      );
+      final played = clock();
 
       // Back pauses.
       await tester.binding.handlePopRoute();
@@ -113,29 +120,24 @@ void main() {
       await tester.pump();
       expect(find.text('Paused'), findsOneWidget);
 
-      // Back while paused goes to the main menu placeholder.
+      // Back while paused goes to the menu, which offers Continue.
       await tester.binding.handlePopRoute();
       await tester.pumpAndSettle();
-      expect(
-        find.byKey(const ValueKey('placeholder-destination')),
-        findsOneWidget,
-      );
-      expect(find.text('Main menu'), findsOneWidget);
+      expect(find.byKey(const ValueKey('menu-continue')), findsOneWidget);
+      expect(find.text('9×9 · MEDIUM · $played'), findsOneWidget);
     });
 
-    testWidgets('a failed first launch shows the failure with a retry that '
+    testWidgets('a failed generation shows the failure with a retry that '
         're-requests', (tester) async {
-      setScreen(tester, 390, 844);
       final gen = StubGenerator()..failWith = timeoutFailure;
-      await tester.pumpWidget(
-        HonestSudokuApp(generator: gen.call, seeds: CountingSeeds()),
-      );
-      await tester.pump();
+      await pumpApp(tester, gen: gen);
+      await startFromMenu(tester);
       expect(find.text('GENERATION FAILED'), findsOneWidget);
       gen.failWith = null;
       await tester.tap(find.text('TRY AGAIN'));
       await tester.pump();
-      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.pumpAndSettle();
       expect(gen.requests, hasLength(2));
       expect(find.byType(BoardGrid), findsOneWidget);
     });
@@ -147,7 +149,9 @@ void main() {
         testWidgets('${strike.name} × ${announce.name}', (tester) async {
           await screenTest(
             tester,
-            settings: GameSettings(strikeMode: strike, announce: announce),
+            settings: AppSettings(
+              lastSetup: LastSetup(strikeMode: strike, announce: announce),
+            ),
             (c, _) async {
               final limit = strike.limit;
               final entries = limit ?? 1;
@@ -198,17 +202,18 @@ void main() {
   testWidgets('auto notes: candidates are there, the tool reads AUTO', (
     tester,
   ) async {
-    await screenTest(tester, settings: const GameSettings(autoNotes: true), (
-      c,
-      _,
-    ) async {
-      final (cell, _) = emptyAndWrong(c.state!);
-      expect(find.text('AUTO'), findsOneWidget);
-      expect(c.state!.notes[cell], isNotEmpty);
-      await tester.tap(find.byKey(const ValueKey('tool-notes')));
-      await tester.pump();
-      expect(c.state!.noteMode, isFalse, reason: 'AUTO ignores taps');
-    });
+    await screenTest(
+      tester,
+      settings: const AppSettings(game: GameSettings(autoNotes: true)),
+      (c, _) async {
+        final (cell, _) = emptyAndWrong(c.state!);
+        expect(find.text('AUTO'), findsOneWidget);
+        expect(c.state!.notes[cell], isNotEmpty);
+        await tester.tap(find.byKey(const ValueKey('tool-notes')));
+        await tester.pump();
+        expect(c.state!.noteMode, isFalse, reason: 'AUTO ignores taps');
+      },
+    );
   });
 
   testWidgets('undo then redo through the tools', (tester) async {

@@ -155,7 +155,8 @@ jobs:
           set -euo pipefail
           flutter build appbundle --release --no-pub \
             --build-name="${{ steps.version.outputs.name }}" \
-            --build-number="${{ steps.version.outputs.code }}"
+            --build-number="${{ steps.version.outputs.code }}" \
+            --dart-define=HS_VERSION="${{ steps.version.outputs.name }}+${{ steps.version.outputs.code }}"
 
       - id: scan
         name: Scan the bundle for permissions

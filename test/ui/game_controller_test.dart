@@ -14,7 +14,7 @@ void main() {
     gen = StubGenerator();
   });
 
-  GameController make({GameSettings settings = const GameSettings()}) =>
+  GameController make({AppSettings settings = const AppSettings()}) =>
       c = GameController(
         generator: gen.call,
         seeds: CountingSeeds(),
@@ -43,6 +43,7 @@ void main() {
       'showing', (tester) async {
     make().startNew(GridShape.classic, Difficulty.medium);
     await tester.pump();
+    c.enterBoard();
     await tester.pump(const Duration(seconds: 3));
     expect(c.state!.elapsedSeconds, 3);
     c.pause();
@@ -62,6 +63,7 @@ void main() {
   ) async {
     make().startNew(GridShape.classic, Difficulty.medium);
     await tester.pump();
+    c.enterBoard();
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
     expect(c.state!.paused, isTrue);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
@@ -73,6 +75,7 @@ void main() {
   ) async {
     make().startNew(GridShape.classic, Difficulty.medium);
     await tester.pump();
+    c.enterBoard();
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
     await tester.pump(const Duration(milliseconds: 100));
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
@@ -86,6 +89,7 @@ void main() {
   ctlTest('a finished game is not paused by leaving the app', (tester) async {
     make().startNew(GridShape.classic, Difficulty.medium);
     await tester.pump();
+    c.enterBoard();
     final s = c.state!;
     for (var i = 0; i < 81; i++) {
       if (!s.isGiven(i)) {
@@ -103,6 +107,7 @@ void main() {
   ) async {
     make().startNew(GridShape.classic, Difficulty.medium);
     await tester.pump();
+    c.enterBoard();
     final before = c.state!.puzzle;
     gen.failWith = timeoutFailure;
     c.newDeal();
@@ -131,6 +136,7 @@ void main() {
     gen.hang = true;
     make().startNew(GridShape.classic, Difficulty.medium);
     await tester.pump();
+    c.enterBoard();
     c.cancelGeneration();
     expect(gen.cancelled, isTrue);
     expect(c.generationFailure!.tag, 'GENERATION CANCELLED');
@@ -147,7 +153,8 @@ void main() {
   ctlTest('updateSettings applies to the game on screen', (tester) async {
     make().startNew(GridShape.classic, Difficulty.medium);
     await tester.pump();
-    c.updateSettings(const GameSettings(autoNotes: true));
+    c.enterBoard();
+    c.updateSettings(const AppSettings(game: GameSettings(autoNotes: true)));
     expect(c.state!.settings.autoNotes, isTrue);
     expect(c.state!.notes.any((n) => n.isNotEmpty), isTrue);
   });

@@ -5,7 +5,7 @@ permalink: /privacy
 
 # Honest Sudoku — Privacy Policy
 
-**Effective date: 2026-09-19** · Last updated: 2026-09-19
+**Effective date: 2026-09-19** · Last updated: 2026-09-23
 
 Honest Sudoku (package `com.honestarcade.sudoku`), published by Honest Arcade,
 collects **no data**. None.
@@ -22,8 +22,11 @@ collects **no data**. None.
   no plugin with network access. Nothing in the app can transmit data
   regardless, because it holds no INTERNET permission.
 - Your puzzle in progress, your statistics (solves, streaks, best and average
-  times) and your settings are saved **only on your device** and never leave
-  it. Uninstalling the app deletes them.
+  times) and your settings are saved **only on your device**, and the app
+  never sends them anywhere. Android's own backup feature may copy the app's
+  saved files to your Google account backup and restore them on a new phone;
+  Honest Arcade never receives them. Uninstalling the app deletes them from
+  the phone.
 - The app shows no ads and contains no purchases.
 - Children's privacy: since no data is collected from anyone, no data is
   collected from children.

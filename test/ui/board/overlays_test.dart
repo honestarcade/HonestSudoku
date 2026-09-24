@@ -130,7 +130,7 @@ void main() {
     });
   });
 
-  testWidgets('won: PUZZLE SOLVED, four tiles, the streak plus one', (
+  testWidgets('won: PUZZLE SOLVED, four tiles, the streak as recorded', (
     tester,
   ) async {
     await pumpOverlays(
@@ -155,7 +155,7 @@ void main() {
     expect(
       find.descendant(
         of: find.byKey(const ValueKey('tile-streak')),
-        matching: find.text('5'),
+        matching: find.text('4'),
       ),
       findsOneWidget,
     );

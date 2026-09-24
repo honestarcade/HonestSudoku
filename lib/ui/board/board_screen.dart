@@ -13,9 +13,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:honest_sudoku/game/game.dart';
 
-import '../loading_placeholder.dart';
-import '../placeholder_screen.dart';
-import '../strings.dart';
+import '../routes.dart';
 import '../theme/board_theme.dart';
 import 'board_grid.dart';
 import 'board_layout.dart';
@@ -84,32 +82,38 @@ class _BoardScreenState extends State<BoardScreen> with RouteAware {
   }
 
   @override
+  void didPush() => _c.enterBoard();
+
+  @override
   void didPushNext() => _c.setBoardVisible(false);
 
   @override
-  void didPopNext() => _c.setBoardVisible(true);
+  void didPopNext() => _c.enterBoard();
 
-  void _goTo(String destination) {
-    // Leaving the board pauses the game, so time does not run behind the
-    // placeholder and the card is waiting on the way back.
+  /// Leaves for another screen over the board. A live game pauses first, so
+  /// no time runs behind the other screen and the card waits on the return.
+  void _push(String route) {
     final s = _c.state;
     if (s != null && !s.won && !s.lost) _c.pause();
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => PlaceholderScreen(destination: destination),
-      ),
-    );
+    Navigator.of(context).pushNamed(route);
+  }
+
+  void _mainMenu() {
+    final s = _c.state;
+    if (s != null && !s.won && !s.lost) _c.pause();
+    Routes.toMenu(context);
+  }
+
+  void _newDeal() {
+    _c.newDeal();
+    Routes.toLoadingForGeneration(context);
   }
 
   void _onBack() {
-    if (_c.loading != null) {
-      _c.cancelGeneration();
-      return;
-    }
     final s = _c.state;
     if (s == null) return;
     if (s.won || s.lost || s.paused) {
-      _goTo(UiStrings.mainMenu);
+      _mainMenu();
     } else {
       _c.pause();
     }
@@ -145,14 +149,7 @@ class _BoardScreenState extends State<BoardScreen> with RouteAware {
     final geo = frameGeometry(size, MediaQuery.paddingOf(context).top);
     final s = geo.scale;
     final state = _c.state;
-    if (state == null || _c.loading != null) {
-      return LoadingPlaceholder(
-        status: _c.loading,
-        failure: _c.generationFailure,
-        scale: s,
-        onRetry: _c.retry,
-      );
-    }
+    if (state == null) return const SizedBox.expand();
     return SizedBox.expand(
       child: BoardOverlays(
         state: state,
@@ -160,11 +157,11 @@ class _BoardScreenState extends State<BoardScreen> with RouteAware {
         scale: s,
         onResume: _c.resume,
         onRestart: _c.restart,
-        onNewDeal: _c.newDeal,
-        onRules: () => _goTo(UiStrings.rules),
-        onSettings: () => _goTo(UiStrings.settings),
-        onMainMenu: () => _goTo(UiStrings.mainMenu),
-        onChangeSetup: () => _goTo(UiStrings.newPuzzle),
+        onNewDeal: _newDeal,
+        onRules: () => _push(Routes.howto),
+        onSettings: () => _push(Routes.settings),
+        onMainMenu: _mainMenu,
+        onChangeSetup: () => _push(Routes.setup),
         board: (_) => Stack(
           children: [
             Positioned(
@@ -182,8 +179,7 @@ class _BoardScreenState extends State<BoardScreen> with RouteAware {
 
   Widget _frame(GameState state, double s) {
     final grid = ScaledGrid(BoardLayout.of(state.shape), s);
-    final failure = _c.generationFailure;
-    final notice = failure?.notice ?? state.notice;
+    final notice = state.notice;
     final noticeY = kGridY * s + grid.gridPx + 12 * s;
     final padY = noticeY + (notice == null ? 0 : kNoticeShift * s);
     return Stack(
@@ -217,13 +213,7 @@ class _BoardScreenState extends State<BoardScreen> with RouteAware {
           Positioned(
             left: kSideInset * s,
             top: noticeY,
-            child: NoticeBanner(
-              notice: notice,
-              scale: s,
-              action: failure == null
-                  ? null
-                  : NoticeAction(UiStrings.tryAgain, _c.retry),
-            ),
+            child: NoticeBanner(notice: notice, scale: s),
           ),
         Positioned(
           left: kSideInset * s,

@@ -75,6 +75,8 @@ class DesignButton extends StatefulWidget {
     this.padding = EdgeInsets.zero,
     this.height,
     this.semanticsLabel,
+    this.borderWidth = 1,
+    this.alignment = Alignment.center,
     super.key,
   });
 
@@ -125,6 +127,12 @@ class DesignButton extends StatefulWidget {
   /// What a screen reader says; the child's text when null (M5 fills these).
   final String? semanticsLabel;
 
+  /// The edge's width in design points.
+  final double borderWidth;
+
+  /// Where the child sits in the box.
+  final AlignmentGeometry alignment;
+
   @override
   State<DesignButton> createState() => _DesignButtonState();
 }
@@ -144,11 +152,13 @@ class _DesignButtonState extends State<DesignButton> {
     Widget box = Container(
       height: widget.height == null ? null : widget.height! * s,
       padding: widget.padding * s,
-      alignment: Alignment.center,
+      alignment: widget.alignment,
       decoration: BoxDecoration(
         color: spec.bg,
         borderRadius: BorderRadius.circular(widget.radius * s),
-        border: spec.edge.a == 0 ? null : Border.all(color: spec.edge),
+        border: spec.edge.a == 0
+            ? null
+            : Border.all(color: spec.edge, width: widget.borderWidth * s),
       ),
       child: DefaultTextStyle.merge(
         style: TextStyle(color: spec.fg),

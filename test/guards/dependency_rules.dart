@@ -573,9 +573,12 @@ List<Offender> sourceOffenders(String path, String text) {
 
   // lib/links.dart is the one file allowed to hold a URL.
   final allowsHttps = path == 'lib/links.dart';
-  // No file in lib/ needs dart:io today. When one does, name it here in the
-  // same commit as the conversation that authorised it.
-  const allowsDartIo = false;
+  // lib/store/ alone reads and writes files: the player's settings, game and
+  // statistics (#38, planned with the owner on 2026-09-18 together with
+  // path_provider, whose manifest declares no permissions). Everything else
+  // in lib/ still may not import dart:io, and the networking names below
+  // stay banned in lib/store/ as everywhere.
+  final allowsDartIo = path.startsWith('lib/store/');
 
   // The one a name list cannot catch: `Process.run('curl', [url])`.
   //
