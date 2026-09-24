@@ -65,7 +65,6 @@ Widget cardButton({
   onPressed: onPressed,
   child: Text(
     label,
-    textScaler: TextScaler.noScaling,
     style: outfit(fontSize, scale: scale, weight: weight, color: spec.fg),
   ),
 );
@@ -117,7 +116,6 @@ class StatTile extends StatelessWidget {
         children: [
           Text(
             label,
-            textScaler: TextScaler.noScaling,
             style: plexMono(
               9,
               scale: scale,
@@ -128,7 +126,6 @@ class StatTile extends StatelessWidget {
           SizedBox(height: 7 * scale),
           Text(
             value,
-            textScaler: TextScaler.noScaling,
             style: outfit(18, scale: scale, weight: FontWeight.w600),
           ),
         ],

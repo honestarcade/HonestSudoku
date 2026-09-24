@@ -113,15 +113,19 @@ class NumberPad extends StatelessWidget {
     radius: 12,
     onPressed: onTap,
     semanticsLabel: semantics,
-    child: Text(
-      label,
-      softWrap: false,
-      textScaler: TextScaler.noScaling,
-      style: outfit(
-        fontSize,
-        scale: scale,
-        weight: FontWeight.w600,
-        color: spec.fg,
+    child: FittedBox(
+      // Keys keep their height; at a large font size the digit scales down
+      // inside its key rather than overflow it (#53).
+      fit: BoxFit.scaleDown,
+      child: Text(
+        label,
+        softWrap: false,
+        style: outfit(
+          fontSize,
+          scale: scale,
+          weight: FontWeight.w600,
+          color: spec.fg,
+        ),
       ),
     ),
   );

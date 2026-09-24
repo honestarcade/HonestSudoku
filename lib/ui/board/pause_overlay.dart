@@ -72,7 +72,6 @@ class PauseOverlay extends StatelessWidget {
             ExcludeSemantics(
               child: Text(
                 UiStrings.paused,
-                textScaler: TextScaler.noScaling,
                 style: outfit(19, scale: s, weight: FontWeight.w600),
               ),
             ),
@@ -86,7 +85,6 @@ class PauseOverlay extends StatelessWidget {
               excludeSemantics: true,
               child: Text(
                 state.pauseMeta,
-                textScaler: TextScaler.noScaling,
                 style: plexMono(
                   10,
                   scale: s,
@@ -113,7 +111,6 @@ class PauseOverlay extends StatelessWidget {
                     excludeSemantics: true,
                     child: Text(
                       UiStrings.boardHidden,
-                      textScaler: TextScaler.noScaling,
                       style: plexMono(
                         8.5,
                         scale: s,
@@ -134,7 +131,6 @@ class PauseOverlay extends StatelessWidget {
                     excludeSemantics: true,
                     child: Text(
                       state.pauseFill,
-                      textScaler: TextScaler.noScaling,
                       style: outfit(
                         11.5,
                         scale: s,

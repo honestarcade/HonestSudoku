@@ -1,6 +1,8 @@
 // The banner under the grid: MISTAKE, GRID FULL, CHECK and the hints, in the
 // design's three colourings, with an optional action for a retry.
 
+import 'dart:math' as math;
+
 import 'package:flutter/widgets.dart';
 import 'package:honest_sudoku/game/game.dart';
 
@@ -30,6 +32,7 @@ class NoticeBanner extends StatelessWidget {
     required this.scale,
     this.action,
     this.labelled = true,
+    this.maxLines = 3,
     super.key,
   });
 
@@ -47,6 +50,65 @@ class NoticeBanner extends StatelessWidget {
   /// new notice is a label change TalkBack announces (#51).
   final bool labelled;
 
+  /// The body's line cap before an ellipsis: 3, or 2 where the pad needs
+  /// the room (#53).
+  final int maxLines;
+
+  static TextStyle _tagStyle(NoticeStyle style, double scale) =>
+      plexMono(8.5, scale: scale, color: style.kicker, letterSpacingEm: .16);
+
+  static TextStyle _bodyStyle(double scale) =>
+      outfit(11.5, scale: scale, color: HsColors.bodyBlue, lineHeight: 1.45);
+
+  static TextStyle _actionStyle(NoticeStyle style, double scale) =>
+      plexMono(10, scale: scale, color: style.kicker);
+
+  /// The banner's height in logical pixels for [notice] with [maxLines],
+  /// at [scale] under [textScaler], computed before layout so the pad's
+  /// place and the line cap are decided in the same frame.
+  static double measureHeight({
+    required Notice notice,
+    required double scale,
+    required TextScaler textScaler,
+    int maxLines = 3,
+    String? actionLabel,
+  }) {
+    final style = noticeStyle(notice.kind);
+    double laidOut(String text, TextStyle ts, double width, int lines) {
+      final p = TextPainter(
+        text: TextSpan(text: text, style: ts),
+        textDirection: TextDirection.ltr,
+        textScaler: textScaler,
+        maxLines: lines,
+        ellipsis: '\u2026',
+      )..layout(maxWidth: width);
+      final h = p.height;
+      p.dispose();
+      return h;
+    }
+
+    double actionWidth = 0;
+    double actionHeight = 0;
+    if (actionLabel != null) {
+      final p = TextPainter(
+        text: TextSpan(text: actionLabel, style: _actionStyle(style, scale)),
+        textDirection: TextDirection.ltr,
+        textScaler: textScaler,
+        maxLines: 1,
+      )..layout();
+      actionWidth = p.width + 16 * scale + 2 + 10 * scale;
+      actionHeight = p.height + 10 * scale + 2;
+      p.dispose();
+    }
+    // Container: horizontal padding 13, the 1-px border on each side.
+    final width = kPadWidth * scale - 26 * scale - 2 - actionWidth;
+    final text =
+        laidOut(notice.tag, _tagStyle(style, scale), width, 1) +
+        7 * scale +
+        laidOut(notice.body, _bodyStyle(scale), width, maxLines);
+    return math.max(text, actionHeight) + 22 * scale + 2;
+  }
+
   @override
   Widget build(BuildContext context) {
     final style = noticeStyle(notice.kind);
@@ -56,26 +118,16 @@ class NoticeBanner extends StatelessWidget {
       children: [
         Text(
           notice.tag,
-          textScaler: TextScaler.noScaling,
-          style: plexMono(
-            8.5,
-            scale: scale,
-            color: style.kicker,
-            letterSpacingEm: .16,
-          ),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: _tagStyle(style, scale),
         ),
         SizedBox(height: 7 * scale),
         Text(
           notice.body,
-          maxLines: 2,
+          maxLines: maxLines,
           overflow: TextOverflow.ellipsis,
-          textScaler: TextScaler.noScaling,
-          style: outfit(
-            11.5,
-            scale: scale,
-            color: HsColors.bodyBlue,
-            lineHeight: 1.45,
-          ),
+          style: _bodyStyle(scale),
         ),
       ],
     );
@@ -128,8 +180,9 @@ class NoticeBanner extends StatelessWidget {
                       ),
                       child: Text(
                         a.label,
-                        textScaler: TextScaler.noScaling,
-                        style: plexMono(10, scale: scale, color: style.kicker),
+                        maxLines: 1,
+                        softWrap: false,
+                        style: _actionStyle(style, scale),
                       ),
                     ),
                   ),

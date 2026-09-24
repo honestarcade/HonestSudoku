@@ -142,7 +142,6 @@ class _GameOverOverlayState extends State<GameOverOverlay>
           ExcludeSemantics(
             child: Text(
               won ? UiStrings.wonTag : UiStrings.lostTag,
-              textScaler: TextScaler.noScaling,
               style: plexMono(10, scale: s, color: kicker, letterSpacingEm: .2),
             ),
           ),
@@ -150,7 +149,6 @@ class _GameOverOverlayState extends State<GameOverOverlay>
           ExcludeSemantics(
             child: Text(
               won ? UiStrings.wonTitle : UiStrings.lostTitle,
-              textScaler: TextScaler.noScaling,
               style: outfit(
                 26,
                 scale: s,
@@ -165,7 +163,6 @@ class _GameOverOverlayState extends State<GameOverOverlay>
             won
                 ? UiStrings.wonBody(state.shape.label, state.difficulty.label)
                 : UiStrings.lostBody(state.settings.strikeMode.limit ?? 0),
-            textScaler: TextScaler.noScaling,
             style: outfit(
               12.5,
               scale: s,

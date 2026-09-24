@@ -106,7 +106,6 @@ class ToolBar extends StatelessWidget {
         children: [
           Text(
             icon,
-            textScaler: TextScaler.noScaling,
             style: outfit(
               14,
               scale: scale,
@@ -117,8 +116,9 @@ class ToolBar extends StatelessWidget {
           SizedBox(height: 5 * scale),
           Text(
             label,
+            maxLines: 1,
             softWrap: false,
-            textScaler: TextScaler.noScaling,
+            overflow: TextOverflow.visible,
             style: plexMono(
               8,
               scale: scale,

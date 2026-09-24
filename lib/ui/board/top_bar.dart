@@ -77,7 +77,6 @@ class TopBar extends StatelessWidget {
             child: Text(
               '❚❚ $title',
               softWrap: false,
-              textScaler: TextScaler.noScaling,
               style: outfit(11.5, scale: scale, weight: FontWeight.w500),
             ),
           ),
@@ -158,7 +157,6 @@ class ReadoutChip extends StatelessWidget {
       child: Text(
         text,
         softWrap: false,
-        textScaler: TextScaler.noScaling,
         style: plexMono(10, scale: scale, color: style.fg),
       ),
     ),

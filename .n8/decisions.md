@@ -1094,3 +1094,12 @@ than per-story.
 - **Decision:** No `@visibleForTesting` state setter on the controller. The contrast states (hint, wrong entry, note mode, pause, win, out of strikes) are staged through the real verbs on the fixture board.
   **Why:** Every state is reachable in a few verbs, and a setter would be a second way into the controller that nothing but tests uses.
   **Issue:** #52
+- **Decision:** No padding ladder on the top bar's chips, and the pause button keeps its difficulty word. The matrix at 360×640 and 1.3×, with the bundled fonts loaded, lays the bar out on one row with no overflow in every size and mode, so the yield steps would never run.
+  **Why:** Writing a ladder that no supported configuration reaches would be untested code. The row's fit is asserted instead: no overflow, and every semantics node on screen. If a longer difficulty label or font ever breaks it, the matrix fails.
+  **Issue:** #53
+- **Decision:** The text-scale matrix also checks the stacking: banner above pad, pad at least 8 pt above the tools. Restoring the old fixed 76-pt shift fails ten of its 1.3× hint cases (run 2026-09-24, before commit).
+  **Why:** An overlapping banner raises no layout exception, so "no overflow" alone could not tell the measured layout from the old one. The story's "watch it fail first" needed this check.
+  **Issue:** #53
+- **Decision:** The win-card screenshot at 1.3× is not in #53's closing comment. The emulator's saved game is a 16×16 Expert board, and solving it through adb is impractical. The card at 1.3× on 360×640 is in the matrix, which asserts no overflow and every node on screen.
+  **Why:** The manual item's purpose, a card that fits at 1.3×, is carried by an executed check.
+  **Issue:** #53

@@ -25,8 +25,15 @@ const double kTopBarHeight = 44;
 /// The grid's y.
 const double kGridY = 100;
 
-/// How far the pad drops while a notice shows.
-const double kNoticeShift = 76;
+/// The gap between the notice and the pad: the design's 12, down to 4 only
+/// when a two-line notice would still push the pad into the tools (#53).
+const double kNoticeGap = 12;
+
+/// The tightest notice-to-pad gap.
+const double kNoticeGapMin = 4;
+
+/// How close the pad may come to the tools.
+const double kToolClearance = 8;
 
 /// The pad's and the notice's width.
 const double kPadWidth = 362;
@@ -100,9 +107,20 @@ final class BoardLayout {
   /// Where the notice goes: 12 under the grid.
   double get noticeY => kGridY + gridPx + 12;
 
-  /// Where the pad goes: under the notice while one shows.
-  double padY({required bool hasNotice}) =>
-      noticeY + (hasNotice ? kNoticeShift : 0);
+  /// Where the pad goes: under a notice [noticeHeight] design points tall
+  /// (0 for none), 12 below it, or 4 when 12 would reach the tools.
+  double padY({double noticeHeight = 0}) {
+    if (noticeHeight <= 0) return noticeY;
+    final roomy = noticeY + noticeHeight + kNoticeGap;
+    return _padFits(roomy) ? roomy : noticeY + noticeHeight + kNoticeGapMin;
+  }
+
+  bool _padFits(double y) => y + padHeight <= kToolBarY - kToolClearance;
+
+  /// The notice's line cap: 3 (owner, 2026-09-19), or 2 when a notice
+  /// [threeLineHeight] design points tall would put the pad over the tools.
+  int noticeMaxLines(double threeLineHeight) =>
+      _padFits(noticeY + threeLineHeight + kNoticeGap) ? 3 : 2;
 
   /// Pad columns: 4, 6, 5 and 4 for the four sizes.
   int get padCols => switch (_n) {

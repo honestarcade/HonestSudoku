@@ -230,16 +230,16 @@ void main() {
     });
   });
 
-  testWidgets('the pad drops 76 while a banner shows, and returns after', (
-    tester,
-  ) async {
+  testWidgets('the pad drops by the banner\'s height and 12 while it shows, '
+      'and returns after', (tester) async {
     await screenTest(tester, (c, _) async {
       final before = tester.getTopLeft(find.byKey(const ValueKey('pad'))).dy;
       final (cell, wrong) = emptyAndWrong(c.state!);
       await tapCellAndKey(tester, cell, wrong);
-      expect(find.byKey(const ValueKey('notice')), findsOneWidget);
+      final notice = find.byKey(const ValueKey('notice'));
+      expect(notice, findsOneWidget);
       final during = tester.getTopLeft(find.byKey(const ValueKey('pad'))).dy;
-      expect(during - before, 76);
+      expect(during - before, closeTo(tester.getSize(notice).height + 12, .5));
       await tester.tap(find.byKey(const ValueKey('tool-erase')));
       await tester.pump();
       expect(find.byKey(const ValueKey('notice')), findsNothing);
