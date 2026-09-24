@@ -147,6 +147,9 @@ no Android permissions at all, INTERNET included. The full policy is published
 at <https://honestarcade.github.io/HonestSudoku/privacy> and lives in this
 repository at `docs/privacy.md` — everything under `docs/` is public.
 
+Haptics follow your phone's touch-feedback setting and the in-app Haptics
+toggle; they need no permission.
+
 ## License
 
 **MIT** (see `LICENSE`) — covering the source code and the art, so a clone

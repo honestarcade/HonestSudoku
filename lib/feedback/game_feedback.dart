@@ -1,4 +1,4 @@
-// What the player hears when a number lands (#49).
+// What the player hears and feels when a number lands (#49, #55).
 //
 // GameFeedback listens to the controller and, after each placement, derives at
 // most one event by priority: the last strike, then a solve, then a counted
@@ -13,15 +13,16 @@
 import 'dart:async';
 import 'dart:developer' as developer;
 
-import 'package:honest_sudoku/engine/engine.dart';
 import 'package:honest_sudoku/game/game.dart';
 
 import '../ui/board/game_action.dart';
 import '../ui/board/game_controller.dart';
 import 'feedback_event.dart';
+import 'haptics.dart';
 import 'sound_player.dart';
 
 export 'feedback_event.dart';
+export 'haptics.dart';
 export 'sound_player.dart';
 
 /// Reads the asset keys the app bundles.
@@ -32,12 +33,14 @@ class GameFeedback {
   /// Creates the feedback over a player, resolving clips through [manifest].
   GameFeedback({
     required this._player,
+    this._haptics = const NoHaptics(),
     AssetManifestReader? manifest,
     void Function(String message)? log,
   }) : _manifest = manifest ?? (() async => const <String>{}),
        _log = log ?? _defaultLog;
 
   final SoundPlayer _player;
+  final HapticsPort _haptics;
   final AssetManifestReader _manifest;
   final void Function(String) _log;
   GameController? _controller;
@@ -92,21 +95,20 @@ class GameFeedback {
     final event = deriveEvent(prev, next);
     if (event == null) return;
     _lastEvent = event;
+    // The placed cell clashes when the board shows it clashing: a peer
+    // tinted by the conflicts toggle (the same set the grid tints), or a
+    // mistake announced at once.
+    final placed = c.lastPlacedIndex;
     _clash =
         event == FeedbackEvent.mistake ||
-        (next.settings.conflicts &&
-            c.lastPlacedIndex != null &&
-            _peersHold(next, c.lastPlacedIndex!));
+        (placed != null &&
+            next.selected == placed &&
+            next.conflictCells.isNotEmpty);
     if (_sfx) _player.play(event);
-  }
-
-  static bool _peersHold(GameState s, int i) {
-    final v = s.values[i];
-    if (v == 0) return false;
-    for (final j in unitsOf(s.shape, i)) {
-      if (s.values[j] == v) return true;
+    if (c.settings.haptics) {
+      final firm = event != FeedbackEvent.place || _clash;
+      unawaited(firm ? _haptics.medium() : _haptics.light());
     }
-    return false;
   }
 }
 

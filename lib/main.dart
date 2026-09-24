@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'feedback/haptics.dart';
 import 'feedback/sound_player.dart';
 import 'ui/app.dart';
 
@@ -12,6 +13,7 @@ Future<void> main() async {
   runApp(
     HonestSudokuApp(
       sound: ChannelSoundPlayer(),
+      haptics: FlutterHaptics(),
       assetManifest: () async =>
           (await AssetManifest.loadFromAssetBundle(rootBundle))
               .listAssets()

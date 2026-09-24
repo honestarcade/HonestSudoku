@@ -10,22 +10,7 @@ import 'package:honest_sudoku/ui/board/game_controller.dart';
 
 import '../game/fixtures.dart';
 import '../ui/stub_generator.dart';
-
-/// Records what would have played.
-final class RecordingPlayer implements SoundPlayer {
-  final loaded = <Map<FeedbackEvent, String>>[];
-  final played = <FeedbackEvent>[];
-
-  @override
-  Future<void> load(Map<FeedbackEvent, String> assets) async =>
-      loaded.add(assets);
-
-  @override
-  void play(FeedbackEvent e) => played.add(e);
-
-  @override
-  Future<void> dispose() async {}
-}
+import 'fakes.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();

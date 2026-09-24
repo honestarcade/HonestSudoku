@@ -39,6 +39,7 @@ class HonestSudokuApp extends StatefulWidget {
     this.links,
     this.buildInfo,
     this.sound,
+    this.haptics,
     this.assetManifest,
     this.initialRoute = Routes.loading,
     super.key,
@@ -63,6 +64,9 @@ class HonestSudokuApp extends StatefulWidget {
   /// Plays the game's sounds; silent when absent.
   final SoundPlayer? sound;
 
+  /// Ticks on placements; none when absent.
+  final HapticsPort? haptics;
+
   /// Lists the bundled assets, to find each sound's clip; none when absent.
   final AssetManifestReader? assetManifest;
 
@@ -82,6 +86,7 @@ class _HonestSudokuAppState extends State<HonestSudokuApp> {
   late final SoundPlayer _sound = widget.sound ?? const NoSoundPlayer();
   late final GameFeedback _feedback = GameFeedback(
     player: _sound,
+    haptics: widget.haptics ?? const NoHaptics(),
     manifest: widget.assetManifest,
   );
   final _routeNames = RouteNames();
