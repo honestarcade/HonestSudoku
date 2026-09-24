@@ -5,6 +5,7 @@
 import 'package:flutter/widgets.dart';
 import 'package:honest_sudoku/game/game.dart';
 
+import '../a11y/labels.dart';
 import '../theme/board_theme.dart';
 import '../theme/tokens.dart';
 import 'board_layout.dart';
@@ -63,58 +64,83 @@ class BoardGrid extends StatelessWidget {
     final grid = ScaledGrid(layout, scale);
     final radius = BorderRadius.circular(8 * scale);
     final selected = state.selected;
-    return Container(
-      width: grid.gridPx,
-      height: grid.gridPx,
-      decoration: BoxDecoration(
-        color: theme.gridBg,
-        borderRadius: radius,
-        boxShadow: [theme.ringShadow],
-      ),
-      child: ClipRRect(
-        borderRadius: radius,
-        child: Stack(
-          children: [
-            for (var i = 0; i < state.shape.cellCount; i++)
-              Positioned(
-                left: grid.cellOffset(i).dx,
-                top: grid.cellOffset(i).dy,
-                width: grid.cellPx,
-                height: grid.cellPx,
-                child: RepaintBoundary(
-                  child: _Cell(
-                    index: i,
-                    state: state,
-                    theme: theme,
-                    layout: layout,
-                    scale: scale,
-                    onTap: onTapCell,
+    // The grid names itself without being a stop of its own; its cells are
+    // the nodes, tagged for #56's tap-target exemption.
+    return Semantics(
+      container: true,
+      explicitChildNodes: true,
+      label: '${sizeWords(state.shape.label)} board',
+      tagForChildren: kGridCellTag,
+      child: Container(
+        width: grid.gridPx,
+        height: grid.gridPx,
+        decoration: BoxDecoration(
+          color: theme.gridBg,
+          borderRadius: radius,
+          boxShadow: [theme.ringShadow],
+        ),
+        child: ClipRRect(
+          borderRadius: radius,
+          child: Stack(
+            children: [
+              for (var i = 0; i < state.shape.cellCount; i++)
+                Positioned(
+                  left: grid.cellOffset(i).dx,
+                  top: grid.cellOffset(i).dy,
+                  width: grid.cellPx,
+                  height: grid.cellPx,
+                  child: RepaintBoundary(
+                    child: _Cell(
+                      index: i,
+                      state: state,
+                      theme: theme,
+                      layout: layout,
+                      scale: scale,
+                      onTap: onTapCell,
+                    ),
+                  ),
+                ),
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: CustomPaint(
+                    painter: GridLinesPainter(
+                      lines: gridLines(grid),
+                      thin: theme.thin,
+                      thick: theme.thick,
+                      ringRect: selected == null
+                          ? null
+                          : grid.cellOffset(selected) &
+                                Size(grid.cellPx, grid.cellPx),
+                      ringColor: ringColor(state, theme),
+                      ringWidth: grid.thickPx,
+                      ringRadius: 3 * scale,
+                    ),
                   ),
                 ),
               ),
-            Positioned.fill(
-              child: IgnorePointer(
-                child: CustomPaint(
-                  painter: GridLinesPainter(
-                    lines: gridLines(grid),
-                    thin: theme.thin,
-                    thick: theme.thick,
-                    ringRect: selected == null
-                        ? null
-                        : grid.cellOffset(selected) &
-                              Size(grid.cellPx, grid.cellPx),
-                    ringColor: ringColor(state, theme),
-                    ringWidth: grid.thickPx,
-                    ringRadius: 3 * scale,
-                  ),
-                ),
-              ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
   }
+}
+
+/// What a screen reader says for cell [i] of [s].
+String cellLabelFor(GameState s, int i) {
+  final n = s.n;
+  final value = s.values[i];
+  return cellLabel(
+    row: i ~/ n + 1,
+    col: i % n + 1,
+    value: value == 0 ? null : s.shape.symbolFor(value),
+    given: s.isGiven(i),
+    notes: [for (final v in s.notes[i]) s.shape.symbolFor(v)],
+    candidates: s.settings.autoNotes,
+    wrong: s.showWrong && s.isWrong(i),
+    conflict: s.conflictCells.contains(i),
+    hint: s.hintedCell == i,
+  );
 }
 
 class _Cell extends StatelessWidget {
@@ -169,13 +195,21 @@ class _Cell extends StatelessWidget {
         ),
       );
     }
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
+    return Semantics(
+      container: true,
+      selected: state.selected == index,
+      label: cellLabelFor(state, index),
       onTap: () => onTap(index),
-      child: DecoratedBox(
-        key: ValueKey('cell-$index'),
-        decoration: BoxDecoration(color: cellBackground(state, theme, index)),
-        child: content ?? const SizedBox.expand(),
+      onTapHint: 'select',
+      excludeSemantics: true,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => onTap(index),
+        child: DecoratedBox(
+          key: ValueKey('cell-$index'),
+          decoration: BoxDecoration(color: cellBackground(state, theme, index)),
+          child: content ?? const SizedBox.expand(),
+        ),
       ),
     );
   }

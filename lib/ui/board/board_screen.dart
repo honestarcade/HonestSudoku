@@ -13,7 +13,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:honest_sudoku/game/game.dart';
 
+import '../a11y/labels.dart';
 import '../routes.dart';
+import '../strings.dart';
 import '../theme/board_theme.dart';
 import 'board_grid.dart';
 import 'board_layout.dart';
@@ -151,27 +153,35 @@ class _BoardScreenState extends State<BoardScreen> with RouteAware {
     final state = _c.state;
     if (state == null) return const SizedBox.expand();
     return SizedBox.expand(
-      child: BoardOverlays(
-        state: state,
-        stats: _c.stats,
-        scale: s,
-        onResume: _c.resume,
-        onRestart: _c.restart,
-        onNewDeal: _newDeal,
-        onRules: () => _push(Routes.howto),
-        onSettings: () => _push(Routes.settings),
-        onMainMenu: _mainMenu,
-        onChangeSetup: () => _push(Routes.setup),
-        board: (_) => Stack(
-          children: [
-            Positioned(
-              left: (size.width - kFrameWidth * s) / 2,
-              top: geo.top,
-              width: kFrameWidth * s,
-              height: kFrameHeight * s,
-              child: _frame(state, s),
-            ),
-          ],
+      // One live region over board and cards alike, so pausing, winning and
+      // losing each change its label and TalkBack speaks the card's title.
+      child: Semantics(
+        key: const ValueKey('overlay-live'),
+        container: true,
+        liveRegion: true,
+        label: overlayAnnouncement(state),
+        child: BoardOverlays(
+          state: state,
+          stats: _c.stats,
+          scale: s,
+          onResume: _c.resume,
+          onRestart: _c.restart,
+          onNewDeal: _newDeal,
+          onRules: () => _push(Routes.howto),
+          onSettings: () => _push(Routes.settings),
+          onMainMenu: _mainMenu,
+          onChangeSetup: () => _push(Routes.setup),
+          board: (_) => Stack(
+            children: [
+              Positioned(
+                left: (size.width - kFrameWidth * s) / 2,
+                top: geo.top,
+                width: kFrameWidth * s,
+                height: kFrameHeight * s,
+                child: _frame(state, s),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -190,6 +200,10 @@ class _BoardScreenState extends State<BoardScreen> with RouteAware {
           top: kTopBarY * s,
           child: TopBar(
             title: state.boardTitle,
+            pauseSemantics: pauseLabel(
+              state.shape.label,
+              state.difficulty.label,
+            ),
             elapsedSeconds: state.elapsedSeconds,
             mistakes: state.mistakes,
             strikeMode: state.settings.strikeMode,
@@ -209,12 +223,21 @@ class _BoardScreenState extends State<BoardScreen> with RouteAware {
             onTapCell: _c.select,
           ),
         ),
-        if (notice != null)
-          Positioned(
-            left: kSideInset * s,
-            top: noticeY,
-            child: NoticeBanner(notice: notice, scale: s),
+        // Always present, so every new notice is a label change on the same
+        // live region; an empty label while there is none.
+        Positioned(
+          left: kSideInset * s,
+          top: noticeY,
+          child: Semantics(
+            key: const ValueKey('notice-live'),
+            container: true,
+            liveRegion: true,
+            label: notice == null ? '' : noticeLabel(notice.tag, notice.body),
+            child: notice == null
+                ? SizedBox(width: kPadWidth * s, height: 1)
+                : NoticeBanner(notice: notice, scale: s, labelled: false),
           ),
+        ),
         Positioned(
           left: kSideInset * s,
           top: padY,
@@ -244,4 +267,13 @@ class _BoardScreenState extends State<BoardScreen> with RouteAware {
       ],
     );
   }
+}
+
+/// What the overlays' live region says: the card's title, or nothing while
+/// the board shows.
+String overlayAnnouncement(GameState s) {
+  if (s.won) return overlayTitleLabel(UiStrings.wonTag, UiStrings.wonTitle);
+  if (s.lost) return overlayTitleLabel(UiStrings.lostTag, UiStrings.lostTitle);
+  if (s.paused) return overlayTitleLabel(null, UiStrings.paused);
+  return '';
 }

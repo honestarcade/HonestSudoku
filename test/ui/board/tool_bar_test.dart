@@ -30,7 +30,15 @@ void main() {
   }
 
   testWidgets('each tool calls its own callback exactly once', (tester) async {
-    await pumpTools(tester, GameState.start(classic));
+    // Two entries and one undo: something to undo and something to redo.
+    final s = GameState.start(classic)
+        .select(1)
+        .place(classic.solution[1])
+        .select(3)
+        .place(classic.solution[3])
+        .undo();
+    expect((s.canUndo, s.canRedo), (true, true));
+    await pumpTools(tester, s);
     for (final name in ['undo', 'redo', 'notes', 'erase', 'hint', 'check']) {
       await tester.tap(find.byKey(ValueKey('tool-$name')));
     }
@@ -42,6 +50,15 @@ void main() {
       'hint': 1,
       'check': 1,
     });
+  });
+
+  testWidgets('undo and redo are inert with nothing to undo or redo', (
+    tester,
+  ) async {
+    await pumpTools(tester, GameState.start(classic));
+    await tester.tap(find.byKey(const ValueKey('tool-undo')));
+    await tester.tap(find.byKey(const ValueKey('tool-redo')));
+    expect(calls, isEmpty);
   });
 
   testWidgets('with auto-notes the notes tool reads AUTO and ignores taps', (

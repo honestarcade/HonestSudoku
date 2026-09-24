@@ -76,6 +76,7 @@ class DesignButton extends StatefulWidget {
     this.padding = EdgeInsets.zero,
     this.height,
     this.semanticsLabel,
+    this.semanticsToggled,
     this.borderWidth = 1,
     this.alignment = Alignment.center,
     super.key,
@@ -125,8 +126,12 @@ class DesignButton extends StatefulWidget {
   /// Fixed height in design points, if any.
   final double? height;
 
-  /// What a screen reader says; the child's text when null (M5 fills these).
+  /// What a screen reader says in place of the child's text; the child's
+  /// text is read when null.
   final String? semanticsLabel;
+
+  /// On or off, for a button that switches something (the notes tool).
+  final bool? semanticsToggled;
 
   /// The edge's width in design points.
   final double borderWidth;
@@ -173,22 +178,26 @@ class _DesignButtonState extends State<DesignButton> {
       curve: kMotionCurve,
       child: box,
     );
-    if (widget.semanticsLabel != null) {
-      box = Semantics(
-        button: true,
-        enabled: enabled,
-        label: widget.semanticsLabel,
-        excludeSemantics: true,
-        child: box,
-      );
-    }
-    return GestureDetector(
+    final pressable = GestureDetector(
       behavior: HitTestBehavior.opaque,
+      excludeFromSemantics: true,
       onTap: widget.onPressed,
       onTapDown: enabled ? (_) => _set(true) : null,
       onTapUp: enabled ? (_) => _set(false) : null,
       onTapCancel: enabled ? () => _set(false) : null,
       child: box,
+    );
+    // One node per button, carrying its own tap. An inert button is
+    // announced as disabled and has no tap action.
+    return Semantics(
+      container: true,
+      button: true,
+      enabled: enabled,
+      toggled: widget.semanticsToggled,
+      label: widget.semanticsLabel,
+      onTap: widget.onPressed,
+      excludeSemantics: widget.semanticsLabel != null,
+      child: pressable,
     );
   }
 }

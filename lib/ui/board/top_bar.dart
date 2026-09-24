@@ -4,6 +4,7 @@
 import 'package:flutter/widgets.dart';
 import 'package:honest_sudoku/game/game.dart';
 
+import '../a11y/labels.dart';
 import '../theme/tokens.dart';
 import '../widgets/design_button.dart';
 import 'board_layout.dart';
@@ -14,6 +15,7 @@ class TopBar extends StatelessWidget {
   /// Creates the bar.
   const TopBar({
     required this.title,
+    required this.pauseSemantics,
     required this.elapsedSeconds,
     required this.mistakes,
     required this.strikeMode,
@@ -26,6 +28,9 @@ class TopBar extends StatelessWidget {
 
   /// `<size> · <difficulty>`.
   final String title;
+
+  /// What a screen reader says for the pause button.
+  final String pauseSemantics;
 
   /// Played time.
   final int elapsedSeconds;
@@ -68,6 +73,7 @@ class TopBar extends StatelessWidget {
             radius: 10,
             padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 11),
             onPressed: isOver ? null : onPause,
+            semanticsLabel: pauseSemantics,
             child: Text(
               '❚❚ $title',
               softWrap: false,
@@ -80,6 +86,7 @@ class TopBar extends StatelessWidget {
             ReadoutChip(
               key: const ValueKey('chip-timer'),
               text: fmt(elapsedSeconds),
+              semanticsLabel: timeLabel(elapsedSeconds),
               style: plainChipStyle,
               scale: scale,
             ),
@@ -89,6 +96,8 @@ class TopBar extends StatelessWidget {
             ReadoutChip(
               key: const ValueKey('chip-zen'),
               text: 'ZEN',
+              semanticsLabel: strikeLabel(mistakes: mistakes, zen: true),
+              liveRegion: true,
               style: zenChipStyle,
               scale: scale,
             )
@@ -96,6 +105,8 @@ class TopBar extends StatelessWidget {
             ReadoutChip(
               key: const ValueKey('chip-strike'),
               text: '✕ $mistakes${limit == null ? '' : '/$limit'}',
+              semanticsLabel: strikeLabel(mistakes: mistakes, limit: limit),
+              liveRegion: true,
               style: strikeChipStyle(mistakes),
               scale: scale,
             ),
@@ -110,13 +121,21 @@ class ReadoutChip extends StatelessWidget {
   /// Creates a chip.
   const ReadoutChip({
     required this.text,
+    required this.semanticsLabel,
     required this.style,
     required this.scale,
+    this.liveRegion = false,
     super.key,
   });
 
   /// What it reads.
   final String text;
+
+  /// What a screen reader says: a label, not a button.
+  final String semanticsLabel;
+
+  /// Whether a change is announced (the strike count).
+  final bool liveRegion;
 
   /// Its colours.
   final ChipStyle style;
@@ -125,17 +144,23 @@ class ReadoutChip extends StatelessWidget {
   final double scale;
 
   @override
-  Widget build(BuildContext context) => Container(
-    padding: EdgeInsets.symmetric(vertical: 7 * scale, horizontal: 9 * scale),
-    decoration: BoxDecoration(
-      color: style.bg,
-      borderRadius: BorderRadius.circular(9 * scale),
-    ),
-    child: Text(
-      text,
-      softWrap: false,
-      textScaler: TextScaler.noScaling,
-      style: plexMono(10, scale: scale, color: style.fg),
+  Widget build(BuildContext context) => Semantics(
+    container: true,
+    label: semanticsLabel,
+    liveRegion: liveRegion,
+    excludeSemantics: true,
+    child: Container(
+      padding: EdgeInsets.symmetric(vertical: 7 * scale, horizontal: 9 * scale),
+      decoration: BoxDecoration(
+        color: style.bg,
+        borderRadius: BorderRadius.circular(9 * scale),
+      ),
+      child: Text(
+        text,
+        softWrap: false,
+        textScaler: TextScaler.noScaling,
+        style: plexMono(10, scale: scale, color: style.fg),
+      ),
     ),
   );
 }

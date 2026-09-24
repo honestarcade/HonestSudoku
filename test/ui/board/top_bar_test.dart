@@ -16,6 +16,7 @@ Future<void> pumpBar(
   tester,
   TopBar(
     title: s.boardTitle,
+    pauseSemantics: 'Pause',
     elapsedSeconds: s.elapsedSeconds,
     mistakes: s.mistakes,
     strikeMode: s.settings.strikeMode,
@@ -136,6 +137,7 @@ void main() {
           valueListenable: notifier,
           builder: (_, s, _) => TopBar(
             title: s.boardTitle,
+            pauseSemantics: 'Pause',
             elapsedSeconds: s.elapsedSeconds,
             mistakes: s.mistakes,
             strikeMode: s.settings.strikeMode,
