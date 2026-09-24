@@ -1136,3 +1136,12 @@ than per-story.
 - **Decision:** The screenshots are the whole display with the app immersive (no system bars), not the Flutter surface under visible bars.
   **Why:** The first capture took the Flutter surface at 1080×1857, since the navigation bar is not part of it, which misses Play's 9:16. The planner allowed the full-window route.
   **Issue:** #57
+
+## Ad-hoc — 2026-09-24
+
+- **Change:** `integration_test` cannot be a dev dependency while the gate and `release.yml` build the release bundle with `--no-pub`. Its Android plugin is written into `GeneratedPluginRegistrant.java` by `flutter pub get` (in debug mode), and the `--no-pub` release build then compiles a registrant naming a plugin that release builds exclude, so it fails. #57 captured the store screenshots with `flutter_driver` (pure Dart, no plugin) instead.
+  **Why:** Found executing #57 (M5). The alternatives were to drop `--no-pub` from the release build (pinned by `signing_guard_test.dart`, `workflow_guard_test.dart` and `release.yml`) or to exclude `integration_test/` from analysis. Both weaken a gate for a tooling need.
+  **Affects:** M6 #65 (`integration_test/engine_soak_test.dart`), #66 (`integration_test/app_flow_test.dart` and its `flutter drive` process-death plan) and #67 (which keeps those suites out of the gate by folder). Each needs `flutter_driver`, a change to the release build's pub handling agreed with the owner, or another route. #61's script can reuse `tools/screenshots.sh`'s SDK and `JAVA_HOME` resolution, which exists now.
+- **Change:** The mutation battery outgrew CI's 60-minute limit, then the 90-minute stopgap. M3's PR took about 80 minutes for 148 entries, and M4's run hit 90 at entry 149 of 150, all caught, at about 34 s an entry. It is 150 minutes now (on #288). Splitting it across jobs is #286 (needs-triage), and it needs a ci-shape exception for an `if: always()` aggregator, which is an owner call.
+  **Why:** Every guard adds an entry and about 26 s, so each milestone that adds guards moves the merge gate closer to the limit.
+  **Affects:** M6 and M7, whose stories add guards; each PR waits over an hour on `mutations` until #286 lands.
