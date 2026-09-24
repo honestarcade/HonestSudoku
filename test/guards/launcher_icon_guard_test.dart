@@ -231,6 +231,7 @@ void main() {
         'STUDIO-MARK.svg',
         'README.md',
         'fonts.conf',
+        'feature-graphic.svg', // #57's Play graphic, from the same mark
       });
       expect(
         stripYamlComments(readFile('pubspec.yaml')),

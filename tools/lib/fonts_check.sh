@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Sourced by tools/render_icons.sh and tools/render_store_assets.sh (#54, #57).
 #
 # Points rsvg-convert at the bundled fonts and refuses (exit 2) unless it

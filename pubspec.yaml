@@ -20,6 +20,8 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  flutter_driver: # why: drives the app on an emulator for the Play screenshots (#57); SDK, pure Dart, dev only
+    sdk: flutter
   flutter_lints: ^6.0.0
   # Test-only. It never ships: `flutter build` does not resolve
   # dev_dependencies, and the release bundle is byte-scanned every run.

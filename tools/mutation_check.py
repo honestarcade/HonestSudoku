@@ -1275,6 +1275,13 @@ MUTATIONS: list[Mutation] = [
                  r"\1"),
              "the system splash would flash the default white",
              'launcher-splash: 1 offender'),
+
+    # ---- #57: the Play listing art -----------------------------------------
+    Mutation("#57", "the feature graphic's mark drifts from the icon's",
+             "assets/brand/feature-graphic.svg",
+             sub(r'stroke="#8448FC"', 'stroke="#FF00FF"'),
+             "the listing would show a different mark from the app",
+             "store-sources: the feature graphic's mark drifted from the icon"),
 ]
 
 
