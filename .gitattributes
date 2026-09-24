@@ -18,3 +18,8 @@
 * text=auto eol=lf
 *.sh text eol=lf
 *.bat text eol=crlf
+*.ttf binary
+*.otf binary
+# Hashed byte-for-byte by tools/fetch_fonts.sh; upstream's IBM Plex Mono
+# licence has CRLF endings, which text=auto would rewrite on checkout (#47).
+assets/fonts/OFL-*.txt -text

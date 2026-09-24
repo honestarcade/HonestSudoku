@@ -111,6 +111,19 @@ class _HonestSudokuAppState extends State<HonestSudokuApp> {
     _ => _page(const RouteSettings(name: Routes.menu), const MenuScreen()),
   };
 
+  // Outfit for any text without a style of its own, with the system font
+  // behind it for the symbols Outfit lacks.
+  static final _theme = () {
+    final base = ThemeData(
+      brightness: Brightness.dark,
+      scaffoldBackgroundColor: HsColors.navy,
+      fontFamily: kFontOutfit,
+    );
+    return base.copyWith(
+      textTheme: base.textTheme.apply(fontFamilyFallback: kFontFallback),
+    );
+  }();
+
   @override
   Widget build(BuildContext context) => AppScope(
     controller: _controller,
@@ -121,11 +134,7 @@ class _HonestSudokuAppState extends State<HonestSudokuApp> {
     child: MaterialApp(
       title: 'Honest Sudoku',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        brightness: Brightness.dark,
-        scaffoldBackgroundColor: HsColors.navy,
-        fontFamily: kFontOutfit,
-      ),
+      theme: _theme,
       navigatorObservers: [_routeNames, _routeObserver],
       onGenerateInitialRoutes: (_) => [
         _route(

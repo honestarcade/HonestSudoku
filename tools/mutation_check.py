@@ -1193,6 +1193,30 @@ MUTATIONS: list[Mutation] = [
                  flags=re.M),
              "a second place resolving directories is a second place to get it wrong",
              'store-imports: 1 offender'),
+
+    # ---- #47: the bundled fonts --------------------------------------------
+    Mutation("#47", "the pubspec declares a weight that is not bundled",
+             "pubspec.yaml",
+             sub(r"(asset: assets/fonts/Outfit-Bold\.ttf\n\s+weight: )700$",
+                 r"\g<1>800", flags=re.M),
+             "Flutter would synthesise bold from the wrong face, silently",
+             'fonts-declared: 1 offender'),
+    Mutation("#47", "a style asks for a weight Outfit does not bundle",
+             "lib/ui/widgets/wordmark.dart",
+             sub(r"weight: FontWeight\.w700,", "weight: FontWeight.w800,"),
+             "the engine would fake a heavier weight instead of the design's",
+             'fonts-weights: 1 offender'),
+    Mutation("#47", "a font file stops matching its recorded hash",
+             "assets/fonts/SHA256SUMS",
+             sub(r"^[0-9a-f]{64}(  Outfit-Regular\.ttf)$", "0" * 64 + r"\1",
+                 flags=re.M),
+             "a swapped font file would ship unnoticed",
+             'fonts-check: fetch_fonts.sh --check exited 1'),
+    Mutation("#47", "a licence text drops out of the provenance record",
+             "assets/fonts/SOURCES.tsv",
+             sub(r"^OFL-IBMPlexMono\.txt\t[^\n]*\n", "", flags=re.M),
+             "the OFL requires the licence to travel with the fonts",
+             'fonts-provenance: 1 offender'),
 ]
 
 

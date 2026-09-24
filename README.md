@@ -153,12 +153,18 @@ repository at `docs/privacy.md` — everything under `docs/` is public.
 builds the actual game rather than a silhouette of it. Use it, learn from it,
 ship your own.
 
-Two things are held back, because they are not ours to give away:
+Three things are held back, because they are not ours to give away:
 
 **Audio.** When licensed sound effects ship, they will not be covered by the
 MIT licence, and their provenance will be recorded in the audio licence file
 that ships beside them. Synthesised placeholder sounds are MIT-covered like the
 rest of the code.
+
+**Fonts.** Outfit and IBM Plex Mono, bundled in `assets/fonts/`, are under
+the SIL Open Font License 1.1, whose texts sit beside them; they are neither
+covered by the MIT licence nor trademarks of Honest Arcade. IBM Plex Mono's
+licence reserves the font name "Plex" (Outfit's reserves none), and
+`assets/fonts/README.md` records where each file came from.
 
 **Names and logos.** "Honest Arcade", "Honest Sudoku", the four-corner outline
 mark shared across the studio's apps, and the launcher icons built from it are
