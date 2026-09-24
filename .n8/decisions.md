@@ -943,3 +943,67 @@ execution. The M2 finding was the one that mattered -- a systemic CI-timing risk
 have surfaced expensively (a cancelled required check, mid-milestone) rather than being caught
 by reading a single story in isolation, which is exactly why this pass ran per-milestone rather
 than per-story.
+
+## /n8-exec M2 — 2026-09-23
+
+- **Decision:** The design file is read through the `DesignSync` tool's read methods (`list_files`, `get_file`) on project `9e9471c9-5231-4fd8-9889-066345073295`, at the owner's direction in this session ("You should be able to access everything you need from the mcp"). The planning passes read it through a design connection this session does not have. The copy used is `Honest Sudoku.dc.html`, sha256 `f2592eb5dda759413e9266e4ec574085c7262fb38aa28cbef9fd8e3555b585ee`, fetched 2026-09-23 (`shasum -a 256` on the saved file). It is kept outside the repository because its `<link>` to fonts.googleapis.com would put a web-font reference into the tree that invariant 1's guard forbids.
+  **Why:** M3–M5's stories cite values only the file holds (THEMES, verbatim copy, paddings), and #23 pins against the design's own JavaScript.
+  **Issue:** #22 (first story run), all of M2–M5
+- **Decision:** `stripDartComments` joins `repo_files.dart`, and the engine rules live in a new `test/guards/engine_rules.dart` beside `engine_imports_test.dart`, following the pure-rule/inline-fixture split `dependency_rules.dart` and `workflow_rules.dart` already use.
+  **Why:** #22's Discretion asks for pure rule functions; a separate rules file is the pattern the guard directory already has.
+  **Issue:** #22
+- **Decision (Rule 3):** The solver also branches on a unit's missing value when that value has fewer places left than the most-constrained cell has candidates, and treats a missing value with no place as a dead end (exact-cover column choice). Most-constrained-cell ordering is kept, as #22 specifies.
+  **Why:** #23's carve to uniqueness on 16×16 did not finish: 176 of 256 cells visited after 40 s, with each check slower than the last (local probe, 2026-09-23, `dart` on the engine against seeds 1–3). With the added branching the same carves took 1118, 1163 and 1591 ms. 9×9 carves gave the same given counts before and after (26/23/21 for seeds 1–3), as expected, since the change alters the search order and not the count.
+  **Issue:** #23 (blocker), amends #22's solver
+- **Decision:** The golden hash is printed as two zero-padded 32-bit halves.
+  **Why:** `int.toUnsigned(64)` on the VM returns a signed value, so the first recording produced hashes with a leading `-`. The published FNV-1a vectors (`''` → `cbf29ce484222325`, `'a'` → `af63dc4c8601ec8c`) are asserted in the test.
+  **Issue:** #23
+- **Decision (owner review requested):** `supportedDifficulties` is 4×4 → Easy only and 6×6 → Easy, Medium, Hard, narrower than #25's AC table (4×4 Easy–Hard, 6×6 Easy–Expert, taken from the design's statistics breakdown).
+  **Why:** The AC also requires that a band be proven by the grader, and the grader cannot prove these three pairs:
+  - *4×4:* every one of the 4 618 710 unique 4×4 boards with at least the design's floor of 6 givens, over 95 distinct full grids, falls to naked singles alone (exhaustive enumeration, local `dart` probe, 2026-09-23). A 4×4 Medium or Hard board does not exist on this ladder.
+  - *6×6 Expert:* 0 of 20 000 minimal 6×6 carves needed a triple or an X-wing, and 0 of 5 000 attempts of the specified carve-to-band reached Expert (same probe).
+  - *The alternatives,* labelling by givens count or keeping pairs that always fail, contradict the owner's own calls on #25 ("technique-graded", "unsupported pairs unavailable").
+
+  `test/engine/difficulty_test.dart` carries a one-grid exhaustive 4×4 check and a 2 000-carve 6×6 check, so the evidence is executed rather than asserted. The pairs that stay out are greyed on the setup screen by M4 #41's existing mechanism. Reversing this is one table and its test.
+  **Issue:** #25; affects M4 #41 (setup greying), #43 (statistics breakdown rows)
+- **Decision:** `maxAttempts` (Claude's Discretion) is 50 for 4×4, 10 000 for 6×6, 2 000 for 9×9 and 200 for 16×16, not the planner's 50/50/50/200.
+  **Why:** Measured success per attempt of the specified carve (local probe, 2026-09-23):
+  - 6×6 Medium 23/5000 and Hard 8/5000, at 0.2 ms per attempt;
+  - 9×9 Expert 14/2000, at 1.8 ms per attempt.
+
+  At 50 attempts, 3 of 5 9×9 Expert seeds and 4 of 5 6×6 Medium and Hard seeds failed. With the new limits all 20 seeds of every supported pair succeed, the 9×9 Expert median is 151 ms and 6×6 Hard 67 ms, and the chance of running out falls below roughly 1e-6 at the measured rates. A carve-then-fill-back strategy was measured too and was no better (9×9 Expert 12/2000).
+  **Issue:** #25
+- **Decision:** Each retry's progress takes half of the carving span still unused, instead of an equal slice of `maxAttempts`.
+  **Why:** With 10 000 attempts, equal slices would leave the loading bar frozen at 45 % for the whole search.
+  **Issue:** #25, #27
+- **Decision:** When nothing on the ladder applies, the grader confirms a solution exists (`countSolutions(limit: 1)`) instead of calling `solve()`.
+  **Why:** `solve()` must rule out a second solution, which on a sparse 16×16 took about 3 s per grade. The ladder itself took 12 ms. A minimal 16×16 carve plus grade fell from about 4.3 s to about 1.4 s (local probe). The generator has already proved uniqueness before it grades, and a board with no solution still throws `InvalidBoard`.
+  **Issue:** #25
+- **Decision:** The technique enum keeps the name `Technique`, and the rule interface is `TechniqueRule`. The Discretion called both `Technique`.
+  **Why:** #26 pins `technique.name` in its goldens, which needs the enum.
+  **Issue:** #25
+- **Correction, extending the 4×4 entry above:** the enumeration now covers all 288 4×4 grids, not 95. It found 13 269 792 unique boards with at least 6 givens: every one needs at most naked singles, and the 288 full grids grade `none` (local `dart` probe, 2026-09-23). The claim is now exhaustive.
+  **Issue:** #25
+- **Decision (owner review requested):** 16×16 Expert is exempt from the `ceil(target × 1.1)` givens ceiling, as Evil already is.
+  **Why:** On 16×16, a carve that reaches Expert stops at 87–96 givens: below that, every removal breaks uniqueness or tips the ladder into `beyond` (60 attempts, local probe, 2026-09-23). Plain uniqueness-limit carves stop at 92–96. The design's target of 79 is below what uniqueness allows, so the ceiling of 87 discarded 36 of the 38 Expert boards found, and the median generation took 7.7 s against #27's 3 s host budget. With the exemption, seeds 1–10 need 1–3 attempts, with a median of 249 ms. The setup screen will still show the design's "79 GIVENS" for 16×16 Expert, while boards arrive with about 90, the same gap the plan already accepts for Evil.
+  **Issue:** #25, #26, #27; affects M4 #41 (the givens label)
+- **Decision:** On Easy–Expert carving with the real grader, the per-step uniqueness count is replaced by the grade.
+  **Why:** The ladder only makes forced deductions. A board it finishes within the band therefore has one solution, and a board with two always leaves it stuck, which the band check reverts. The accept and revert decisions are unchanged: 16×16 Expert seeds 1–5 needed the same 16/27/41/67/177 attempts before and after. The cost fell from 66 s to 8.7 s for three 16×16 Expert attempts; the counter had taken 66.3 s of the 66.5 s (local probe, 2026-09-23). A substituted grader still gets the count, and every finished board is counted once.
+  **Issue:** #26 (Rule 3: the guard tier did not finish in 10 minutes)
+- **Decision:** The weekly 200-seed tier is tagged `weekly`, not `slow` as #26's AC says, and the gate and CI exclude `weekly,bench`, not `slow,bench`.
+  **Why:** `slow` already tags #245's guard `the flag the workflow sets is the flag the guard reads`, which runs in the gate and in CI's guards step today. Excluding `slow` there would have removed that guard from every pull request without anyone deciding to. `slow` keeps its meaning (kept out of the battery's per-mutation suite, run everywhere else), and the engine PR tier carries it too. That is exactly the battery treatment #26's Discretion prescribes.
+  **Issue:** #26
+- **Decision:** The wrapper's test hooks are plain documented top-level variables, not `@visibleForTesting`. `generateOverride` replaces the generate call *inside* the real worker, so a throwing test generator exercises the worker's own error handling.
+  **Why:** `@visibleForTesting` comes from `package:meta`, which the app does not declare (`depend_on_referenced_packages` flags the import), and declaring a package for one annotation is not a lean dependency (invariant 3). A first version replaced the whole entry point, which bypassed the worker's `try/catch`, so a thrown `GenerationFailed` could only arrive as `UnexpectedError`, not the `AttemptsExhausted` #27's Discretion specifies.
+  **Issue:** #27
+- **Decision:** The cancel test polls `Isolate.ping` until it goes unanswered and requires that within 100 ms.
+  **Why:** A ping sent in the same instant as `Isolate.kill(priority: immediate)` was still answered (4 ms after), and one sent 50 ms later was not (local probe, 2026-09-23). A single immediate ping tested the wrong thing.
+  **Issue:** #27
+- **Decision:** The five `#26` engine mutations run `ENGINE_SUITE` (the four engine guard files) through a new per-entry `suite` field in `tools/mutation_check.py`, instead of `slow=True` and the whole slow suite.
+  **Why:** #26 requires the battery to fit its 60-minute job with margin. Before M2 the CI `mutations` job already took 44 to 51 minutes (CI runs 35877061156, 35898299127, 35907570513, read 2026-09-23 with `gh api .../actions/runs/<id>/jobs`). The first M2 local battery, with the engine entries on the slow suite, took 2 752 s, about 46 minutes (local run, 2026-09-23). An engine mutation is judged by the engine guards, and each still names the assertion it must trip. With the narrower suite all nine engine-related entries were caught in 365 s, including the baseline (local run, 2026-09-23). The CI measurement is recorded in #26's completion comment.
+  **Issue:** #26
+- **Finding (pre-existing, not from this run):** `#245 the verdict is handed an empty environment` SURVIVED in the local battery, and also survives on unchanged `main` locally (`tools/mutation_check.py --only 'empty environment'` against `origin/main`, 2026-09-23). It depends on the token environment the CI job provides; the CI battery has passed it on every recent run.
+  **Issue:** #245
+
+### 2026-09-24 — #26 (Rule 3): the mutations job's limit raised to 90 minutes
+PR #285's `mutations` job (run 35932979896) was cancelled at its 60-minute `timeout-minutes` after 131 of 147 entries, every one caught (about 26 s each). Raised to 90 as a stopgap. Splitting across jobs is the lasting fix, but the required `mutations` check would then need an `if: always()` aggregator, which ci-shape refuses by design; that guard exception is an owner call, filed as #286 (needs-triage). Every later milestone adds entries, so M3–M5's PRs each wait roughly 65–75 minutes on this job.

@@ -1,13 +1,31 @@
-# Declares the tags the guard suites use, so `flutter test` does not warn about
-# an unknown tag. CI can run only the guards with `flutter test --tags guard`;
-# they are part of a plain `flutter test` too.
+# Declares the tags the suites use, so `flutter test` does not warn about an
+# unknown tag, with a timeout per tag.
+#
+# What runs where:
+#   the gate (tools/gate.sh) and CI    everything except `weekly` and `bench`
+#   CI's Invariant guards step          `guard`, except `weekly` and `bench`
+#   the mutation battery, per mutation  `guard`, except `slow`
+#   .github/workflows/engine-nightly.yml `guard` and `weekly`
+#   by hand                             `flutter test --tags bench`
 tags:
   guard:
     description: Invariant and project-identity guards that read repository files.
+    timeout: 10m
   slow:
     description: >-
-      Guards that cost more than an assertion to run. One test carries it:
-      `the flag the workflow sets is the flag the guard reads`, which spawns
-      a child `flutter test` to set an environment its own process cannot
-      (#245). The battery excludes it from the runs that do not need it, and
-      the one mutation that does sets `slow=True`.
+      Guards that cost more than an assertion to run. The gate and CI run
+      them; the mutation battery leaves them out of its per-mutation suite,
+      and a mutation that needs one sets `slow=True` (#229). Two kinds carry
+      it: `the flag the workflow sets is the flag the guard reads`, which
+      spawns a child `flutter test` (#245), and the engine property guards,
+      which generate hundreds of boards (#26).
+    timeout: 10m
+  weekly:
+    description: >-
+      The engine property guards at 200 seeds for every size and band,
+      16×16 Evil included (#26). Too slow for a pull request; run weekly by
+      engine-nightly.yml and on demand.
+    timeout: 90m
+  bench:
+    description: Host timings of the generator (#27). Prints, asserts budgets.
+    timeout: 30m

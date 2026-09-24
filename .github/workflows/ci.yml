@@ -7,7 +7,11 @@
 # The invariant guards run as their own named step before the full gate, so a
 # breached project invariant is the first red line in the checks list rather
 # than something to find inside a long log. They run twice in total; the second
-# run is inside gate.sh and costs seconds.
+# run is inside gate.sh. Since #26 that repeat includes the engine property
+# guards (52 s for the four files, measured 2026-09-23 with a local
+# `flutter test` over them), which #26 accepted to keep the gate and CI
+# running the same command. Both runs leave out the `weekly` engine tier
+# and the `bench` timings (dart_test.yaml says what runs where).
 name: CI
 
 on:
@@ -100,7 +104,7 @@ jobs:
           # field then fails instead of skipping: a lapsed secret must be
           # loud, because a skip on a required check is a silent downgrade.
           HS_RULESET_READ_EXPECTED: ${{ secrets.HS_RULESET_READ_TOKEN != '' && '1' || '' }}
-        run: flutter test --no-pub --tags guard
+        run: flutter test --no-pub --tags guard --exclude-tags weekly,bench
 
       - id: gate
         name: Quality gate
@@ -158,10 +162,14 @@ jobs:
     #
     # Each mutation is one run of the guard suite, so the cost is linear in
     # the battery's size and the run-to-run variance is minutes, not seconds.
-    # 60 is headroom for the current count; a pass that adds entries re-reads
-    # this line, and when the headroom is gone the answer is to split the
-    # battery across jobs rather than to keep raising the ceiling.
-    timeout-minutes: 60
+    # 60 was the limit until run 35932979896 (2026-09-23) reached entry 131
+    # of 147 when it expired, every entry caught, at about 26 s an entry.
+    # Splitting across jobs is the lasting answer, but the one required
+    # `mutations` check would then hang on an aggregating job that must run
+    # even when a shard fails -- a job-level `if:` that ci-shape refuses,
+    # for good reason -- so it waits on #286. 90 is the stopgap;
+    # a pass that adds entries re-reads this line.
+    timeout-minutes: 90
     env:
       FLUTTER_SUPPRESS_ANALYTICS: "true"
     steps:

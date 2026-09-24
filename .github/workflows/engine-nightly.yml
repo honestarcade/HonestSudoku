@@ -1,0 +1,90 @@
+# The engine's weekly property run (#26).
+#
+# The pull-request gate runs the engine guards over a sample of seeds so it
+# stays fast: 200 per band for 4×4 and 6×6, 40 for 9×9, 5 for 16×16, and no
+# 16×16 Evil. This job runs the full guard suite plus the `weekly` tier —
+# 200 seeds for every size and band, 16×16 Evil and its golden included — so
+# a defect that only shows on a seed outside the sample still turns something
+# red within a week. It opens nothing; a failure is the red run and its
+# summary.
+name: Engine nightly
+
+on:
+  schedule:
+    - cron: "0 3 * * 0"
+  workflow_dispatch:
+    inputs:
+      seeds:
+        description: Seeds per band for the weekly tier (blank for 200)
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: engine-nightly
+  # A long run is never worth cancelling for a newer one: both would test
+  # the same default branch.
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  weekly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      FLUTTER_SUPPRESS_ANALYTICS: "true"
+    steps:
+      - id: checkout
+        name: Checkout
+        uses: actions/checkout@v7
+
+      # flutter-version-file reads .fvmrc, the single place the exact version
+      # is pinned, so this runs the Flutter the pull-request gate runs.
+      - id: flutter
+        name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version-file: .fvmrc
+          cache: true
+
+      - id: deps
+        name: Resolve dependencies
+        run: flutter pub get --enforce-lockfile
+
+      - id: weekly
+        name: Guards and the weekly engine tier
+        # The whole guard suite runs here, the ruleset guard included, so it
+        # is handed the same token and flag as every other guard run (#228,
+        # #240).
+        env:
+          GITHUB_TOKEN: ${{ secrets.HS_RULESET_READ_TOKEN || github.token }}
+          HS_RULESET_READ_EXPECTED: ${{ secrets.HS_RULESET_READ_TOKEN != '' && '1' || '' }}
+          ENGINE_WEEKLY_SEEDS: ${{ inputs.seeds }}
+        run: |
+          flutter test --no-pub --tags 'guard||weekly' --exclude-tags bench \
+            --reporter expanded
+
+      - id: summary
+        name: Summary
+        if: always()
+        env:
+          OUTCOME: ${{ steps.weekly.outcome }}
+        run: |
+          {
+            echo "## Engine nightly: $OUTCOME"
+            echo ""
+            if [ "$OUTCOME" = "success" ]; then
+              echo "Every size and band held uniqueness, grading and determinism"
+              echo "over the weekly seeds."
+            else
+              echo "Each engine guard lists every offending seed in its reason."
+              echo "Open the \`Guards and the weekly engine tier\` log and search"
+              echo "for \`engine-\` to read them."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

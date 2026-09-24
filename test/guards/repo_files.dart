@@ -119,3 +119,67 @@ List<String> trackedFilesUnder(String relativeDir) {
 /// `<rule> <path>: <offender>`.
 String describeOffenders(String rule, List<String> offenders) =>
     '$rule: ${offenders.length} offender(s)\n${offenders.map((o) => '  $rule $o').join('\n')}';
+
+/// Removes `//` and `/* */` comments from Dart source, leaving string
+/// literals — single, double, triple-quoted and raw — alone, so a URI or a
+/// name inside a string is still seen and one inside a comment is not.
+///
+/// Block comments nest, as Dart's do. Line breaks are kept so offsets into
+/// the result still fall on the source's lines.
+String stripDartComments(String source) {
+  final out = StringBuffer();
+  var i = 0;
+  final n = source.length;
+  while (i < n) {
+    final ch = source[i];
+    final next = i + 1 < n ? source[i + 1] : '';
+    if (ch == '/' && next == '/') {
+      while (i < n && source[i] != '\n') {
+        i++;
+      }
+      continue;
+    }
+    if (ch == '/' && next == '*') {
+      var depth = 1;
+      i += 2;
+      while (i < n && depth > 0) {
+        if (source.startsWith('/*', i)) {
+          depth++;
+          i += 2;
+        } else if (source.startsWith('*/', i)) {
+          depth--;
+          i += 2;
+        } else {
+          if (source[i] == '\n') out.write('\n');
+          i++;
+        }
+      }
+      continue;
+    }
+    if (ch == "'" || ch == '"') {
+      final raw = i > 0 && source[i - 1] == 'r';
+      final triple = source.startsWith(ch * 3, i);
+      final quote = triple ? ch * 3 : ch;
+      out.write(quote);
+      i += quote.length;
+      while (i < n && !source.startsWith(quote, i)) {
+        if (!raw && source[i] == r'\' && i + 1 < n) {
+          out.write(source.substring(i, i + 2));
+          i += 2;
+          continue;
+        }
+        if (!triple && source[i] == '\n') break;
+        out.write(source[i]);
+        i++;
+      }
+      if (i < n && source.startsWith(quote, i)) {
+        out.write(quote);
+        i += quote.length;
+      }
+      continue;
+    }
+    out.write(ch);
+    i++;
+  }
+  return out.toString();
+}
