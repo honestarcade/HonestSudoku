@@ -4,6 +4,7 @@
 import 'package:flutter/widgets.dart';
 import 'package:honest_sudoku/game/game.dart';
 
+import '../a11y/labels.dart';
 import '../strings.dart';
 import '../theme/tokens.dart';
 import 'overlay_parts.dart';
@@ -67,20 +68,29 @@ class PauseOverlay extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              UiStrings.paused,
-              textScaler: TextScaler.noScaling,
-              style: outfit(19, scale: s, weight: FontWeight.w600),
+            // The board screen's live region announces the title.
+            ExcludeSemantics(
+              child: Text(
+                UiStrings.paused,
+                style: outfit(19, scale: s, weight: FontWeight.w600),
+              ),
             ),
             SizedBox(height: 8 * s),
-            Text(
-              state.pauseMeta,
-              textScaler: TextScaler.noScaling,
-              style: plexMono(
-                10,
-                scale: s,
-                color: HsColors.muted,
-                letterSpacingEm: .14,
+            Semantics(
+              label: pauseMetaLabel(
+                state.shape.label,
+                state.difficulty.label,
+                state.elapsedSeconds,
+              ),
+              excludeSemantics: true,
+              child: Text(
+                state.pauseMeta,
+                style: plexMono(
+                  10,
+                  scale: s,
+                  color: HsColors.muted,
+                  letterSpacingEm: .14,
+                ),
               ),
             ),
             SizedBox(height: 14 * s),
@@ -96,25 +106,37 @@ class PauseOverlay extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    UiStrings.boardHidden,
-                    textScaler: TextScaler.noScaling,
-                    style: plexMono(
-                      8.5,
-                      scale: s,
-                      color: HsColors.kicker,
-                      letterSpacingEm: .16,
+                  Semantics(
+                    label: sentenceCase(UiStrings.boardHidden),
+                    excludeSemantics: true,
+                    child: Text(
+                      UiStrings.boardHidden,
+                      style: plexMono(
+                        8.5,
+                        scale: s,
+                        color: HsColors.cardKicker,
+                        letterSpacingEm: .16,
+                      ),
                     ),
                   ),
                   SizedBox(height: 7 * s),
-                  Text(
-                    state.pauseFill,
-                    textScaler: TextScaler.noScaling,
-                    style: outfit(
-                      11.5,
-                      scale: s,
-                      color: HsColors.bodySoft,
-                      lineHeight: 1.4,
+                  Semantics(
+                    label: fillLabel(
+                      filled: state.filledCount,
+                      cells: state.shape.cellCount,
+                      entries: state.moves,
+                      mistakes: state.mistakes,
+                      zen: state.settings.strikeMode == StrikeMode.zen,
+                    ),
+                    excludeSemantics: true,
+                    child: Text(
+                      state.pauseFill,
+                      style: outfit(
+                        11.5,
+                        scale: s,
+                        color: HsColors.bodySoft,
+                        lineHeight: 1.4,
+                      ),
                     ),
                   ),
                 ],

@@ -3,6 +3,7 @@
 
 import 'package:flutter/widgets.dart';
 
+import '../a11y/labels.dart';
 import '../theme/tokens.dart';
 import '../widgets/design_button.dart';
 import 'board_styles.dart';
@@ -28,14 +29,17 @@ class OverlayFrame extends StatelessWidget {
   final double scale;
 
   @override
-  Widget build(BuildContext context) => GestureDetector(
-    behavior: HitTestBehavior.opaque,
-    onTap: () {},
-    child: ColoredBox(
-      color: scrim,
-      child: Center(
-        child: SingleChildScrollView(
-          child: SizedBox(width: 338 * scale, child: card),
+  // BlockSemantics: nothing painted beneath the card is reachable.
+  Widget build(BuildContext context) => BlockSemantics(
+    child: GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () {},
+      child: ColoredBox(
+        color: scrim,
+        child: Center(
+          child: SingleChildScrollView(
+            child: SizedBox(width: 338 * scale, child: card),
+          ),
         ),
       ),
     ),
@@ -61,7 +65,6 @@ Widget cardButton({
   onPressed: onPressed,
   child: Text(
     label,
-    textScaler: TextScaler.noScaling,
     style: outfit(fontSize, scale: scale, weight: weight, color: spec.fg),
   ),
 );
@@ -74,6 +77,7 @@ class StatTile extends StatelessWidget {
     required this.label,
     required this.value,
     required this.scale,
+    this.spokenValue,
     super.key,
   });
 
@@ -86,37 +90,46 @@ class StatTile extends StatelessWidget {
   /// The value.
   final String value;
 
+  /// The value as spoken, when it differs from [value] (a time, `12/81`).
+  final String? spokenValue;
+
   /// Design points to logical pixels.
   final double scale;
 
   @override
-  Widget build(BuildContext context) => Container(
-    key: ValueKey('tile-$name'),
-    padding: EdgeInsets.symmetric(vertical: 12 * scale, horizontal: 13 * scale),
-    decoration: BoxDecoration(
-      color: HsColors.fill06,
-      borderRadius: BorderRadius.circular(12 * scale),
-    ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          textScaler: TextScaler.noScaling,
-          style: plexMono(
-            9,
-            scale: scale,
-            color: HsColors.muted,
-            letterSpacingEm: .14,
+  Widget build(BuildContext context) => Semantics(
+    container: true,
+    label: tileLabel(label, spokenValue ?? value),
+    excludeSemantics: true,
+    child: Container(
+      key: ValueKey('tile-$name'),
+      padding: EdgeInsets.symmetric(
+        vertical: 12 * scale,
+        horizontal: 13 * scale,
+      ),
+      decoration: BoxDecoration(
+        color: HsColors.fill06,
+        borderRadius: BorderRadius.circular(12 * scale),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: plexMono(
+              9,
+              scale: scale,
+              color: HsColors.muted,
+              letterSpacingEm: .14,
+            ),
           ),
-        ),
-        SizedBox(height: 7 * scale),
-        Text(
-          value,
-          textScaler: TextScaler.noScaling,
-          style: outfit(18, scale: scale, weight: FontWeight.w600),
-        ),
-      ],
+          SizedBox(height: 7 * scale),
+          Text(
+            value,
+            style: outfit(18, scale: scale, weight: FontWeight.w600),
+          ),
+        ],
+      ),
     ),
   );
 }

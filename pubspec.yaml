@@ -20,6 +20,8 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  flutter_driver: # why: drives the app on an emulator for the Play screenshots (#57); SDK, pure Dart, dev only
+    sdk: flutter
   flutter_lints: ^6.0.0
   # Test-only. It never ships: `flutter build` does not resolve
   # dev_dependencies, and the release bundle is byte-scanned every run.
@@ -27,3 +29,32 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+
+  # The whole directory, so a real clip replaces its placeholder by dropping
+  # the file in, with no change here (#49).
+  assets:
+    - assets/audio/
+
+  # Bundled, never fetched (invariant 1). tools/fetch_fonts.sh downloaded them
+  # from pinned commits; assets/fonts/README.md records where from (#47).
+  fonts:
+    - family: Outfit
+      fonts:
+        - asset: assets/fonts/Outfit-Light.ttf
+          weight: 300
+        - asset: assets/fonts/Outfit-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/Outfit-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Outfit-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/Outfit-Bold.ttf
+          weight: 700
+    - family: IBM Plex Mono
+      fonts:
+        - asset: assets/fonts/IBMPlexMono-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/IBMPlexMono-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/IBMPlexMono-SemiBold.ttf
+          weight: 600

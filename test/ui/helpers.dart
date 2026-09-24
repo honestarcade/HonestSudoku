@@ -7,6 +7,7 @@ import 'package:honest_sudoku/store/app_store.dart';
 import 'package:honest_sudoku/ui/app.dart';
 import 'package:honest_sudoku/ui/link_opener.dart';
 import 'package:honest_sudoku/ui/routes.dart';
+import 'package:honest_sudoku/ui/widgets/app_mark.dart';
 
 import 'stub_generator.dart';
 
@@ -70,4 +71,31 @@ Future<void> startFromMenu(WidgetTester tester) async {
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 500));
   await tester.pumpAndSettle();
+}
+
+/// The screen's one mark is [interior] at [size], painted so, and hidden from
+/// accessibility services (#48).
+void expectMark(WidgetTester tester, double size, MarkInterior interior) {
+  final mark = find.byType(AppMark);
+  expect(mark, findsOneWidget);
+  final widget = tester.widget<AppMark>(mark);
+  expect(widget.size, size);
+  expect(widget.interior, interior);
+  final paint = find.descendant(of: mark, matching: find.byType(CustomPaint));
+  expect(
+    (tester.widget<CustomPaint>(paint).painter! as AppMarkPainter).interior,
+    interior,
+  );
+  expect(tester.getSize(paint), Size.square(size));
+  final hidden = find.ancestor(
+    of: paint,
+    matching: find.byWidgetPredicate(
+      (w) => w is ExcludeSemantics && w.excluding,
+    ),
+  );
+  expect(
+    find.descendant(of: mark, matching: hidden),
+    findsOneWidget,
+    reason: 'the mark is decorative and exposes no semantics',
+  );
 }

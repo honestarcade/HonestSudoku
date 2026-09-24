@@ -13,8 +13,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:honest_sudoku/game/game.dart';
 
+import '../a11y/labels.dart';
 import '../routes.dart';
+import '../strings.dart';
 import '../theme/board_theme.dart';
+import '../widgets/tap_target.dart';
 import 'board_grid.dart';
 import 'board_layout.dart';
 import 'board_overlays.dart';
@@ -150,46 +153,92 @@ class _BoardScreenState extends State<BoardScreen> with RouteAware {
     final s = geo.scale;
     final state = _c.state;
     if (state == null) return const SizedBox.expand();
-    return SizedBox.expand(
-      child: BoardOverlays(
-        state: state,
-        stats: _c.stats,
-        scale: s,
-        onResume: _c.resume,
-        onRestart: _c.restart,
-        onNewDeal: _newDeal,
-        onRules: () => _push(Routes.howto),
-        onSettings: () => _push(Routes.settings),
-        onMainMenu: _mainMenu,
-        onChangeSetup: () => _push(Routes.setup),
-        board: (_) => Stack(
-          children: [
-            Positioned(
-              left: (size.width - kFrameWidth * s) / 2,
-              top: geo.top,
-              width: kFrameWidth * s,
-              height: kFrameHeight * s,
-              child: _frame(state, s),
-            ),
-          ],
-        ),
+    // The phone's font size reaches everything but the grid, up to 1.3×
+    // (owner, 2026-09-19); the grid is geometry and ignores it (#53).
+    final scaled = MediaQuery.of(context).copyWith(
+      textScaler: MediaQuery.textScalerOf(context).clamp(maxScaleFactor: 1.3),
+    );
+    return MediaQuery(
+      data: scaled,
+      child: SizedBox.expand(
+        // One live region over board and cards alike, so pausing, winning
+        // and losing each change its label and TalkBack speaks the title.
+        child: _live(state, s, geo, size),
       ),
     );
   }
 
-  Widget _frame(GameState state, double s) {
-    final grid = ScaledGrid(BoardLayout.of(state.shape), s);
+  Widget _live(
+    GameState state,
+    double s,
+    ({double scale, double top}) geo,
+    Size size,
+  ) => Semantics(
+    key: const ValueKey('overlay-live'),
+    container: true,
+    liveRegion: true,
+    label: overlayAnnouncement(state),
+    child: BoardOverlays(
+      state: state,
+      stats: _c.stats,
+      scale: s,
+      onResume: _c.resume,
+      onRestart: _c.restart,
+      onNewDeal: _newDeal,
+      onRules: () => _push(Routes.howto),
+      onSettings: () => _push(Routes.settings),
+      onMainMenu: _mainMenu,
+      onChangeSetup: () => _push(Routes.setup),
+      board: (inner) => Stack(
+        children: [
+          Positioned(
+            left: (size.width - kFrameWidth * s) / 2,
+            top: geo.top,
+            width: kFrameWidth * s,
+            height: kFrameHeight * s,
+            child: _frame(inner, state, s),
+          ),
+        ],
+      ),
+    ),
+  );
+
+  Widget _frame(BuildContext context, GameState state, double s) {
+    final layout = BoardLayout.of(state.shape);
+    final grid = ScaledGrid(layout, s);
     final notice = state.notice;
     final noticeY = kGridY * s + grid.gridPx + 12 * s;
-    final padY = noticeY + (notice == null ? 0 : kNoticeShift * s);
+    // The banner is measured before layout: its height places the pad, and
+    // a three-line banner that would push the pad into the tools gets two.
+    var noticeLines = 3;
+    var noticeHeight = 0.0;
+    if (notice != null) {
+      final scaler = MediaQuery.textScalerOf(context);
+      double measure(int lines) => NoticeBanner.measureHeight(
+        notice: notice,
+        scale: s,
+        textScaler: scaler,
+        maxLines: lines,
+      );
+      noticeHeight = measure(3);
+      noticeLines = layout.noticeMaxLines(noticeHeight / s);
+      if (noticeLines < 3) noticeHeight = measure(noticeLines);
+    }
+    final padY =
+        noticeY +
+        (layout.padY(noticeHeight: noticeHeight / s) - layout.noticeY) * s;
     return Stack(
       key: const ValueKey('board-frame'),
       children: [
-        Positioned(
+        _outset(
           left: 0,
           top: kTopBarY * s,
           child: TopBar(
             title: state.boardTitle,
+            pauseSemantics: pauseLabel(
+              state.shape.label,
+              state.difficulty.label,
+            ),
             elapsedSeconds: state.elapsedSeconds,
             mistakes: state.mistakes,
             strikeMode: state.settings.strikeMode,
@@ -202,20 +251,36 @@ class _BoardScreenState extends State<BoardScreen> with RouteAware {
         Positioned(
           left: grid.gridX,
           top: kGridY * s,
-          child: BoardGrid(
-            state: state,
-            theme: _c.theme,
-            scale: s,
-            onTapCell: _c.select,
+          child: MediaQuery.withNoTextScaling(
+            child: BoardGrid(
+              state: state,
+              theme: _c.theme,
+              scale: s,
+              onTapCell: _c.select,
+            ),
           ),
         ),
-        if (notice != null)
-          Positioned(
-            left: kSideInset * s,
-            top: noticeY,
-            child: NoticeBanner(notice: notice, scale: s),
-          ),
+        // Always present, so every new notice is a label change on the same
+        // live region; an empty label while there is none.
         Positioned(
+          left: kSideInset * s,
+          top: noticeY,
+          child: Semantics(
+            key: const ValueKey('notice-live'),
+            container: true,
+            liveRegion: true,
+            label: notice == null ? '' : noticeLabel(notice.tag, notice.body),
+            child: notice == null
+                ? SizedBox(width: kPadWidth * s, height: 1)
+                : NoticeBanner(
+                    notice: notice,
+                    scale: s,
+                    labelled: false,
+                    maxLines: noticeLines,
+                  ),
+          ),
+        ),
+        _outset(
           left: kSideInset * s,
           top: padY,
           child: NumberPad(
@@ -226,7 +291,7 @@ class _BoardScreenState extends State<BoardScreen> with RouteAware {
             onErase: _c.erase,
           ),
         ),
-        Positioned(
+        _outset(
           left: 0,
           top: kToolBarY * s,
           child: ToolBar(
@@ -244,4 +309,31 @@ class _BoardScreenState extends State<BoardScreen> with RouteAware {
       ],
     );
   }
+}
+
+/// [child] at ([left], [top]) with room around it for its controls' 48-dp
+/// tap targets (#56): a hit in a key's grown margin must reach the key, and a
+/// parent rejects any hit outside its own box. Painting does not move.
+Positioned _outset({
+  required double left,
+  required double top,
+  required Widget child,
+}) {
+  const m = kMinTapTarget / 2;
+  return Positioned(
+    left: left - m,
+    top: top - m,
+    child: TapTargetGroup(
+      child: Padding(padding: const EdgeInsets.all(m), child: child),
+    ),
+  );
+}
+
+/// What the overlays' live region says: the card's title, or nothing while
+/// the board shows.
+String overlayAnnouncement(GameState s) {
+  if (s.won) return overlayTitleLabel(UiStrings.wonTag, UiStrings.wonTitle);
+  if (s.lost) return overlayTitleLabel(UiStrings.lostTag, UiStrings.lostTitle);
+  if (s.paused) return overlayTitleLabel(null, UiStrings.paused);
+  return '';
 }

@@ -4,6 +4,17 @@ import 'package:honest_sudoku/ui/widgets/design_button.dart';
 
 import '../harness.dart';
 
+/// The press dip's current opacity.
+double _opacity(WidgetTester tester) => tester
+    .widget<FadeTransition>(
+      find.descendant(
+        of: find.byType(AnimatedOpacity),
+        matching: find.byType(FadeTransition),
+      ),
+    )
+    .opacity
+    .value;
+
 void main() {
   testWidgets('taps call back; a null callback ignores taps', (tester) async {
     var taps = 0;
@@ -42,16 +53,48 @@ void main() {
         child: const Text('Press'),
       ),
     );
-    double opacity() => tester.widget<Opacity>(find.byType(Opacity)).opacity;
-    expect(opacity(), 1);
+    expect(_opacity(tester), 1);
     final gesture = await tester.startGesture(
       tester.getCenter(find.text('Press')),
     );
     await tester.pump();
-    expect(opacity(), .85);
+    await tester.pump(const Duration(milliseconds: 20));
+    expect(
+      _opacity(tester),
+      inExclusiveRange(.85, 1),
+      reason: 'the dip eases in over kPressDip',
+    );
+    await tester.pumpAndSettle();
+    expect(_opacity(tester), closeTo(.85, 1e-9));
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(_opacity(tester), 1);
+  });
+
+  testWidgets('with animations removed the dip still happens, at once', (
+    tester,
+  ) async {
+    await pumpFramed(
+      tester,
+      MediaQuery(
+        data: const MediaQueryData(disableAnimations: true),
+        child: DesignButton.variant(
+          DesignButtonVariant.secondary,
+          onPressed: () {},
+          scale: 1,
+          child: const Text('Press'),
+        ),
+      ),
+    );
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.text('Press')),
+    );
+    await tester.pump();
+    await tester.pump();
+    expect(_opacity(tester), closeTo(.85, 1e-9));
+    expect(tester.hasRunningAnimations, isFalse);
     await gesture.up();
     await tester.pump();
-    expect(opacity(), 1);
   });
 
   test('five variants', () {

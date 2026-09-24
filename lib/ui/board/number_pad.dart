@@ -5,6 +5,7 @@
 import 'package:flutter/widgets.dart';
 import 'package:honest_sudoku/game/game.dart';
 
+import '../a11y/labels.dart';
 import '../theme/tokens.dart';
 import '../widgets/design_button.dart';
 import 'board_layout.dart';
@@ -18,7 +19,6 @@ class NumberPad extends StatelessWidget {
     required this.scale,
     required this.onPlace,
     required this.onErase,
-    this.semanticsLabel,
     super.key,
   });
 
@@ -34,9 +34,6 @@ class NumberPad extends StatelessWidget {
   /// The erase key was tapped.
   final VoidCallback onErase;
 
-  /// A spoken label per key value (0 for erase); M5 supplies it.
-  final String? Function(int value)? semanticsLabel;
-
   @override
   Widget build(BuildContext context) {
     final layout = BoardLayout.of(state.shape);
@@ -48,13 +45,14 @@ class NumberPad extends StatelessWidget {
           key: ValueKey('pad-$v'),
           label: state.shape.symbolFor(v),
           fontSize: layout.padFontSize,
-          spec: padKeyStyle(
-            noteMode: note,
-            done: state.settings.dimDone && state.countOf(v) >= n,
-          ),
+          spec: padKeyStyle(noteMode: note, done: _done(v)),
           onTap: () => onPlace(v),
           layout: layout,
-          semantics: semanticsLabel?.call(v),
+          semantics: padKeyLabel(
+            symbol: state.shape.symbolFor(v),
+            note: note,
+            allPlaced: _done(v),
+          ),
         ),
       if (n == 9)
         _key(
@@ -64,7 +62,7 @@ class NumberPad extends StatelessWidget {
           spec: eraseKeyStyle,
           onTap: onErase,
           layout: layout,
-          semantics: semanticsLabel?.call(0),
+          semantics: toolLabel(Tool.erase),
         ),
     ];
     final cols = layout.padCols;
@@ -98,6 +96,8 @@ class NumberPad extends StatelessWidget {
     );
   }
 
+  bool _done(int v) => state.settings.dimDone && state.countOf(v) >= state.n;
+
   Widget _key({
     required Key key,
     required String label,
@@ -105,7 +105,7 @@ class NumberPad extends StatelessWidget {
     required ButtonStyleSpec spec,
     required VoidCallback onTap,
     required BoardLayout layout,
-    required String? semantics,
+    required String semantics,
   }) => DesignButton(
     key: key,
     spec: spec,
@@ -113,15 +113,19 @@ class NumberPad extends StatelessWidget {
     radius: 12,
     onPressed: onTap,
     semanticsLabel: semantics,
-    child: Text(
-      label,
-      softWrap: false,
-      textScaler: TextScaler.noScaling,
-      style: outfit(
-        fontSize,
-        scale: scale,
-        weight: FontWeight.w600,
-        color: spec.fg,
+    child: FittedBox(
+      // Keys keep their height; at a large font size the digit scales down
+      // inside its key rather than overflow it (#53).
+      fit: BoxFit.scaleDown,
+      child: Text(
+        label,
+        softWrap: false,
+        style: outfit(
+          fontSize,
+          scale: scale,
+          weight: FontWeight.w600,
+          color: spec.fg,
+        ),
       ),
     ),
   );

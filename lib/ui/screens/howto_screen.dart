@@ -2,6 +2,7 @@
 
 import 'package:flutter/material.dart';
 
+import '../a11y/speak.dart';
 import '../copy.dart';
 import '../theme/tokens.dart';
 import '../widgets/screen_frame.dart';
@@ -32,7 +33,7 @@ class HowToScreen extends StatelessWidget {
               kickerText(
                 Copy.rules[i].tag,
                 size: 9,
-                color: i == 0 ? HsColors.teal : HsColors.kicker,
+                color: i == 0 ? HsColors.teal : HsColors.cardKicker,
               ),
               const SizedBox(height: 9),
               Text(
@@ -55,36 +56,42 @@ class HowToScreen extends StatelessWidget {
             kickerText(Copy.controls, size: 9),
             for (final g in Copy.gestures) ...[
               const SizedBox(height: 8),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 5,
-                      horizontal: 8,
-                    ),
-                    decoration: BoxDecoration(
-                      color: HsColors.tealFill14,
-                      borderRadius: BorderRadius.circular(7),
-                    ),
-                    child: Text(
-                      g.key,
-                      style: plexMono(9.5, scale: 1, color: HsColors.teal),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      g.value,
-                      style: outfit(
-                        11.5,
-                        scale: 1,
-                        color: HsColors.bodySoft,
-                        lineHeight: 1.45,
+              // One node per gesture: the gesture, then what it does.
+              Semantics(
+                container: true,
+                label: '${speak(g.key)}: ${g.value}',
+                excludeSemantics: true,
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        vertical: 5,
+                        horizontal: 8,
+                      ),
+                      decoration: BoxDecoration(
+                        color: HsColors.tealFill14,
+                        borderRadius: BorderRadius.circular(7),
+                      ),
+                      child: Text(
+                        g.key,
+                        style: plexMono(9.5, scale: 1, color: HsColors.teal),
                       ),
                     ),
-                  ),
-                ],
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        g.value,
+                        style: outfit(
+                          11.5,
+                          scale: 1,
+                          color: HsColors.bodySoft,
+                          lineHeight: 1.45,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ],
           ],

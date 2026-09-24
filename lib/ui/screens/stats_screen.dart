@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:honest_sudoku/engine/engine.dart';
 import 'package:honest_sudoku/game/game.dart';
 
+import '../a11y/speak.dart';
 import '../app_scope.dart';
 import '../board/board_styles.dart';
 import '../board/game_controller.dart';
@@ -167,29 +168,27 @@ class _StatsScreenState extends State<StatsScreen> {
     );
   }
 
-  Widget _tab(GameController c, Difficulty t, bool active) => Semantics(
-    selected: active,
-    child: DesignButton(
-      key: ValueKey('stats-tab-${t.key}'),
-      spec: ButtonStyleSpec(
-        edge: const Color(0x00000000),
-        bg: active ? HsColors.teal : const Color(0x00000000),
-        fg: active ? HsColors.deepNavy : HsColors.chipFg,
-      ),
-      scale: 1,
-      radius: 9,
-      padding: const EdgeInsets.symmetric(vertical: 9, horizontal: 2),
-      onPressed: () => c.statsTab = t,
-      child: FittedBox(
-        fit: BoxFit.scaleDown,
-        child: Text(
-          t.label,
-          style: outfit(
-            10.5,
-            scale: 1,
-            weight: FontWeight.w600,
-            color: active ? HsColors.deepNavy : HsColors.chipFg,
-          ),
+  Widget _tab(GameController c, Difficulty t, bool active) => DesignButton(
+    key: ValueKey('stats-tab-${t.key}'),
+    semanticsSelected: active,
+    spec: ButtonStyleSpec(
+      edge: const Color(0x00000000),
+      bg: active ? HsColors.teal : const Color(0x00000000),
+      fg: active ? HsColors.deepNavy : HsColors.chipFg,
+    ),
+    scale: 1,
+    radius: 9,
+    padding: const EdgeInsets.symmetric(vertical: 9, horizontal: 2),
+    onPressed: () => c.statsTab = t,
+    child: FittedBox(
+      fit: BoxFit.scaleDown,
+      child: Text(
+        t.label,
+        style: outfit(
+          10.5,
+          scale: 1,
+          weight: FontWeight.w600,
+          color: active ? HsColors.deepNavy : HsColors.chipFg,
         ),
       ),
     ),
@@ -197,46 +196,52 @@ class _StatsScreenState extends State<StatsScreen> {
 
   Widget _card((String, String, String, String, bool) card) {
     final (name, k, v, sub, teal) = card;
-    return Container(
-      key: ValueKey('stats-card-$name'),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: teal ? HsColors.noticeOkBg : HsColors.fill05,
-        borderRadius: BorderRadius.circular(13),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            k,
-            style: plexMono(
-              9,
-              scale: 1,
-              color: HsColors.muted,
-              letterSpacingEm: .14,
+    // One node: its name, its value and what the value means.
+    return Semantics(
+      container: true,
+      label: '${speak(k)}, ${speak(v)}, ${speak(sub)}',
+      excludeSemantics: true,
+      child: Container(
+        key: ValueKey('stats-card-$name'),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: teal ? HsColors.noticeOkBg : HsColors.fill05,
+          borderRadius: BorderRadius.circular(13),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              k,
+              style: plexMono(
+                9,
+                scale: 1,
+                color: HsColors.muted,
+                letterSpacingEm: .14,
+              ),
             ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            v,
-            style: outfit(
-              21,
-              scale: 1,
-              weight: FontWeight.w600,
-              color: teal ? HsColors.teal : HsColors.white,
+            const SizedBox(height: 8),
+            Text(
+              v,
+              style: outfit(
+                21,
+                scale: 1,
+                weight: FontWeight.w600,
+                color: teal ? HsColors.teal : HsColors.white,
+              ),
             ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            sub,
-            style: outfit(
-              10.5,
-              scale: 1,
-              color: HsColors.desc,
-              lineHeight: 1.3,
+            const SizedBox(height: 6),
+            Text(
+              sub,
+              style: outfit(
+                10.5,
+                scale: 1,
+                color: HsColors.desc,
+                lineHeight: 1.3,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -290,102 +295,109 @@ class _StatsScreenState extends State<StatsScreen> {
     ),
   );
 
-  Widget _confirmCard(GameController c) => GestureDetector(
-    behavior: HitTestBehavior.opaque,
-    onTap: () {},
-    child: ColoredBox(
-      color: HsColors.confirmScrim,
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 430),
-          child: Padding(
-            padding: const EdgeInsets.all(26),
-            child: Container(
-              key: const ValueKey('stats-confirm-card'),
-              padding: const EdgeInsets.all(22),
-              decoration: BoxDecoration(
-                color: HsColors.cardNavy,
-                borderRadius: BorderRadius.circular(18),
-                boxShadow: const [
-                  BoxShadow(
-                    color: Color.fromRGBO(0, 0, 0, .5),
-                    offset: Offset(0, 20),
-                    blurRadius: 50,
-                  ),
-                ],
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text(
-                    Copy.resetTitle,
-                    style: outfit(17, scale: 1, weight: FontWeight.w600),
-                  ),
-                  const SizedBox(height: 11),
-                  Text(
-                    Copy.resetBody,
-                    style: outfit(
-                      12.5,
-                      scale: 1,
-                      color: HsColors.bodySoft,
-                      lineHeight: 1.55,
+  Widget _confirmCard(GameController c) => BlockSemantics(
+    child: GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () {},
+      child: ColoredBox(
+        color: HsColors.confirmScrim,
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 430),
+            child: Padding(
+              padding: const EdgeInsets.all(26),
+              child: Container(
+                key: const ValueKey('stats-confirm-card'),
+                padding: const EdgeInsets.all(22),
+                decoration: BoxDecoration(
+                  color: HsColors.cardNavy,
+                  borderRadius: BorderRadius.circular(18),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color.fromRGBO(0, 0, 0, .5),
+                      offset: Offset(0, 20),
+                      blurRadius: 50,
                     ),
-                  ),
-                  const SizedBox(height: 18),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: DesignButton(
-                          key: const ValueKey('stats-cancel'),
-                          spec: const ButtonStyleSpec(
-                            edge: HsColors.edge20,
-                            bg: HsColors.fill06,
-                            fg: HsColors.white,
-                          ),
-                          scale: 1,
-                          radius: 12,
-                          padding: const EdgeInsets.all(13),
-                          onPressed: () => setState(() => _confirming = false),
-                          child: Text(
-                            Copy.cancel,
-                            style: outfit(
-                              13,
-                              scale: 1,
-                              weight: FontWeight.w500,
+                  ],
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Semantics(
+                      liveRegion: true,
+                      header: true,
+                      child: Text(
+                        Copy.resetTitle,
+                        style: outfit(17, scale: 1, weight: FontWeight.w600),
+                      ),
+                    ),
+                    const SizedBox(height: 11),
+                    Text(
+                      Copy.resetBody,
+                      style: outfit(
+                        12.5,
+                        scale: 1,
+                        color: HsColors.bodySoft,
+                        lineHeight: 1.55,
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: DesignButton(
+                            key: const ValueKey('stats-cancel'),
+                            spec: const ButtonStyleSpec(
+                              edge: HsColors.edge20,
+                              bg: HsColors.fill06,
+                              fg: HsColors.white,
+                            ),
+                            scale: 1,
+                            radius: 12,
+                            padding: const EdgeInsets.all(13),
+                            onPressed: () =>
+                                setState(() => _confirming = false),
+                            child: Text(
+                              Copy.cancel,
+                              style: outfit(
+                                13,
+                                scale: 1,
+                                weight: FontWeight.w500,
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 9),
-                      Expanded(
-                        child: DesignButton(
-                          key: const ValueKey('stats-confirm'),
-                          spec: const ButtonStyleSpec(
-                            edge: Color(0x00000000),
-                            bg: HsColors.danger,
-                            fg: HsColors.white,
-                          ),
-                          scale: 1,
-                          radius: 12,
-                          padding: const EdgeInsets.all(13),
-                          onPressed: () async {
-                            await c.resetStats();
-                            if (mounted) setState(() => _confirming = false);
-                          },
-                          child: Text(
-                            Copy.reset,
-                            style: outfit(
-                              13,
-                              scale: 1,
-                              weight: FontWeight.w600,
+                        const SizedBox(width: 9),
+                        Expanded(
+                          child: DesignButton(
+                            key: const ValueKey('stats-confirm'),
+                            spec: const ButtonStyleSpec(
+                              edge: Color(0x00000000),
+                              bg: HsColors.danger,
+                              fg: HsColors.white,
+                            ),
+                            scale: 1,
+                            radius: 12,
+                            padding: const EdgeInsets.all(13),
+                            onPressed: () async {
+                              await c.resetStats();
+                              if (mounted) setState(() => _confirming = false);
+                            },
+                            child: Text(
+                              Copy.reset,
+                              style: outfit(
+                                13,
+                                scale: 1,
+                                weight: FontWeight.w600,
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                    ],
-                  ),
-                ],
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ),
           ),

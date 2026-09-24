@@ -34,9 +34,9 @@ void main() {
       () {
         final l = BoardLayout.of(shape);
         expect(l.noticeY, 100 + l.gridPx + 12);
-        expect(l.padY(hasNotice: false), l.noticeY);
-        expect(l.padY(hasNotice: true), l.noticeY + 76);
-        expect(kNoticeShift, 76);
+        expect(l.padY(), l.noticeY);
+        // The design's 64-pt banner: the pad 12 below it, as #31 had it.
+        expect(l.padY(noticeHeight: 64), l.noticeY + 76);
       },
     );
 

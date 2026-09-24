@@ -3,6 +3,7 @@
 
 import 'package:flutter/material.dart';
 
+import '../a11y/speak.dart';
 import '../app_scope.dart';
 import '../board/board_styles.dart';
 import '../copy.dart';
@@ -50,21 +51,25 @@ class MenuScreen extends StatelessWidget {
           children: [
             Row(
               children: [
-                const AppMark(size: 52),
+                const AppMark(size: 52, interior: MarkInterior.board),
                 const SizedBox(width: 14),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Wordmark(size: 27),
+                      const Wordmark(size: 27, header: true),
                       const SizedBox(height: 7),
-                      Text(
-                        Copy.menuByline,
-                        style: plexMono(
-                          9,
-                          scale: 1,
-                          color: HsColors.muted,
-                          letterSpacingEm: .24,
+                      Semantics(
+                        label: speak(Copy.menuByline),
+                        excludeSemantics: true,
+                        child: Text(
+                          Copy.menuByline,
+                          style: plexMono(
+                            9,
+                            scale: 1,
+                            color: HsColors.muted,
+                            letterSpacingEm: .24,
+                          ),
                         ),
                       ),
                     ],
@@ -81,6 +86,9 @@ class MenuScreen extends StatelessWidget {
               onPressed: () => summary == null
                   ? Navigator.of(context).pushNamed(Routes.setup)
                   : Routes.toBoardPaused(context),
+              semanticsLabel: summary == null
+                  ? Copy.newPuzzle
+                  : '${Copy.continuePuzzle}, ${speak(summary.meta)}',
               child: Row(
                 children: [
                   Expanded(
@@ -118,6 +126,8 @@ class MenuScreen extends StatelessWidget {
               alignment: Alignment.centerLeft,
               padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 18),
               onPressed: () => Navigator.of(context).pushNamed(Routes.setup),
+              // The glyph grid is decoration.
+              semanticsLabel: '${Copy.newPuzzle}, ${speak(Copy.newPuzzleSub)}',
               child: Row(
                 children: [
                   const _MenuGlyph(),
@@ -194,6 +204,7 @@ class MenuScreen extends StatelessWidget {
               padding: const EdgeInsets.symmetric(vertical: 15, horizontal: 16),
               onPressed: () =>
                   Navigator.of(context).pushNamed(Routes.aboutStudio),
+              semanticsLabel: '${Copy.aboutStudio}. ${Copy.aboutStudioSub}',
               child: Row(
                 children: [
                   Expanded(

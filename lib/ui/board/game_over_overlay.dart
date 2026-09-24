@@ -5,6 +5,8 @@
 import 'package:flutter/widgets.dart';
 import 'package:honest_sudoku/game/game.dart';
 
+import '../a11y/labels.dart';
+import '../motion.dart';
 import '../strings.dart';
 import '../theme/tokens.dart';
 import 'overlay_parts.dart';
@@ -48,11 +50,11 @@ class _GameOverOverlayState extends State<GameOverOverlay>
     with SingleTickerProviderStateMixin {
   late final AnimationController _rise = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 350),
+    duration: kCardRise,
   );
   late final CurvedAnimation _curve = CurvedAnimation(
     parent: _rise,
-    curve: Curves.easeOut,
+    curve: kMotionCurve,
   );
   late final int _streak;
 
@@ -69,7 +71,8 @@ class _GameOverOverlayState extends State<GameOverOverlay>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (MediaQuery.maybeDisableAnimationsOf(context) ?? false) {
+    _rise.duration = motionDuration(context, kCardRise);
+    if (reducedMotion(context)) {
       _rise.value = 1;
     } else if (!_rise.isAnimating && _rise.value == 0) {
       _rise.forward();
@@ -93,22 +96,30 @@ class _GameOverOverlayState extends State<GameOverOverlay>
       'a lost game always has a strike limit',
     );
     final zen = state.settings.strikeMode == StrikeMode.zen;
+    final time = durationWords(state.elapsedSeconds);
+    // (key, label, value, spoken value)
     final tiles = won
         ? [
-            ('time', UiStrings.time, fmt(state.elapsedSeconds)),
-            ('entries', UiStrings.entries, '${state.moves}'),
-            ('mistakes', UiStrings.mistakes, zen ? '—' : '${state.mistakes}'),
-            ('streak', UiStrings.streak, '$_streak'),
+            ('time', UiStrings.time, fmt(state.elapsedSeconds), time),
+            ('entries', UiStrings.entries, '${state.moves}', null),
+            (
+              'mistakes',
+              UiStrings.mistakes,
+              zen ? '—' : '${state.mistakes}',
+              zen ? 'not counted' : null,
+            ),
+            ('streak', UiStrings.streak, '$_streak', null),
           ]
         : [
-            ('time', UiStrings.time, fmt(state.elapsedSeconds)),
+            ('time', UiStrings.time, fmt(state.elapsedSeconds), time),
             (
               'filled',
               UiStrings.filled,
               '${state.filledCount}/${state.shape.cellCount}',
+              '${state.filledCount} of ${state.shape.cellCount}',
             ),
-            ('mistakes', UiStrings.mistakes, '${state.mistakes}'),
-            ('difficulty', UiStrings.difficulty, state.difficulty.label),
+            ('mistakes', UiStrings.mistakes, '${state.mistakes}', null),
+            ('difficulty', UiStrings.difficulty, state.difficulty.label, null),
           ];
     final kicker = won ? HsColors.teal : HsColors.wrongRed;
     final card = Container(
@@ -127,21 +138,24 @@ class _GameOverOverlayState extends State<GameOverOverlay>
         crossAxisAlignment: CrossAxisAlignment.stretch,
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(
-            won ? UiStrings.wonTag : UiStrings.lostTag,
-            textScaler: TextScaler.noScaling,
-            style: plexMono(10, scale: s, color: kicker, letterSpacingEm: .2),
+          // The board screen's live region announces tag and title.
+          ExcludeSemantics(
+            child: Text(
+              won ? UiStrings.wonTag : UiStrings.lostTag,
+              style: plexMono(10, scale: s, color: kicker, letterSpacingEm: .2),
+            ),
           ),
           SizedBox(height: 11 * s),
-          Text(
-            won ? UiStrings.wonTitle : UiStrings.lostTitle,
-            textScaler: TextScaler.noScaling,
-            style: outfit(
-              26,
-              scale: s,
-              weight: FontWeight.w700,
-              letterSpacingEm: -.02,
-              lineHeight: 1.1,
+          ExcludeSemantics(
+            child: Text(
+              won ? UiStrings.wonTitle : UiStrings.lostTitle,
+              style: outfit(
+                26,
+                scale: s,
+                weight: FontWeight.w700,
+                letterSpacingEm: -.02,
+                lineHeight: 1.1,
+              ),
             ),
           ),
           SizedBox(height: 10 * s),
@@ -149,7 +163,6 @@ class _GameOverOverlayState extends State<GameOverOverlay>
             won
                 ? UiStrings.wonBody(state.shape.label, state.difficulty.label)
                 : UiStrings.lostBody(state.settings.strikeMode.limit ?? 0),
-            textScaler: TextScaler.noScaling,
             style: outfit(
               12.5,
               scale: s,
@@ -169,6 +182,7 @@ class _GameOverOverlayState extends State<GameOverOverlay>
                       name: tiles[r * 2 + c].$1,
                       label: tiles[r * 2 + c].$2,
                       value: tiles[r * 2 + c].$3,
+                      spokenValue: tiles[r * 2 + c].$4,
                       scale: s,
                     ),
                   ),
@@ -218,6 +232,9 @@ class _GameOverOverlayState extends State<GameOverOverlay>
         animation: _curve,
         builder: (context, child) => Opacity(
           opacity: _curve.value,
+          // Reachable by a screen reader from the first frame, not once the
+          // rise ends.
+          alwaysIncludeSemantics: true,
           child: Transform.translate(
             offset: Offset(0, 8 * s * (1 - _curve.value)),
             child: child,

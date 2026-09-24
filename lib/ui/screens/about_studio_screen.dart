@@ -55,7 +55,9 @@ class AboutStudioScreen extends StatelessWidget {
           ),
           const Padding(
             padding: EdgeInsets.only(top: 6, bottom: 2),
-            child: Center(child: AppMark(size: 120)),
+            child: Center(
+              child: AppMark(size: 120, interior: MarkInterior.none),
+            ),
           ),
           Text(
             Copy.studioIntro,
@@ -122,52 +124,56 @@ class AboutStudioScreen extends StatelessWidget {
               kickerText(Copy.ourPromises),
               for (final p in Copy.promises) ...[
                 const SizedBox(height: 8),
-                Panel(
-                  radius: 12,
-                  padding: const EdgeInsets.symmetric(
-                    vertical: 12,
-                    horizontal: 14,
-                  ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '✓',
-                        style: outfit(
-                          12,
-                          scale: 1,
-                          weight: FontWeight.w600,
-                          color: Color(p.color),
-                          lineHeight: 1.2,
-                        ),
-                      ),
-                      const SizedBox(width: 11),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              p.title,
-                              style: outfit(
-                                12.5,
-                                scale: 1,
-                                weight: FontWeight.w600,
-                              ),
+                MergeSemantics(
+                  child: Panel(
+                    radius: 12,
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 12,
+                      horizontal: 14,
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        ExcludeSemantics(
+                          child: Text(
+                            '✓',
+                            style: outfit(
+                              12,
+                              scale: 1,
+                              weight: FontWeight.w600,
+                              color: Color(p.color),
+                              lineHeight: 1.2,
                             ),
-                            const SizedBox(height: 5),
-                            Text(
-                              p.body,
-                              style: outfit(
-                                11,
-                                scale: 1,
-                                color: HsColors.chipFg,
-                                lineHeight: 1.45,
-                              ),
-                            ),
-                          ],
+                          ),
                         ),
-                      ),
-                    ],
+                        const SizedBox(width: 11),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                p.title,
+                                style: outfit(
+                                  12.5,
+                                  scale: 1,
+                                  weight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(height: 5),
+                              Text(
+                                p.body,
+                                style: outfit(
+                                  11,
+                                  scale: 1,
+                                  color: HsColors.chipFg,
+                                  lineHeight: 1.45,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ],

@@ -17,6 +17,7 @@ import 'package:honest_sudoku/store/app_store.dart';
 
 import '../copy.dart';
 import '../theme/board_theme.dart';
+import 'game_action.dart';
 import 'random_seed_source.dart';
 import 'save_scheduler.dart';
 
@@ -139,6 +140,21 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   GameState? get state => _state;
   GameState? _state;
 
+  /// The verb behind the latest notification; null for one that is not
+  /// about play (statistics).
+  GameAction? get lastAction => _lastAction;
+  GameAction? _lastAction;
+
+  /// The cell of the latest [GameAction.place], else null.
+  int? get lastPlacedIndex => _lastPlacedIndex;
+  int? _lastPlacedIndex;
+
+  void _notify(GameAction? action, {int? placed}) {
+    _lastAction = action;
+    _lastPlacedIndex = placed;
+    notifyListeners();
+  }
+
   /// The player's settings.
   AppSettings get settings => _settings;
   AppSettings _settings;
@@ -162,7 +178,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   set statsTab(Difficulty d) {
     if (d == _statsTab) return;
     _statsTab = d;
-    notifyListeners();
+    _notify(null);
   }
 
   /// Non-null while a board is being made.
@@ -259,7 +275,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
           break;
       }
     }
-    notifyListeners();
+    _notify(GameAction.load);
   }
 
   // ---- settings -----------------------------------------------------------
@@ -276,7 +292,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
       _saver.touch();
     }
     unawaited(_writeSettings());
-    notifyListeners();
+    _notify(GameAction.settings);
   }
 
   Future<void> _writeSettings() async {
@@ -287,14 +303,14 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
 
   // ---- play -----------------------------------------------------------------
 
-  void _apply(GameState Function(GameState s) verb) {
+  void _apply(GameAction action, GameState Function(GameState s) verb) {
     final prev = _state;
     if (prev == null) return;
     final next = verb(prev);
     if (identical(next, prev)) return;
     _state = next;
     _afterChange(prev, next);
-    notifyListeners();
+    _notify(action, placed: action == GameAction.place ? prev.selected : null);
   }
 
   void _afterChange(GameState prev, GameState next) {
@@ -315,37 +331,38 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   /// Selects or deselects a cell.
-  void select(int index) => _apply((s) => s.select(index));
+  void select(int index) => _apply(GameAction.select, (s) => s.select(index));
 
   /// Places a value, or toggles a pencil mark.
-  void place(int value) => _apply((s) => s.place(value));
+  void place(int value) => _apply(GameAction.place, (s) => s.place(value));
 
   /// Erases the selected cell.
-  void erase() => _apply((s) => s.erase());
+  void erase() => _apply(GameAction.erase, (s) => s.erase());
 
   /// Undo.
-  void undo() => _apply((s) => s.undo());
+  void undo() => _apply(GameAction.undo, (s) => s.undo());
 
   /// Redo.
-  void redo() => _apply((s) => s.redo());
+  void redo() => _apply(GameAction.redo, (s) => s.redo());
 
   /// Note mode on or off.
-  void toggleNotes() => _apply((s) => s.toggleNoteMode());
+  void toggleNotes() =>
+      _apply(GameAction.noteToggle, (s) => s.toggleNoteMode());
 
   /// The easiest next step.
-  void hint() => _apply((s) => s.hint());
+  void hint() => _apply(GameAction.hint, (s) => s.hint());
 
   /// Check.
-  void check() => _apply((s) => s.check());
+  void check() => _apply(GameAction.check, (s) => s.check());
 
   /// Pause.
-  void pause() => _apply((s) => s.pause());
+  void pause() => _apply(GameAction.pause, (s) => s.pause());
 
   /// Resume.
-  void resume() => _apply((s) => s.resume());
+  void resume() => _apply(GameAction.resume, (s) => s.resume());
 
   /// Restart this puzzle. Records nothing: it is the same game.
-  void restart() => _apply((s) => s.restart());
+  void restart() => _apply(GameAction.restart, (s) => s.restart());
 
   // ---- generation -----------------------------------------------------------
 
@@ -353,13 +370,16 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   void newDeal() {
     final s = _state;
     if (s == null) return;
-    startNew(s.shape, s.difficulty);
+    _startNew(s.shape, s.difficulty, GameAction.newDeal);
   }
 
   /// A new puzzle of [shape] and [difficulty], with the last setup's strike
   /// and announce modes. An unfinished game is recorded as abandoned, once,
   /// and saved at once, whether or not the new board arrives.
-  void startNew(GridShape shape, Difficulty difficulty) {
+  void startNew(GridShape shape, Difficulty difficulty) =>
+      _startNew(shape, difficulty, GameAction.startNew);
+
+  void _startNew(GridShape shape, Difficulty difficulty, GameAction action) {
     final current = _state;
     if (current != null && !current.won && !current.lost) {
       final seed = current.puzzle.seed;
@@ -374,14 +394,17 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     final seed = current == null
         ? _seeds.next()
         : current.newDeal(_seeds).$2.seed;
-    _generate(GenerationRequest(shape, seed, difficulty));
+    _generate(GenerationRequest(shape, seed, difficulty), action);
   }
 
   /// Tries the last request again with a fresh seed.
   void retry() {
     final last = _lastRequest;
     if (last == null) return;
-    _generate(GenerationRequest(last.shape, _seeds.next(), last.difficulty));
+    _generate(
+      GenerationRequest(last.shape, _seeds.next(), last.difficulty),
+      GameAction.startNew,
+    );
   }
 
   /// The player backed out of the loading screen.
@@ -397,7 +420,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
         null,
       ),
     );
-    notifyListeners();
+    _notify(GameAction.generation);
   }
 
   void _fail(GenerationFailureView view) {
@@ -410,7 +433,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  void _generate(GenerationRequest request) {
+  void _generate(GenerationRequest request, GameAction action) {
     unawaited(_generation?.cancel());
     _lastRequest = request;
     _loadingStatus = const LoadingStatus(0, GenerationPhase.generating);
@@ -423,7 +446,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
       strikeMode: setup.strikeMode,
       announce: setup.announce,
     );
-    notifyListeners();
+    _notify(action);
     _generation = _generator(request).listen((event) {
       if (_disposed) return;
       switch (event) {
@@ -451,7 +474,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
             }, reason),
           );
       }
-      notifyListeners();
+      _notify(GameAction.generation);
     });
   }
 
@@ -483,7 +506,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
     if (identical(next, s)) return;
     _state = next;
     _book = _book.recordTime(s.shape, s.difficulty, 1);
-    notifyListeners();
+    _notify(GameAction.tick);
   }
 
   // ---- statistics -----------------------------------------------------------
@@ -497,7 +520,7 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
       book = book.recordStart(s.shape, s.difficulty);
     }
     _book = book;
-    notifyListeners();
+    _notify(null);
     await _saver.flushNow();
   }
 

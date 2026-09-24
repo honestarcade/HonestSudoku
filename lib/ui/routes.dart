@@ -7,6 +7,46 @@
 import 'package:flutter/widgets.dart';
 
 import 'app_scope.dart';
+import 'motion.dart';
+
+/// Every screen change: the new page fades in over the old one, which stays
+/// still (#50). The duration is read from the phone's setting when the route
+/// is pushed and again when it pops, so turning "Remove animations" on takes
+/// effect at the next transition.
+class FadeRouteTransition<T> extends PageRouteBuilder<T> {
+  /// Shows [page] under [settings].
+  FadeRouteTransition({
+    required RouteSettings super.settings,
+    required Widget page,
+  }) : super(pageBuilder: (_, _, _) => page, transitionsBuilder: _fade);
+
+  static Widget _fade(
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondary,
+    Widget child,
+  ) => FadeTransition(
+    opacity: CurvedAnimation(parent: animation, curve: kRouteCurve),
+    child: child,
+  );
+
+  Duration get _now {
+    final context = navigator?.context;
+    return context == null ? kRouteFade : motionDuration(context, kRouteFade);
+  }
+
+  @override
+  Duration get transitionDuration => _now;
+
+  @override
+  Duration get reverseTransitionDuration => _now;
+
+  @override
+  bool didPop(T? result) {
+    controller?.reverseDuration = _now;
+    return super.didPop(result);
+  }
+}
 
 /// How the loading screen is being used.
 enum LoadingMode {

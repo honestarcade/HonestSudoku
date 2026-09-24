@@ -1,0 +1,22 @@
+<!-- Android 13 themed icon: the four corners and the eight thick box lines,
+     white; digits and thin lines would be noise at themed sizes. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 432 432" width="432" height="432">
+  <g transform="translate(124,124) scale(2.875)">
+    <g fill="none" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+      <path stroke="#FFFFFF" d="M 3 21 L 3 10 A 7 7 0 0 1 10 3 L 21 3"></path>
+      <path stroke="#FFFFFF" d="M 61 21 L 61 10 A 7 7 0 0 0 54 3 L 43 3"></path>
+      <path stroke="#FFFFFF" d="M 61 43 L 61 54 A 7 7 0 0 1 54 61 L 43 61"></path>
+      <path stroke="#FFFFFF" d="M 3 43 L 3 54 A 7 7 0 0 0 10 61 L 21 61"></path>
+    </g>
+    <g>
+      <rect x="10.95" y="10.95" width="1.1" height="42.10" fill="#FFFFFF"></rect>
+      <rect x="10.95" y="10.95" width="42.10" height="1.1" fill="#FFFFFF"></rect>
+      <rect x="24.62" y="10.95" width="1.1" height="42.10" fill="#FFFFFF"></rect>
+      <rect x="10.95" y="24.62" width="42.10" height="1.1" fill="#FFFFFF"></rect>
+      <rect x="38.28" y="10.95" width="1.1" height="42.10" fill="#FFFFFF"></rect>
+      <rect x="10.95" y="38.28" width="42.10" height="1.1" fill="#FFFFFF"></rect>
+      <rect x="51.95" y="10.95" width="1.1" height="42.10" fill="#FFFFFF"></rect>
+      <rect x="10.95" y="51.95" width="42.10" height="1.1" fill="#FFFFFF"></rect>
+    </g>
+  </g>
+</svg>

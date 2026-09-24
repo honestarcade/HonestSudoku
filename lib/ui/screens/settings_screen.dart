@@ -5,6 +5,7 @@
 import 'package:flutter/material.dart';
 import 'package:honest_sudoku/game/game.dart';
 
+import '../a11y/labels.dart';
 import '../app_scope.dart';
 import '../board/board_styles.dart';
 import '../board/game_controller.dart';
@@ -269,6 +270,9 @@ class _ThemeCard extends StatelessWidget {
     borderWidth: 1.5,
     padding: const EdgeInsets.all(10),
     onPressed: onPick,
+    // The preview's digits are decoration: the card reads its name.
+    semanticsLabel: sentenceCase(theme.label),
+    semanticsSelected: selected,
     child: Column(
       children: [
         Container(

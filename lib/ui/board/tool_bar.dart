@@ -4,6 +4,7 @@
 import 'package:flutter/widgets.dart';
 import 'package:honest_sudoku/game/game.dart';
 
+import '../a11y/labels.dart';
 import '../theme/tokens.dart';
 import '../widgets/design_button.dart';
 import 'board_layout.dart';
@@ -51,19 +52,23 @@ class ToolBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final auto = state.settings.autoNotes;
+    final note = state.effectiveNoteMode;
     final tools = [
-      ('undo', '↺', 'UNDO', onUndo, false),
-      ('redo', '↻', 'REDO', onRedo, false),
+      // Undo and Redo are inert, and announced disabled, with nothing to
+      // take back or forward.
+      (Tool.undo, '↺', 'UNDO', state.canUndo ? onUndo : null, false, null),
+      (Tool.redo, '↻', 'REDO', state.canRedo ? onRedo : null, false, null),
       (
-        'notes',
+        Tool.notes,
         '✎',
         auto ? 'AUTO' : 'NOTES',
         auto ? null : onToggleNotes,
-        state.effectiveNoteMode,
+        note,
+        auto || note,
       ),
-      ('erase', '⌫', 'ERASE', onErase, false),
-      ('hint', '✦', 'HINT', onHint, false),
-      ('check', '✓', 'CHECK', onCheck, false),
+      (Tool.erase, '⌫', 'ERASE', onErase, false, null),
+      (Tool.hint, '✦', 'HINT', onHint, false, null),
+      (Tool.check, '✓', 'CHECK', onCheck, false, null),
     ];
     return Container(
       width: kFrameWidth * scale,
@@ -81,21 +86,26 @@ class ToolBar extends StatelessWidget {
     );
   }
 
-  Widget _tool((String, String, String, VoidCallback?, bool) t) {
-    final (name, icon, label, onTap, active) = t;
+  Widget _tool((Tool, String, String, VoidCallback?, bool, bool?) t) {
+    final (tool, icon, label, onTap, active, toggled) = t;
     final spec = toolStyle(active: active);
     return DesignButton(
-      key: ValueKey('tool-$name'),
+      key: ValueKey('tool-${tool.name}'),
       spec: spec,
       scale: scale,
       height: 50,
       onPressed: onTap,
+      semanticsLabel: toolLabel(
+        tool,
+        noteMode: state.effectiveNoteMode,
+        autoNotes: state.settings.autoNotes,
+      ),
+      semanticsToggled: toggled,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(
             icon,
-            textScaler: TextScaler.noScaling,
             style: outfit(
               14,
               scale: scale,
@@ -106,8 +116,9 @@ class ToolBar extends StatelessWidget {
           SizedBox(height: 5 * scale),
           Text(
             label,
+            maxLines: 1,
             softWrap: false,
-            textScaler: TextScaler.noScaling,
+            overflow: TextOverflow.visible,
             style: plexMono(
               8,
               scale: scale,

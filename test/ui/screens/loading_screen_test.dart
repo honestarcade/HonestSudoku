@@ -7,6 +7,7 @@ import 'package:honest_sudoku/ui/app.dart';
 import 'package:honest_sudoku/ui/board/board_grid.dart';
 import 'package:honest_sudoku/ui/routes.dart';
 import 'package:honest_sudoku/ui/screens/menu_screen.dart';
+import 'package:honest_sudoku/ui/widgets/app_mark.dart';
 
 import '../helpers.dart';
 import '../stub_generator.dart';
@@ -36,6 +37,7 @@ void main() {
   testWidgets('the label follows the generation phase', (tester) async {
     final gen = ManualGenerator();
     await pumpGenerating(tester, gen);
+    expectMark(tester, 132, MarkInterior.board);
     expect(label(tester), 'GENERATING');
     for (final (f, want) in [
       (.2, 'GENERATING'),

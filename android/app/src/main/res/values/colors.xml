@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The icon tile's navy (the grid's #04213F in lib/ui/theme). -->
+    <color name="ic_launcher_background">#FF04213F</color>
+    <!-- The app's navy (HsColors.navy), behind every frame before Flutter's. -->
+    <color name="splash_navy">#FF05285F</color>
+</resources>

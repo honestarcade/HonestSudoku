@@ -5,7 +5,9 @@
 import 'package:flutter/widgets.dart';
 
 import '../board/board_styles.dart';
+import '../motion.dart';
 import '../theme/tokens.dart';
+import 'tap_target.dart';
 
 /// The design's recurring button looks.
 enum DesignButtonVariant {
@@ -75,6 +77,8 @@ class DesignButton extends StatefulWidget {
     this.padding = EdgeInsets.zero,
     this.height,
     this.semanticsLabel,
+    this.semanticsToggled,
+    this.semanticsSelected,
     this.borderWidth = 1,
     this.alignment = Alignment.center,
     super.key,
@@ -124,8 +128,16 @@ class DesignButton extends StatefulWidget {
   /// Fixed height in design points, if any.
   final double? height;
 
-  /// What a screen reader says; the child's text when null (M5 fills these).
+  /// What a screen reader says in place of the child's text; the child's
+  /// text is read when null.
   final String? semanticsLabel;
+
+  /// On or off, for a button that switches something (the notes tool).
+  final bool? semanticsToggled;
+
+  /// Chosen or not, for one option of several (setup, stats, theme cards);
+  /// null for a plain button.
+  final bool? semanticsSelected;
 
   /// The edge's width in design points.
   final double borderWidth;
@@ -165,23 +177,39 @@ class _DesignButtonState extends State<DesignButton> {
         child: widget.child,
       ),
     );
-    box = Opacity(opacity: spec.opacity * (_down ? .85 : 1), child: box);
-    if (widget.semanticsLabel != null) {
-      box = Semantics(
-        button: true,
-        enabled: enabled,
-        label: widget.semanticsLabel,
-        excludeSemantics: true,
-        child: box,
-      );
-    }
-    return GestureDetector(
+    // The dip is feedback, so under reduced motion it still happens, at once.
+    box = AnimatedOpacity(
+      opacity: spec.opacity * (_down ? .85 : 1),
+      duration: motionDuration(context, kPressDip),
+      curve: kMotionCurve,
+      child: box,
+    );
+    final pressable = GestureDetector(
       behavior: HitTestBehavior.opaque,
+      excludeFromSemantics: true,
       onTap: widget.onPressed,
       onTapDown: enabled ? (_) => _set(true) : null,
       onTapUp: enabled ? (_) => _set(false) : null,
       onTapCancel: enabled ? () => _set(false) : null,
       child: box,
+    );
+    // One node per button, carrying its own tap, at least 48 dp however
+    // small the design scale paints it (#56). An inert button is announced as
+    // disabled and has no tap action.
+    return TapTarget(
+      child: Semantics(
+        button: true,
+        enabled: enabled,
+        toggled: widget.semanticsToggled,
+        selected: widget.semanticsSelected,
+        inMutuallyExclusiveGroup: widget.semanticsSelected == null
+            ? null
+            : true,
+        label: widget.semanticsLabel,
+        onTap: widget.onPressed,
+        excludeSemantics: widget.semanticsLabel != null,
+        child: pressable,
+      ),
     );
   }
 }

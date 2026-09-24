@@ -2,6 +2,7 @@
 
 import 'package:flutter/widgets.dart';
 
+import '../a11y/speak.dart';
 import '../link_opener.dart';
 import '../theme/tokens.dart';
 
@@ -25,9 +26,11 @@ class TextLink extends StatelessWidget {
   final LinkOpener opener;
 
   @override
+  // No TapTarget: links are exempt from the tap-target size (WCAG 2.5.5),
+  // and grown margins would overlap the wrapped row's other link.
   Widget build(BuildContext context) => Semantics(
     link: true,
-    label: label.replaceAll(' ↗', ''),
+    label: '${speak(label)}, opens in browser',
     excludeSemantics: true,
     child: GestureDetector(
       behavior: HitTestBehavior.opaque,
@@ -84,9 +87,14 @@ class FooterLinks extends StatelessWidget {
       alignment: center ? WrapAlignment.center : WrapAlignment.start,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
-        if (lead != null) Text(lead!, style: dim),
+        if (lead != null)
+          Semantics(
+            label: speak(lead!),
+            excludeSemantics: true,
+            child: Text(lead!, style: dim),
+          ),
         for (var i = 0; i < links.length; i++) ...[
-          if (i > 0) Text('·', style: dim),
+          if (i > 0) ExcludeSemantics(child: Text('·', style: dim)),
           links[i],
         ],
       ],

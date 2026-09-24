@@ -1061,3 +1061,87 @@ than per-story.
 - **Decision:** The 4×4 setup tests assert Medium through Evil greyed, and a move from Evil to Easy.
   **Why:** #25's narrowed support table. 4×4 offers Easy only, so #41's "4×4 shows Expert and Evil greyed … moves to Hard" became Medium, Hard, Expert and Evil greyed, with a move to Easy.
   **Issue:** #41
+
+## /n8-exec M5 — 2026-09-23
+
+- **Decision:** Fonts pinned at Outfitio/Outfit-Fonts `902773808eb3` (committed 2023-03-26) and google/fonts `b5efa9c32e8f` (committed 2026-09-23), each the default branch's head on 2026-09-23. `SOURCES.tsv` records each file's commit date beside its download date.
+  **Why:** #47's pin rule. The Outfit repository's head still carries all five static TTFs, so there was no need to fall back to an older commit.
+  **Issue:** #47
+- **Decision (Rule 1):** `.gitattributes` marks `assets/fonts/OFL-*.txt` as `-text`, beyond the story's `*.ttf`/`*.otf` lines.
+  **Why:** IBM Plex Mono's upstream licence has CRLF endings. `* text=auto eol=lf` normalised the blob, so a fresh clone's copy failed `fetch_fonts.sh --check`, which was caught by the commit's CRLF warning and a clone check. The hashes are over bytes, so the bytes must survive checkout.
+  **Issue:** #47
+- **Decision:** The font weight scan attributes a weight to its innermost call. A style helper's family comes from its `fontFamily:`, then from the call's own `fontFamily:` argument, then from the file's single family. `cardButton(weight:)` in files naming both families is left unattributed (three places today), as the story's rule says.
+  **Why:** The code styles text through `outfit()`/`plexMono()` helpers rather than bare `TextStyle(fontFamily:)`, so the planned per-`TextStyle` scan would have seen almost nothing. Helper discovery follows the planner's "resolve through the token constants" line.
+  **Issue:** #47
+- **Decision:** The mark's digit rows use the SVG's +0.15 offset (row centre 13.93 against column centre 13.78) and the exact 41/9 pitch. The data was re-extracted from the design file on 2026-09-23 and matched the story's table. The design's fifth copy (light tile) is not shipped.
+  **Why:** #48's transcription rule.
+  **Issue:** #48
+- **Decision:** `GameAction` also clears to `null` on the two notifications that are not about play (the statistics tab and the statistics reset), so a feedback listener never re-reads a stale `place`.
+  **Why:** Every notifying path must set something. `null` is the controller's "not play" and needs no enum value the story did not list.
+  **Issue:** #49
+- **Decision:** `*.wav binary` in `.gitattributes`.
+  **Why:** The placeholders' digests are over exact bytes, the same reason as the font licences.
+  **Issue:** #49
+- **Decision:** The `placeholder_audio` release step is a `[]` step in `_dependsOn`, covered by two `_claims` cases: one where placeholders ship and are named, one where only a real clip ships and nothing is flagged. A battery mutation silences it.
+  **Why:** The workflow guard requires every `[]` step to be exercised by a named test.
+  **Issue:** #49
+- **Decision:** #52's contrast enforcement is the ratio guard (`token_contrast_test.dart`, tagged guard, two mutations). The pixel guideline test (`contrast_test.dart`) runs in the eight planned states and passes, but it passed before any nudge too.
+  **Why:** Flutter's `textContrastGuideline` only samples a `Text` whose semantics label equals its own string. Since #51, the digits, keys, chips and card titles speak their own labels, so the guideline never sees them; it sees only card button texts and bodies. The planner anticipated this for the grid digits; it turned out to cover almost every text on the board.
+  **Issue:** #52
+- **Decision:** Eleven tokens nudged rather than the AC's five: also navy pencil marks and wrong digits (both fail on the selected-cell tint), `wrongRed` (strike chip), the ZEN chip (a new `zenChipFg`; teal stays the brand swatch), `muted` (tile labels on the card fill), and Paper's hinted pencil marks (a new `paperHintNote`). Every pair is in the guard's table, and every nudged value is re-derived by the rule in the test.
+  **Why:** The planner's rule is that each token must pass on every surface it is drawn on, and it names unlisted failures as in scope. `kicker` is renamed `cardKicker` app-wide, and `labelDim` and `muted` change app-wide, so #56 starts from passing values.
+  **Issue:** #52
+- **Decision:** No `@visibleForTesting` state setter on the controller. The contrast states (hint, wrong entry, note mode, pause, win, out of strikes) are staged through the real verbs on the fixture board.
+  **Why:** Every state is reachable in a few verbs, and a setter would be a second way into the controller that nothing but tests uses.
+  **Issue:** #52
+- **Decision:** No padding ladder on the top bar's chips, and the pause button keeps its difficulty word. The matrix at 360×640 and 1.3×, with the bundled fonts loaded, lays the bar out on one row with no overflow in every size and mode, so the yield steps would never run.
+  **Why:** Writing a ladder that no supported configuration reaches would be untested code. The row's fit is asserted instead: no overflow, and every semantics node on screen. If a longer difficulty label or font ever breaks it, the matrix fails.
+  **Issue:** #53
+- **Decision:** The text-scale matrix also checks the stacking: banner above pad, pad at least 8 pt above the tools. Restoring the old fixed 76-pt shift fails ten of its 1.3× hint cases (run 2026-09-24, before commit).
+  **Why:** An overlapping banner raises no layout exception, so "no overflow" alone could not tell the measured layout from the old one. The story's "watch it fail first" needed this check.
+  **Issue:** #53
+- **Decision:** The win-card screenshot at 1.3× is not in #53's closing comment. The emulator's saved game is a 16×16 Expert board, and solving it through adb is impractical. The card at 1.3× on 360×640 is in the matrix, which asserts no overflow and every node on screen.
+  **Why:** The manual item's purpose, a card that fits at 1.3×, is carried by an executed check.
+  **Issue:** #53
+- **Decision:** `render_icons.sh` re-encodes the 512-px store icon from RGB to RGBA with a stdlib-Python pass that changes no pixel, where the plan said the PNGs are committed as emitted.
+  **Why:** rsvg-convert writes an opaque image as 24-bit RGB, while Play asks for a 32-bit PNG for the hi-res icon and the story's guard requires colour type 6. The other outputs have transparency and come out RGBA untouched.
+  **Issue:** #54
+- **Decision:** No API 31 AVD. The circle mask and the cold-start splash are screenshots from the API 34 AVD; the squircle and themed-icon views are rsvg composites of the committed layers, labelled as renders in `ArtSource/audit/icon/README.md`.
+  **Why:** API 34's launcher has no icon-shape switch, and a roughly 1 GB system image for one screenshot is disproportionate; the planner allowed recording a mask as unverified. The safe-zone arithmetic in `assets/brand/README.md` covers the geometry.
+  **Issue:** #54
+- **Decision:** The icon digits carry `dy="0.35em"` instead of `dominant-baseline="central"`, which librsvg ignores; I checked the centring by eye on the 512-px render. The guard compares the inline mark copies after stripping indentation, not byte for byte, because the copies sit at different nesting depths.
+  **Why:** The second-pass plan names the substitution. "Byte-identical" across files at different indentation would only be true of the stripped text.
+  **Issue:** #54
+- **Decision:** 48-dp tap targets come from a `TapTarget` render object: layout and paint unchanged, hit area and semantics rect grown to at least 48 around the painted box. A `TapTargetGroup` (one at the app root, one on each board component) lets a hit in a grown margin reach its control. The planner's per-widget overlap layouts (a pad `Stack` of inflated keys, `padKeyRect`) were not built.
+  **Why:** The design scales the whole frame to the phone, so at 360×640 nearly every control paints under 48 (a 9×9 key is 39 px). One mechanism covers the pad, tools, top bar, choice rows, tabs, toggles and the back button without touching M3/M4 layouts. The group forwards a margin hit only when every pointer listener the ordinary hit finds is an ancestor of the target, and it collects targets through the semantics traversal. That rule was found by a test: a scrim in front must win, and offstage routes must not count.
+  **Issue:** #56
+- **Decision:** Text links carry no `TapTarget`.
+  **Why:** WCAG 2.5.5 and Flutter's guideline exempt inline links, and the About screens' wrapped link row put two links' grown margins over each other: the first run tapped the source link when the site link was meant. An existing about-screen test caught it.
+  **Issue:** #56
+- **Decision:** `selected` moved into `DesignButton`'s own node (`semanticsSelected`). The choice row's and stats tabs' outer `Semantics(selected:)` sat above the button's container node, so the flag landed on the parent.
+  **Why:** Found by the per-screen semantics dump; #51's change to one node per button exposed it.
+  **Issue:** #56
+- **Decision:** The pre-fix guideline run failed 28 of 28 route cases, on tap-target size on every screen and on text contrast (the wordmark's two colours, and the 1.94:1 `versionText`). `versionText` is nudged to `#A1B7D1` under #52's rule and added to the ratio guard. The wordmark now speaks "Honest Sudoku" with its two-colour text excluded (a header on the menu).
+  **Why:** #56's test plan asks for the first failures; these are they.
+  **Issue:** #56
+- **Decision:** The manual TalkBack pass records the accessibility tree along menu → setup → Start → board → pause → Settings → back (uiautomator), not TalkBack's speech. TalkBack was enabled and speaking (the TTS service's dispatch lines are in logcat), but its utterance text is not logged where adb can read it.
+  **Why:** It reads the same node labels TalkBack speaks; the difference is recorded rather than glossed.
+  **Issue:** #56
+- **Decision (Rule 1):** #54's icons are re-rendered with `PANGOCAIRO_BACKEND=fc`. The first render drew the board digits in a macOS system font: Homebrew's Pango defaults to CoreText and ignores fontconfig, so the `fc-match` refusal passed while proving nothing. The check now lives in `tools/lib/fonts_check.sh`, shared with #57's renderer. It also renders one word in Outfit and in a family that does not exist, and refuses (exit 2) if they are identical. Deleting the backend line makes it refuse, as checked by hand before commit.
+  **Why:** Found while rendering #57's feature graphic, whose wordmark came out in Helvetica. The committed icons were wrong in exactly the way #54's fonts.conf existed to prevent.
+  **Issue:** #54, #57
+- **Decision:** The store screenshots are driven by `flutter_driver` (`test_driver/store_app.dart` as the target, `test_driver/store_app_test.dart` as the driver), not `integration_test` as #57's AC names.
+  **Why:** `integration_test` has an Android plugin, and as a dev dependency it lands in `GeneratedPluginRegistrant.java` when `flutter pub get` runs. The gate and the release workflow then build with `--no-pub`, so the release build compiled a registrant naming a plugin that release builds leave out, and it failed. Two guards and `release.yml` pin `--no-pub`. `flutter_driver` is pure Dart, so the registrant stays clean. The capture is otherwise as planned: fixed seeds 20260824 and 1, a seeded store, taps by key, screenshots of the full 1080×1920 display with the app in immersive mode. Checked after pub get: `.flutter-plugins-dependencies` lists no dev plugin.
+  **Issue:** #57
+- **Decision:** The screenshots are the whole display with the app immersive (no system bars), not the Flutter surface under visible bars.
+  **Why:** The first capture took the Flutter surface at 1080×1857, since the navigation bar is not part of it, which misses Play's 9:16. The planner allowed the full-window route.
+  **Issue:** #57
+
+## Ad-hoc — 2026-09-24
+
+- **Change:** `integration_test` cannot be a dev dependency while the gate and `release.yml` build the release bundle with `--no-pub`. Its Android plugin is written into `GeneratedPluginRegistrant.java` by `flutter pub get` (in debug mode), and the `--no-pub` release build then compiles a registrant naming a plugin that release builds exclude, so it fails. #57 captured the store screenshots with `flutter_driver` (pure Dart, no plugin) instead.
+  **Why:** Found executing #57 (M5). The alternatives were to drop `--no-pub` from the release build (pinned by `signing_guard_test.dart`, `workflow_guard_test.dart` and `release.yml`) or to exclude `integration_test/` from analysis. Both weaken a gate for a tooling need.
+  **Affects:** M6 #65 (`integration_test/engine_soak_test.dart`), #66 (`integration_test/app_flow_test.dart` and its `flutter drive` process-death plan) and #67 (which keeps those suites out of the gate by folder). Each needs `flutter_driver`, a change to the release build's pub handling agreed with the owner, or another route. #61's script can reuse `tools/screenshots.sh`'s SDK and `JAVA_HOME` resolution, which exists now.
+- **Change:** The mutation battery outgrew CI's 60-minute limit, then the 90-minute stopgap. M3's PR took about 80 minutes for 148 entries, and M4's run hit 90 at entry 149 of 150, all caught, at about 34 s an entry. It is 150 minutes now (on #288). Splitting it across jobs is #286 (needs-triage), and it needs a ci-shape exception for an `if: always()` aggregator, which is an owner call.
+  **Why:** Every guard adds an entry and about 26 s, so each milestone that adds guards moves the merge gate closer to the limit.
+  **Affects:** M6 and M7, whose stories add guards; each PR waits over an hour on `mutations` until #286 lands.
