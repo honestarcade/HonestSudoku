@@ -68,21 +68,51 @@ void main() {
       expect(again.values[e[2]], wrongValue(classic, e[2]));
     });
 
-    test('redo re-derives won and revealed', () {
+    test('redo re-derives won and revealed, and clears the notice', () {
       var s = GameState.start(classic);
       for (final i in empties(classic)) {
         s = s.select(i).place(classic.solution[i]);
       }
       expect(s.won, isTrue);
-      final back = s.undo();
+      final back = s.undo().hint();
       expect(back.won, isFalse);
-      expect(back.redo().won, isTrue);
+      expect(back.notice, isNotNull, reason: 'fixture: the hint notice');
+      final again = back.redo();
+      expect(again.won, isTrue, reason: 'redo re-derives won');
+      expect(again.notice, isNull, reason: 'redo clears the notice');
+
+      final e = empties(classic);
+      var wrongFull = GameState.start(
+        classic,
+        const GameSettings(strikeMode: StrikeMode.unlimited),
+      );
+      for (final i in e.skip(1)) {
+        wrongFull = wrongFull.select(i).place(classic.solution[i]);
+      }
+      wrongFull = wrongFull.select(e.first).place(wrongValue(classic, e[0]));
+      final unrevealed = wrongFull.undo().copyWith(revealed: false);
+      expect(
+        unrevealed.redo().revealed,
+        isTrue,
+        reason: 'redo re-derives revealed from the full, wrong grid',
+      );
     });
 
-    test('a new action after undo empties the redo stack', () {
-      final s = fresh().place(wrong).undo();
+    test('a new action after undo empties the redo stack: a place, an erase '
+        'or a pencil mark', () {
+      final other = empties(classic)[1];
+      final s = fresh()
+          .place(wrong)
+          .select(other)
+          .place(classic.solution[other])
+          .undo()
+          .select(cell);
       expect(s.canRedo, isTrue);
-      expect(s.place(right).canRedo, isFalse);
+      expect(s.place(right).canRedo, isFalse, reason: 'a place empties it');
+      expect(s.erase().canRedo, isFalse, reason: 'an erase empties it');
+      final noted = s.select(other).toggleNoteMode().place(1);
+      expect(noted.notes[other], [1]);
+      expect(noted.canRedo, isFalse, reason: 'a pencil mark empties it');
     });
 
     test('no-ops on empty stacks', () {

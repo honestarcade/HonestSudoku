@@ -42,7 +42,7 @@ void main() {
     expect([done.isFull, done.isClean], [true, true]);
   });
 
-  test('9×9: remaining counts empty cells only', () {
+  test('9×9: remaining counts empty cells only, and the body says so', () {
     final sol9 = basePattern(GridShape.classic);
     final values = List.of(sol9)
       ..[0] = 0
@@ -55,6 +55,11 @@ void main() {
         2,
         [80],
       ],
+    );
+    expect(r.body, checkOneWrong);
+    expect(
+      check(GridShape.classic, List.of(sol9)..[0] = 0, sol9).body,
+      checkClean1,
     );
   });
 
