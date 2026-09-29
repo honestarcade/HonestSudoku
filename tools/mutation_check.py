@@ -542,6 +542,20 @@ MUTATIONS: list[Mutation] = [
              sub(r"    addTearDown\(_clear\);\n", "", 1),
              "one test's value reads as a leak in another's unrelated output",
              'sentinel-isolation'),
+    # ---- #325: the remaining starts, migrated ------------------------------
+    # The first needs a token in the environment to have anything to find,
+    # which the CI mutations job provides; without one the probe carries no
+    # header at all.
+    Mutation("#325", "the ruleset token goes back on curl's argv",
+             "test/guards/workflow_guard_test.dart",
+             sub(r"'@\$\{header\.path\}'", "'Authorization: Bearer $token'", 1),
+             "the CI token sits in the process table for as long as curl runs",
+             'leak:'),
+    Mutation("#325", "a sealed call in repo_files.dart inherits the environment",
+             "test/guards/repo_files.dart",
+             sub(r"runSealed\('git', \[", "Process.runSync('git', [", 1),
+             "every tracked-file listing hands git the CI token again",
+             'leak-chokepoint'),
     # ---- #226, the second half: summary, name_failure, and the two steps ----
     # in play-promote that were run by nothing. All GREEN at 9cc2317.
     Mutation("#226", "the release summary claims production and drops the track",
