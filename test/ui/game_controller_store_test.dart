@@ -556,4 +556,30 @@ void main() {
       expect(file.readAsStringSync(), newer);
     });
   });
+
+  for (final won in [true, false]) {
+    test('settings changes leave a ${won ? 'won' : 'lost'} game '
+        'untouched', () async {
+      final a = await started(GridShape.mini, Difficulty.easy);
+      playEmpty(a, right: won, count: won ? 16 : 3);
+      expect(won ? a.state!.won : a.state!.lost, isTrue);
+      final over = a.state;
+      final game = a.settings.game;
+      a.updateSettings(
+        a.settings.copyWith(
+          game: game.copyWith(
+            strikeMode: StrikeMode.zen,
+            announce: AnnounceMode.atEnd,
+            autoNotes: !game.autoNotes,
+          ),
+        ),
+      );
+      expect(a.settings.game.strikeMode, StrikeMode.zen);
+      expect(
+        a.state,
+        same(over),
+        reason: 'updateSettings leaves a finished game untouched',
+      );
+    });
+  }
 }
