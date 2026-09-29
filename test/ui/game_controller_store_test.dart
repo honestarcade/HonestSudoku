@@ -287,4 +287,38 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     c.dispose();
   });
+
+  test('settings changes mid-game persist to the next new game (#320)', () async {
+    final a = make();
+    await a.load();
+    // Start a game with default settings (Immediately, 3 strikes)
+    a.startNew(GridShape.classic, Difficulty.medium);
+    await a.generationDone;
+    expect(a.state!.settings.announce, AnnounceMode.now);
+    expect(a.state!.settings.strikeMode, StrikeMode.three);
+    // Verify lastSetup matches the new game's mode
+    expect(a.settings.lastSetup.announce, AnnounceMode.now);
+    expect(a.settings.lastSetup.strikeMode, StrikeMode.three);
+    // Change settings mid-game
+    a.updateSettings(
+      a.settings.copyWith(
+        game: a.settings.game.copyWith(
+          announce: AnnounceMode.atEnd,
+          strikeMode: StrikeMode.zen,
+        ),
+      ),
+    );
+    // Verify the settings were updated in the current game
+    expect(a.state!.settings.announce, AnnounceMode.atEnd);  // Game updated
+    expect(a.settings.game.announce, AnnounceMode.atEnd);  // Settings updated
+    // Verify lastSetup was also updated (the fix for #320)
+    expect(a.settings.lastSetup.announce, AnnounceMode.atEnd);
+    expect(a.settings.lastSetup.strikeMode, StrikeMode.zen);
+    // Start a new game
+    a.startNew(GridShape.classic, Difficulty.hard);
+    await a.generationDone;
+    // The new game should have the updated settings (from lastSetup)
+    expect(a.state!.settings.announce, AnnounceMode.atEnd);
+    expect(a.state!.settings.strikeMode, StrikeMode.zen);
+  });
 }

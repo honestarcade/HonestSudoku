@@ -285,10 +285,21 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   /// touches play.
   void updateSettings(AppSettings next) {
     if (next == _settings) return;
-    _settings = next;
+    // Update lastSetup with the new modes so the next game uses them (#320).
+    var updated = next;
+    if (next.game.strikeMode != _settings.game.strikeMode ||
+        next.game.announce != _settings.game.announce) {
+      updated = next.copyWith(
+        lastSetup: next.lastSetup.copyWith(
+          strikeMode: next.game.strikeMode,
+          announce: next.game.announce,
+        ),
+      );
+    }
+    _settings = updated;
     final s = _state;
     if (s != null && !s.won && !s.lost) {
-      _state = s.withSettings(next.game);
+      _state = s.withSettings(updated.game);
       _saver.touch();
     }
     unawaited(_writeSettings());
