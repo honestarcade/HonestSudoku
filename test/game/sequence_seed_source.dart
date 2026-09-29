@@ -5,11 +5,14 @@ final class SequenceSeedSource implements SeedSource {
   SequenceSeedSource(this.seeds);
 
   final List<int> seeds;
-  var _i = 0;
 
-  /// How many seeds have been drawn.
-  int get drawn => _i;
+  /// How many seeds have been drawn, the repeats included.
+  var drawn = 0;
 
   @override
-  int next() => seeds[_i < seeds.length ? _i++ : seeds.length - 1];
+  int next() {
+    final i = drawn < seeds.length ? drawn : seeds.length - 1;
+    drawn++;
+    return seeds[i];
+  }
 }

@@ -82,9 +82,11 @@ void main() {
       expect(s.noteMode, isTrue);
     });
 
-    test('a no-op when over, paused or full', () {
+    test('a no-op when won, lost, paused or full', () {
       final won = GameState.start(classic).copyWith(won: true);
       expect(identical(won.hint(), won), isTrue);
+      final lost = GameState.start(classic).copyWith(lost: true);
+      expect(identical(lost.hint(), lost), isTrue, reason: 'lost: no hint');
       final paused = GameState.start(classic).pause();
       expect(identical(paused.hint(), paused), isTrue);
       final full = GameState.start(classic).copyWith(values: classic.solution);
@@ -134,6 +136,13 @@ void main() {
       expect(state.notice, isNull);
     });
 
+    test('the hinted cell is cleared', () {
+      final hinted = GameState.start(classic).hint().pause();
+      expect(hinted.hintedCell, isNotNull, reason: 'fixture: a hinted cell');
+      final (state, _) = hinted.newDeal(SequenceSeedSource([4242]));
+      expect(state.hintedCell, isNull, reason: 'a new deal clears the hint');
+    });
+
     test('a seed equal to the current one is redrawn', () {
       final seeds = SequenceSeedSource([classic.seed, classic.seed, 777]);
       final (_, request) = GameState.start(classic).newDeal(seeds);
@@ -145,6 +154,7 @@ void main() {
       final seeds = SequenceSeedSource([classic.seed]);
       final (_, request) = GameState.start(classic).newDeal(seeds);
       expect(request.seed, classic.seed);
+      expect(seeds.drawn, 11, reason: 'one draw, then ten redraws, no more');
     });
 
     test('the design seed range', () {
