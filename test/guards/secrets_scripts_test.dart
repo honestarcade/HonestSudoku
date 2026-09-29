@@ -1442,5 +1442,35 @@ exit 0
       }
       expect(offenders, isEmpty, reason: offenders.join('\n'));
     });
+
+    test('no Authorization header is passed as an argument', () {
+      // `curl -H "Authorization: Bearer $TOKEN"` puts the token in the
+      // process table for as long as curl runs. The header goes in a file
+      // only the runner's user can read, passed as `-H @file` (#326).
+      final offenders = <String>[];
+      for (final f in scripts) {
+        final text = f.readAsStringSync().replaceAll(RegExp(r'\\\n\s*'), ' ');
+        for (final line in text.split('\n')) {
+          if (line.trimLeft().startsWith('#')) continue;
+          // `-H` or `--header`, then the header text itself rather than an
+          // `@file`, quoted or not.
+          if (RegExp(
+            r'''(^|\s|\()(-H|--header)[\s=]*["']?\s*Authorization\s*:''',
+            caseSensitive: false,
+          ).hasMatch(line)) {
+            offenders.add(
+              '${f.path.split('/').last}: an Authorization header is on a '
+              'command line, where any process can read it from the process '
+              'table. Write it to a 0600 file and pass `-H @file`',
+            );
+          }
+        }
+      }
+      expect(
+        offenders,
+        isEmpty,
+        reason: 'bearer-argv: ${offenders.join('\n')}',
+      );
+    });
   });
 }
