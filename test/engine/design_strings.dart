@@ -28,6 +28,11 @@ const tryR9C9 = 'Try R9C9.';
 const harderR1C1is4 =
     'No single-step deduction left here. R1C1 is 4 — you would need a pair '
     'or a chain to prove it.';
+// harderR1C1is1 was written by hand on 2026-09-29 (issue #299): it is
+// harderR1C1is4 with the symbol changed, not a node run of the design file.
+const harderR1C1is1 =
+    'No single-step deduction left here. R1C1 is 1 — you would need a pair '
+    'or a chain to prove it.';
 const harderR1C1isG =
     'No single-step deduction left here. R1C1 is G — you would need a pair '
     'or a chain to prove it.';
