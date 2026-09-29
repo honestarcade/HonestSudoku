@@ -18,6 +18,7 @@ class GameOverOverlay extends StatefulWidget {
     required this.state,
     required this.stats,
     required this.scale,
+    required this.onRetry,
     required this.onNewDeal,
     required this.onChangeSetup,
     required this.onMainMenu,
@@ -32,6 +33,9 @@ class GameOverOverlay extends StatefulWidget {
 
   /// Design points to logical pixels.
   final double scale;
+
+  /// Retry, on the lost card: the same puzzle from the start.
+  final VoidCallback onRetry;
 
   /// Next puzzle / New puzzle.
   final VoidCallback onNewDeal;
@@ -191,16 +195,39 @@ class _GameOverOverlayState extends State<GameOverOverlay>
             ),
           ],
           SizedBox(height: 18 * s),
-          cardButton(
-            label: won ? UiStrings.nextPuzzle : UiStrings.newPuzzle,
-            name: 'new-deal',
-            onPressed: widget.onNewDeal,
-            spec: primarySpec,
-            scale: s,
-            padding: 15,
-            fontSize: 15,
-            weight: FontWeight.w600,
-          ),
+          if (won)
+            cardButton(
+              label: UiStrings.nextPuzzle,
+              name: 'new-deal',
+              onPressed: widget.onNewDeal,
+              spec: primarySpec,
+              scale: s,
+              padding: 15,
+              fontSize: 15,
+              weight: FontWeight.w600,
+            )
+          else ...[
+            cardButton(
+              label: UiStrings.retry,
+              name: 'retry',
+              onPressed: widget.onRetry,
+              spec: primarySpec,
+              scale: s,
+              padding: 15,
+              fontSize: 15,
+              weight: FontWeight.w600,
+            ),
+            SizedBox(height: 9 * s),
+            cardButton(
+              label: UiStrings.newPuzzle,
+              name: 'new-deal',
+              onPressed: widget.onNewDeal,
+              spec: secondarySpec,
+              scale: s,
+              padding: 14,
+              fontSize: 14,
+            ),
+          ],
           SizedBox(height: 9 * s),
           cardButton(
             label: UiStrings.changeSetup,

@@ -141,7 +141,8 @@ const ButtonStyleSpec primarySpec = ButtonStyleSpec(
   fg: HsColors.deepNavy,
 );
 
-/// Restart and new-deal buttons on the pause card.
+/// Restart and new-deal buttons on the pause card; New puzzle on the lost
+/// card.
 const ButtonStyleSpec secondarySpec = ButtonStyleSpec(
   edge: HsColors.edge18,
   bg: HsColors.fill05,

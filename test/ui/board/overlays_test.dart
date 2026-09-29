@@ -4,7 +4,9 @@ import 'package:honest_sudoku/engine/engine.dart';
 import 'package:honest_sudoku/game/game.dart';
 import 'package:honest_sudoku/ui/board/board_grid.dart';
 import 'package:honest_sudoku/ui/board/board_overlays.dart';
+import 'package:honest_sudoku/ui/board/overlay_parts.dart';
 import 'package:honest_sudoku/ui/theme/board_theme.dart';
+import 'package:honest_sudoku/ui/widgets/design_button.dart';
 
 import '../../game/fixtures.dart';
 import '../harness.dart';
@@ -193,12 +195,43 @@ void main() {
     expect(find.text('That was the last strike'), findsOneWidget);
     expect(
       find.text(
-        'You set a limit of 3. The puzzle is still here if you undo — '
-        'or take a fresh one.',
+        'You set a limit of 3. Retry this puzzle from the start, or take a '
+        'fresh one.',
       ),
       findsOneWidget,
     );
-    expect(find.text('New puzzle'), findsOneWidget);
+    final buttons = [
+      ('retry', 'Retry'),
+      ('new-deal', 'New puzzle'),
+      ('change-setup', 'Change size or difficulty'),
+      ('main-menu', 'Main menu'),
+    ];
+    for (final (name, label) in buttons) {
+      expect(
+        find.descendant(
+          of: find.byKey(ValueKey('btn-$name')),
+          matching: find.text(label),
+        ),
+        findsOneWidget,
+        reason: 'btn-$name reads $label',
+      );
+    }
+    final tops = [
+      for (final (name, _) in buttons)
+        tester.getTopLeft(find.byKey(ValueKey('btn-$name'))).dy,
+    ];
+    expect(
+      tops,
+      [...tops]..sort(),
+      reason:
+          'Retry, New puzzle, Change size or difficulty, Main menu, '
+          'top to bottom',
+    );
+    expect(
+      tester.widget<DesignButton>(find.byKey(const ValueKey('btn-retry'))).spec,
+      primarySpec,
+      reason: 'Retry is the lost card\'s primary button',
+    );
     expect(find.text('Medium'), findsOneWidget, reason: 'DIFFICULTY tile');
     expect(find.text('44/81'), findsOneWidget, reason: 'FILLED tile');
   });
@@ -213,6 +246,21 @@ void main() {
 
   testWidgets('each game-over button calls back once', (tester) async {
     await pumpOverlays(tester, lost());
+    for (final name in ['retry', 'new-deal', 'change-setup', 'main-menu']) {
+      await tester.tap(find.byKey(ValueKey('btn-$name')));
+    }
+    expect(calls, {
+      'restart': 1,
+      'new-deal': 1,
+      'change-setup': 1,
+      'main-menu': 1,
+    }, reason: 'Retry calls the pause card\'s Restart');
+    await pumpOverlays(tester, won(const GameSettings()));
+    expect(
+      find.byKey(const ValueKey('btn-retry')),
+      findsNothing,
+      reason: 'only the lost card offers Retry',
+    );
     for (final name in ['new-deal', 'change-setup', 'main-menu']) {
       await tester.tap(find.byKey(ValueKey('btn-$name')));
     }
