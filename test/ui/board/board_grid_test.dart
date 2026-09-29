@@ -180,7 +180,7 @@ void main() {
   });
 
   testWidgets('the hinted cell ring and notes are yellow; another selected '
-      'cell ring is the theme ring', (tester) async {
+      'cell ring is the theme ring and its notes noteFg', (tester) async {
     final hinted = GameState.start(p).hint();
     final cell = hinted.hintedCell!;
     final notes = [...hinted.notes]..[cell] = const [1, 2];
@@ -194,9 +194,22 @@ void main() {
     );
     expect(note.style!.color, HsColors.hintYellow);
 
-    await pumpGrid(tester, GameState.start(p).select(1));
+    final plain = GameState.start(p).select(1).toggleNoteMode().place(1);
+    expect(plain.hintedCell, isNull, reason: 'fixture: nothing hinted');
+    await pumpGrid(tester, plain);
     expect(ring(tester).ringColor, navy.ring);
     expect(ring(tester).ringRect, isNotNull);
+    final plainNote = tester.widget<Text>(
+      find.descendant(
+        of: find.byKey(const ValueKey('cell-1')),
+        matching: find.text('1'),
+      ),
+    );
+    expect(
+      plainNote.style!.color,
+      navy.noteFg,
+      reason: 'a selected cell that is not hinted keeps noteFg notes',
+    );
 
     await pumpGrid(tester, GameState.start(p));
     expect(ring(tester).ringRect, isNull, reason: 'no ring, no selection');
@@ -221,6 +234,23 @@ void main() {
     );
     expect(nine.dy, greaterThan(two.dy), reason: '9 is in the bottom row');
     expect(nine.dx, greaterThan(two.dx), reason: '9 is in the right column');
+
+    final v = p.solution[1];
+    final placed = s.toggleNoteMode().place(v);
+    final underValue = [...placed.notes]..[1] = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+    await pumpGrid(tester, placed.copyWith(notes: underValue));
+    expect(
+      tester
+          .widgetList<Text>(
+            find.descendant(
+              of: find.byKey(const ValueKey('cell-1')),
+              matching: find.byType(Text),
+            ),
+          )
+          .map((t) => t.data),
+      ['$v'],
+      reason: 'a cell holding a value shows the value and none of its notes',
+    );
   });
 
   testWidgets('both themes produce their own grid background', (tester) async {
