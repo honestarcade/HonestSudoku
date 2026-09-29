@@ -121,6 +121,32 @@ void main() {
     expect(find.byKey(const ValueKey('setup-start')), findsOneWidget);
   });
 
+  testWidgets('back during generation cancels and shows the notice; back '
+      'again leaves', (tester) async {
+    final gen = ManualGenerator();
+    await pumpGenerating(tester, gen);
+    gen.emit(GenerationProgress(.3));
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('loading-notice')),
+      findsOneWidget,
+      reason: 'back during generation shows the cancel notice',
+    );
+    expect(find.text('GENERATION CANCELLED'), findsOneWidget);
+    expect(find.text('TRY AGAIN'), findsOneWidget);
+    expect(find.byKey(const ValueKey('loading-back')), findsOneWidget);
+    expect(find.byKey(const ValueKey('setup-start')), findsNothing);
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('setup-start')),
+      findsOneWidget,
+      reason: 'back while the notice shows is the notice Back',
+    );
+  });
+
   testWidgets('launch: never before 800 ms, then the menu', (tester) async {
     setScreen(tester, 390, 844);
     await tester.pumpWidget(
