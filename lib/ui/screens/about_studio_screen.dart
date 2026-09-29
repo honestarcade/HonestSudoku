@@ -3,6 +3,7 @@
 
 import 'package:flutter/material.dart';
 
+import '../a11y/speak.dart';
 import '../app_scope.dart';
 import '../copy.dart';
 import '../link_opener.dart';
@@ -80,6 +81,10 @@ class AboutStudioScreen extends StatelessWidget {
           Semantics(
             link: true,
             container: true,
+            label:
+                '${speak('${Copy.supportKicker}\n${Copy.supportBody}\n'
+                '${Copy.supportLink}')}, opens in browser',
+            excludeSemantics: true,
             child: GestureDetector(
               key: const ValueKey('studio-support'),
               behavior: HitTestBehavior.opaque,

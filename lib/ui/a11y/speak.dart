@@ -13,7 +13,7 @@ const _names = ['Honest Arcade', 'Honest Sudoku', 'GitHub'];
 String speak(String visible) {
   if (visible.trim() == '—') return 'none yet';
   final segments = visible
-      .replaceAll(RegExp(r'\s*[›↗]\s*$'), '')
+      .replaceAll(RegExp(r'\s*[›↗→]\s*$'), '')
       .replaceAll('✕', '')
       .split(RegExp(r'\s*(?:·|\n)\s*'))
       .where((s) => s.trim().isNotEmpty);

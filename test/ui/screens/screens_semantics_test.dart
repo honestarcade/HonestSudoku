@@ -3,6 +3,7 @@
 import 'dart:ui';
 
 import 'package:flutter/rendering.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:honest_sudoku/ui/routes.dart';
 
@@ -111,13 +112,38 @@ void main() {
     );
   });
 
-  testWidgets('about: link rows say they open in the browser', (tester) async {
-    await pumpApp(tester, initialRoute: Routes.aboutApp, height: 3000);
-    final links = [
-      for (final d in _nodes(tester))
-        if (d.flagsCollection.isLink) d.label,
-    ];
-    expect(links, isNotEmpty);
-    expect(links, everyElement(endsWith(', opens in browser')));
+  for (final route in [Routes.aboutApp, Routes.aboutStudio]) {
+    testWidgets('$route: link rows say they open in the browser and speak '
+        'no arrow', (tester) async {
+      await pumpApp(tester, initialRoute: route, height: 3000);
+      final links = [
+        for (final d in _nodes(tester))
+          if (d.flagsCollection.isLink) d.label,
+      ];
+      expect(links, isNotEmpty);
+      expect(
+        links,
+        everyElement(endsWith(', opens in browser')),
+        reason: 'every link on $route announces that it leaves the app',
+      );
+      expect(
+        _nodes(tester).map((d) => d.label).where(RegExp('[→↗›]').hasMatch),
+        isEmpty,
+        reason: 'no node on $route speaks a raw arrow glyph',
+      );
+    });
+  }
+
+  testWidgets('studio: the support card is one link node that reads the '
+      'card and where it goes', (tester) async {
+    await pumpApp(tester, initialRoute: Routes.aboutStudio, height: 3000);
+    expect(
+      tester.getSemantics(find.byKey(const ValueKey('studio-support'))).label,
+      startsWith('Support Honest Arcade, Our games stay free'),
+    );
+    expect(
+      tester.getSemantics(find.byKey(const ValueKey('studio-support'))).label,
+      endsWith('honestarcade.app/contribute, opens in browser'),
+    );
   });
 }
