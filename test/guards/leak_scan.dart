@@ -194,7 +194,10 @@ class LeakScan {
   /// not a fixture this file can lengthen, so it is skipped instead.
   void _add(String name, String value, {bool floor = true}) {
     final v = value.trim();
-    if (v.isEmpty) return;
+    // Blank as a shell or Gradle reads blank — control characters included —
+    // is a value that is not set, not a fixture to lengthen: the signing
+    // guards hand exactly these to prove they read as missing.
+    if (!RegExp(r'[^\s\x00-\x1F\x7F]').hasMatch(v)) return;
     if (v.length < 8) {
       if (!floor) return;
       fail(
