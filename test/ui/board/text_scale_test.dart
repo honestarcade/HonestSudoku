@@ -2,11 +2,8 @@
 // up to 1.3×, nothing overflows or leaves the screen, and the grid's digits
 // grow only with Large digits.
 
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:honest_sudoku/engine/engine.dart';
 import 'package:honest_sudoku/game/game.dart';
@@ -14,24 +11,9 @@ import 'package:honest_sudoku/ui/board/board_layout.dart';
 import 'package:honest_sudoku/ui/board/board_screen.dart';
 import 'package:honest_sudoku/ui/board/game_controller.dart';
 import 'package:honest_sudoku/ui/board/notice_banner.dart';
-import 'package:honest_sudoku/ui/theme/tokens.dart';
 
+import '../helpers.dart';
 import '../stub_generator.dart';
-
-Future<void> _loadFonts() async {
-  Future<ByteData> bytes(String f) async =>
-      ByteData.sublistView(await File('assets/fonts/$f').readAsBytes());
-  final outfit = FontLoader(kFontOutfit);
-  for (final w in ['Light', 'Regular', 'Medium', 'SemiBold', 'Bold']) {
-    outfit.addFont(bytes('Outfit-$w.ttf'));
-  }
-  await outfit.load();
-  final mono = FontLoader(kFontMono);
-  for (final w in ['Regular', 'Medium', 'SemiBold']) {
-    mono.addFont(bytes('IBMPlexMono-$w.ttf'));
-  }
-  await mono.load();
-}
 
 /// Pumps the board at [width]×[height] and [textScale], stages it, and
 /// runs [check].
@@ -149,7 +131,7 @@ void _expectStacked(WidgetTester tester) {
 int _wrong(GameController c, int i) => c.state!.solution[i] % c.state!.n + 1;
 
 void main() {
-  setUpAll(_loadFonts);
+  setUpAll(loadAppFonts);
 
   group('no overflow, nothing off screen', () {
     for (final (w, h) in [(360.0, 640.0), (390.0, 844.0)]) {
