@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:honest_sudoku/links.dart';
 import 'package:honest_sudoku/ui/link_opener.dart';
 import 'package:honest_sudoku/ui/routes.dart';
+import 'package:honest_sudoku/ui/screens/about_app_screen.dart';
 import 'package:honest_sudoku/ui/screens/about_studio_screen.dart';
 import 'package:honest_sudoku/ui/screens/menu_screen.dart';
 import 'package:honest_sudoku/ui/widgets/app_mark.dart';
@@ -92,15 +93,43 @@ void main() {
     ]);
   });
 
-  testWidgets('About the App → promises → ‹ lands on the menu, as the '
-      'design goBack does', (tester) async {
-    await pumpApp(tester);
-    await tester.tap(find.byKey(const ValueKey('menu-about-app')));
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.byKey(const ValueKey('about-promises')));
-    await tester.tap(find.byKey(const ValueKey('about-promises')));
-    await tester.pumpAndSettle();
-    expect(find.byType(AboutStudioScreen), findsOneWidget);
+  // About Honest Arcade goes back to whichever screen opened it (#321).
+  for (final (opener, key, lands) in [
+    ('About the App', 'about-promises', AboutAppScreen),
+    ('the menu', 'menu-about-studio', MenuScreen),
+  ]) {
+    for (final phone in [false, true]) {
+      testWidgets('About Honest Arcade opened from $opener: '
+          '${phone ? 'phone back' : '‹'} returns there', (tester) async {
+        await pumpApp(tester);
+        if (lands == AboutAppScreen) {
+          await tester.tap(find.byKey(const ValueKey('menu-about-app')));
+          await tester.pumpAndSettle();
+        }
+        await tester.ensureVisible(find.byKey(ValueKey(key)));
+        await tester.tap(find.byKey(ValueKey(key)));
+        await tester.pumpAndSettle();
+        expect(find.byType(AboutStudioScreen), findsOneWidget);
+        if (phone) {
+          await tester.binding.handlePopRoute();
+        } else {
+          await tester.ensureVisible(find.byKey(const ValueKey('studio-back')));
+          await tester.tap(find.byKey(const ValueKey('studio-back')));
+        }
+        await tester.pumpAndSettle();
+        expect(find.byType(AboutStudioScreen), findsNothing);
+        expect(
+          find.byType(lands),
+          findsOneWidget,
+          reason: 'back from About Honest Arcade lands on $opener, its opener',
+        );
+      });
+    }
+  }
+
+  testWidgets('About Honest Arcade with nothing beneath it: ‹ lands on the '
+      'menu', (tester) async {
+    await pumpApp(tester, initialRoute: Routes.aboutStudio);
     await tester.ensureVisible(find.byKey(const ValueKey('studio-back')));
     await tester.tap(find.byKey(const ValueKey('studio-back')));
     await tester.pumpAndSettle();

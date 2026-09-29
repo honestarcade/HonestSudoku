@@ -62,22 +62,26 @@ class TopBar extends StatelessWidget {
       padding: EdgeInsets.symmetric(horizontal: 14 * scale),
       child: Row(
         children: [
-          DesignButton(
-            key: const ValueKey('pause-button'),
-            spec: const ButtonStyleSpec(
-              edge: HsColors.edge14,
-              bg: HsColors.fill06,
-              fg: HsColors.white,
-            ),
-            scale: scale,
-            radius: 10,
-            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 11),
-            onPressed: isOver ? null : onPause,
-            semanticsLabel: pauseSemantics,
-            child: Text(
-              '❚❚ $title',
-              softWrap: false,
-              style: outfit(11.5, scale: scale, weight: FontWeight.w500),
+          // The button's box would otherwise stretch to the bar's height; the
+          // design's pill is its padding, text and edge, centred in the bar.
+          IntrinsicHeight(
+            child: DesignButton(
+              key: const ValueKey('pause-button'),
+              spec: const ButtonStyleSpec(
+                edge: HsColors.edge14,
+                bg: HsColors.fill06,
+                fg: HsColors.white,
+              ),
+              scale: scale,
+              radius: 10,
+              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 11),
+              onPressed: isOver ? null : onPause,
+              semanticsLabel: pauseSemantics,
+              child: Text(
+                '❚❚ $title',
+                softWrap: false,
+                style: outfit(11.5, scale: scale, weight: FontWeight.w500),
+              ),
             ),
           ),
           const Spacer(),

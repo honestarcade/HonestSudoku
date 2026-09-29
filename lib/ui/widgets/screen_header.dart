@@ -14,6 +14,18 @@ const ButtonStyleSpec backButtonSpec = ButtonStyleSpec(
   fg: HsColors.white,
 );
 
+/// The ‹ button's side, in design points.
+const double kBackButtonSize = 34;
+
+/// The ‹ glyph's size, in design points (the owner's call, 2026-09-29, #323).
+const double kBackGlyphSize = 26;
+
+// The glyph is placed by its ink, not its line box: Outfit Medium's ‹ inks
+// from 0.081 to 0.403 em above the baseline while the line box's middle sits
+// 0.37 em up, so centring the line box leaves it low (fontTools BoundsPen and
+// hhea over assets/fonts/Outfit-Medium.ttf, 2026-09-29).
+const double _backInkMidEm = .242;
+
 /// A header.
 class ScreenHeader extends StatelessWidget {
   /// Creates a header.
@@ -41,18 +53,27 @@ class ScreenHeader extends StatelessWidget {
   Widget build(BuildContext context) => Row(
     children: [
       SizedBox(
-        width: 34,
-        height: 34,
+        width: kBackButtonSize,
+        height: kBackButtonSize,
         child: DesignButton(
           key: ValueKey('$keyPrefix-back'),
           spec: backButtonSpec,
           scale: 1,
           radius: 11,
+          alignment: Alignment.topCenter,
           onPressed: onBack,
           semanticsLabel: 'Back',
-          child: Text(
-            '‹',
-            style: outfit(16, scale: 1, weight: FontWeight.w500),
+          // The ink's middle on the button's middle, inside the 1-pt edge.
+          child: Baseline(
+            baseline:
+                (kBackButtonSize - 2) / 2 + _backInkMidEm * kBackGlyphSize,
+            baselineType: TextBaseline.alphabetic,
+            // An icon in a fixed box: system text size would push it out.
+            child: Text(
+              '‹',
+              textScaler: TextScaler.noScaling,
+              style: outfit(kBackGlyphSize, scale: 1, weight: FontWeight.w500),
+            ),
           ),
         ),
       ),
