@@ -278,6 +278,39 @@ void main() {
         expect([s.isWrong(cell), s.isWrong(0)], [true, false]);
       });
 
+      test('a switch to Immediately leaves an unannounced entry untinted, '
+          'through undo and redo, until a reveal', () {
+        const now = GameSettings();
+        final placed = at(
+          p,
+          const GameSettings(announce: AnnounceMode.atEnd),
+        ).place(wrong);
+        final s = placed.withSettings(now);
+        expect(s.isWrong(cell), isTrue);
+        expect(
+          s.wrongShown(cell),
+          isFalse,
+          reason: 'a wrong entry placed at the end is not re-flagged',
+        );
+        final replaced = s.erase().place(wrong);
+        expect(
+          replaced.wrongShown(cell),
+          isTrue,
+          reason: 'the same entry placed again after the switch is announced',
+        );
+        expect(
+          replaced.undo().undo().wrongShown(cell),
+          isFalse,
+          reason: 'undo restores the entry with its unannounced flag',
+        );
+        expect(replaced.undo().undo().redo().redo().wrongShown(cell), isTrue);
+        expect(
+          s.check().wrongShown(cell),
+          isTrue,
+          reason: 'Check reveals every wrong entry',
+        );
+      });
+
       test('conflicts: peers holding the selected value, only when on', () {
         final s = at(p).place(wrong);
         final expected = {

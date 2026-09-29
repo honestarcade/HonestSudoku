@@ -31,6 +31,7 @@ final class SavedGame {
     this.lost = false,
     this.noteMode = false,
     this.selected,
+    this.quiet = const [],
   });
 
   /// From a game in progress.
@@ -54,6 +55,7 @@ final class SavedGame {
     lost: s.lost,
     noteMode: s.noteMode,
     selected: s.selected,
+    quiet: s.quiet,
   );
 
   /// Size.
@@ -113,6 +115,9 @@ final class SavedGame {
   /// Selected cell.
   final int? selected;
 
+  /// Wrong entries placed unannounced (`GameState.quiet`).
+  final List<int> quiet;
+
   /// The game again, paused, with [toggles]' board settings and this game's
   /// own strike and announce modes. Throws [ArgumentError] when the saved
   /// values do not fit together.
@@ -137,6 +142,7 @@ final class SavedGame {
     revealed: revealed,
     noteMode: noteMode,
     paused: !(won || lost),
+    quiet: quiet,
     history: history,
     future: future,
   );
@@ -162,7 +168,8 @@ final class SavedGame {
       other.won == won &&
       other.lost == lost &&
       other.noteMode == noteMode &&
-      other.selected == selected;
+      other.selected == selected &&
+      listEquals(other.quiet, quiet);
 
   @override
   int get hashCode => Object.hash(

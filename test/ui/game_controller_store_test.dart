@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:honest_sudoku/engine/engine.dart';
 import 'package:honest_sudoku/game/game.dart';
 import 'package:honest_sudoku/store/app_store.dart';
+import 'package:honest_sudoku/ui/board/board_grid.dart';
 import 'package:honest_sudoku/ui/board/board_screen.dart';
 import 'package:honest_sudoku/ui/board/game_controller.dart';
 import 'package:honest_sudoku/ui/theme/board_theme.dart';
@@ -182,6 +183,7 @@ void main() {
       a.startNew(GridShape.classic, Difficulty.medium);
       await a.generationDone;
       playEmpty(a, right: false);
+      final old = a.state!.selected!;
       expect(a.state!.notice, isNull);
       a.updateSettings(
         a.settings.copyWith(
@@ -189,6 +191,23 @@ void main() {
         ),
       );
       expect(a.state!.notice, isNull);
+      expect(a.state!.isWrong(old), isTrue);
+      expect(
+        wrongShownCells(a.state!),
+        isEmpty,
+        reason: 'an entry placed unannounced stays untinted after the switch',
+      );
+      playEmpty(a, right: false);
+      final fresh = a.state!.selected!;
+      expect(wrongShownCells(a.state!), {
+        fresh,
+      }, reason: 'a wrong entry placed after the switch is tinted');
+      await a.flush();
+      final b = make(await AppStore.open(dir));
+      await b.load();
+      expect(wrongShownCells(b.state!), {
+        fresh,
+      }, reason: 'the unannounced entry stays untinted after a relaunch');
     },
   );
 
