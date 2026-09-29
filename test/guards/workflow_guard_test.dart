@@ -166,13 +166,28 @@ void _assertCiShape(Workflow ci) {
   );
   expect(ci.jobs.map((j) => j.name).toList(), [
     'gate',
+    'mutation-shard',
     'mutations',
   ], reason: 'ci-shape: exactly these jobs — another one can run anything');
   _expectRunsExactly(
-    ci.job('mutations')!.stepById('mutations'),
-    'tools/mutation_check.py',
+    ci.job('mutation-shard')!.stepById('mutations'),
+    'tools/mutation_check.py --shard "\$SHARD/$_mutationShards"',
     'ci-shape: the mutation battery must actually run',
   );
+  // The ruleset binds CHECK-RUN names, and a job's `name:` replaces its key
+  // as that name. Renaming either of these would leave the ruleset
+  // requiring a check nothing reports.
+  for (final required in const ['gate', 'mutations']) {
+    expect(
+      ci.job(required)!.displayName,
+      isNull,
+      reason:
+          'ci-shape: job `$required` carries `name: '
+          '${ci.job(required)!.displayName}`, so its check run is no longer '
+          'called `$required` and the required check the ruleset names '
+          'never reports',
+    );
+  }
   _expectNoPlayUpload(ci);
   _assertRunnerAndEnvironment(ci);
 
@@ -225,20 +240,49 @@ void _assertCiShape(Workflow ci) {
         'ci-shape: exactly these steps in this order — an added step in the '
         'gate job runs with whatever secrets the caller inherited',
   );
-  expect(ci.job('mutations')!.steps.map((s) => s.id).toList(), [
+  expect(ci.job('mutation-shard')!.steps.map((s) => s.id).toList(), [
     'checkout',
     'java',
     'flutter',
     'deps',
     'mutations',
+  ], reason: 'ci-shape: exactly these steps in the mutation-shard job');
+  expect(ci.job('mutations')!.steps.map((s) => s.id).toList(), [
+    'verdict',
   ], reason: 'ci-shape: exactly these steps in the mutations job');
   for (final job in ci.jobs) {
+    expect(
+      job.continueOnError,
+      isFalse,
+      reason:
+          'ci-shape: job `${job.name}` carries `continue-on-error`, so '
+          'its failure would not block the merge it exists to block',
+    );
     // `if: false` on the gate JOB disabled the entire merge gate with the
     // suite green — and `gate` is the repository's one required status
     // check, which a skipped job does not block. Every criterion below is
     // about the steps of a job nothing required to run. _assertReleaseShape
     // already asserted this for `ship`, so the right form was in the same
     // file and the weaker one was used (#189).
+    //
+    // One exception, owner-approved on 2026-09-29 for #286: the job that
+    // carries the required `mutations` check and aggregates the shards. A
+    // job whose `needs` failed is skipped, so it must run `always()` — and
+    // is then only acceptable if it fails unless every job it needs
+    // succeeded, which `_expectVerdictOverEveryNeed` runs to find out.
+    if (job.name == 'mutations' && job.ifExpression != null) {
+      expect(
+        job.ifExpression,
+        'always()',
+        reason:
+            'ci-shape: job `mutations` carries `if: ${job.ifExpression}`. '
+            'The aggregator may run `always()` and nothing else — any other '
+            'condition can skip it, and a skipped required check does not '
+            'block a merge',
+      );
+      _expectVerdictOverEveryNeed(job);
+      continue;
+    }
     expect(
       job.ifExpression,
       isNull,
@@ -246,13 +290,6 @@ void _assertCiShape(Workflow ci) {
           'ci-shape: job `${job.name}` carries `if: ${job.ifExpression}`. A '
           'skipped job reports as skipped, and a skipped required check does '
           'not block a merge',
-    );
-    expect(
-      job.continueOnError,
-      isFalse,
-      reason:
-          'ci-shape: job `${job.name}` carries `continue-on-error`, so '
-          'its failure would not block the merge it exists to block',
     );
   }
 
@@ -312,6 +349,82 @@ void _assertCiShape(Workflow ci) {
   );
   expect(artifact.with_['retention-days'], '7');
   expect(artifact.with_['if-no-files-found'], 'error');
+}
+
+/// How many shards ci.yml splits the mutation battery into. The matrix and
+/// the `/N` of the battery's command are both held to it.
+const _mutationShards = 8;
+
+/// [job] runs `always()`, so it must itself fail unless every job in its
+/// `needs` succeeded — otherwise it turns a red shard into a green check.
+///
+/// Wiring and behaviour both: each need's `result` must reach a step through
+/// `env:` (a `needs.` expression in a run body is refused by the untrusted
+/// rule), and the steps are then RUN with every result `success`, which
+/// must pass, and with each need in turn failed, cancelled and skipped,
+/// which must not.
+void _expectVerdictOverEveryNeed(WorkflowJob job) {
+  expect(
+    job.needs,
+    isNotEmpty,
+    reason:
+        'always-verdict: job `${job.name}` runs `always()` and needs nothing, '
+        'so there is no verdict for it to carry',
+  );
+  final keyFor = <String, ({WorkflowStep step, String key})>{};
+  for (final need in job.needs) {
+    for (final step in job.steps) {
+      for (final e in step.env.entries) {
+        if (e.value.replaceAll(' ', '') == '\${{needs.$need.result}}') {
+          keyFor[need] = (step: step, key: e.key);
+        }
+      }
+    }
+    expect(
+      keyFor[need],
+      isNotNull,
+      reason:
+          'always-verdict: job `${job.name}` never reads '
+          '`needs.$need.result`, so it passes whatever `$need` did — and it '
+          'runs `always()`, so a failed `$need` becomes a green check',
+    );
+  }
+
+  int failures(Map<String, String> results) {
+    var failed = 0;
+    for (final step in job.steps) {
+      final run = step.run;
+      if (run == null) continue;
+      final env = <String, String>{
+        for (final entry in keyFor.entries)
+          if (entry.value.step == step) entry.value.key: results[entry.key]!,
+      };
+      final r = _runStepBody(run, ambient: _ambientCommands, extraEnv: env);
+      if (r.code != 0) failed++;
+    }
+    return failed;
+  }
+
+  final allSucceeded = {for (final need in job.needs) need: 'success'};
+  expect(
+    failures(allSucceeded),
+    0,
+    reason:
+        'always-verdict: job `${job.name}` fails even when every job it '
+        'needs succeeded, so the checks below it prove nothing',
+  );
+  for (final need in job.needs) {
+    for (final result in const ['failure', 'cancelled', 'skipped']) {
+      expect(
+        failures({...allSucceeded, need: result}),
+        greaterThan(0),
+        reason:
+            'always-verdict: job `${job.name}` passed with '
+            '`needs.$need.result` = `$result`. It runs `always()`, so that '
+            'green is the required check passing over a $result `$need`',
+      );
+    }
+  }
 }
 
 /// Lines that end a command's exit status rather than letting it fail.
@@ -383,10 +496,11 @@ const _dependsOn = <String, Map<String, Map<String, List<String>>>>{
       'guards': ['flutter'],
       'gate': ['tools/gate.sh'],
     },
-    'mutations': {
+    'mutation-shard': {
       'deps': ['flutter'],
       'mutations': ['tools/mutation_check.py'],
     },
+    'mutations': {'verdict': []},
   },
   '.github/workflows/release.yml': {
     'ship': {
@@ -813,6 +927,28 @@ const _claims = <String, _Claim>{
     completes: true,
     mustSay: ['internal -> alpha accepted'],
     mustNotSay: ['is not one of', 'human act'],
+  ),
+  'the mutations check says the shards failed when they did': (
+    path: '.github/workflows/ci.yml',
+    job: 'mutations',
+    step: 'verdict',
+    env: {'SHARDS': 'failure'},
+    expressions: {},
+    plant: {},
+    completes: false,
+    mustSay: ['mutation shards: failure'],
+    mustNotSay: ['mutation shards: success'],
+  ),
+  'the mutations check says the shards succeeded when they did': (
+    path: '.github/workflows/ci.yml',
+    job: 'mutations',
+    step: 'verdict',
+    env: {'SHARDS': 'success'},
+    expressions: {},
+    plant: {},
+    completes: true,
+    mustSay: ['mutation shards: success'],
+    mustNotSay: ['this check fails'],
   ),
   'the promote summary does not claim a promotion that did not happen': (
     path: '.github/workflows/play-promote.yml',
@@ -1565,6 +1701,22 @@ void main() {
             t.replaceFirst('scandir: ./tools', 'scandir: ./does-not-exist'),
         'shellcheck severity raised past warnings': (t) =>
             t.replaceFirst('severity: warning', 'severity: error'),
+        'always() on a job other than the aggregator': (t) =>
+            t.replaceFirst('  gate:\n', '  gate:\n    if: always()\n'),
+        'the aggregator runs on success() instead': (t) =>
+            t.replaceFirst('    if: always()\n', '    if: success()\n'),
+        'the aggregator stops reading the shards\' result': (t) =>
+            t.replaceFirst(
+              r'SHARDS: ${{ needs.mutation-shard.result }}',
+              'SHARDS: success',
+            ),
+        'the aggregator reads the result and passes anyway': (t) =>
+            t.replaceFirst('            exit 1\n', '            exit 0\n'),
+        'the aggregator is renamed away from the required check': (t) =>
+            t.replaceFirst(
+              '  mutations:\n    needs:',
+              '  mutations:\n    name: Mutations\n    needs:',
+            ),
       };
       mutations.forEach((why, mutate) {
         final mutated = mutate(text);
@@ -1580,6 +1732,94 @@ void main() {
           reason: 'ci-shape-negative: "$why" was not caught',
         );
       });
+    });
+
+    test('the mutation shards run the whole battery, each entry once', () {
+      // #286 split the battery across a matrix. A shard dropped from the
+      // matrix, a `/N` that disagrees with it, or a selector that skips an
+      // index would each leave entries that no job runs — with every shard,
+      // and so the required check, green.
+      final ci = Workflow.parse(
+        '.github/workflows/ci.yml',
+        readFile('.github/workflows/ci.yml'),
+      );
+      expect(ci.problem, isNull, reason: 'ci.yml: ${ci.problem}');
+      final shardJob = ci.job('mutation-shard')!;
+      expect(
+        shardJob.matrix['shard'],
+        [for (var k = 1; k <= _mutationShards; k++) '$k'],
+        reason:
+            'shard-matrix: ci.yml runs shards ${shardJob.matrix['shard']} of '
+            '$_mutationShards. Every shard from 1 to $_mutationShards must '
+            'run once, or the entries of the missing ones run nowhere',
+      );
+      expect(
+        shardJob.failFast,
+        'false',
+        reason:
+            'shard-matrix: fail-fast is `${shardJob.failFast}`, so one red '
+            'shard cancels the rest and hides what they would have said',
+      );
+      expect(
+        shardJob.stepById('mutations')!.env['SHARD']?.replaceAll(' ', ''),
+        r'${{matrix.shard}}',
+        reason: 'shard-matrix: the battery is not told which shard it is',
+      );
+
+      ProcessResult list(List<String> extra) => Process.runSync('python3', [
+        'tools/mutation_check.py',
+        '--list',
+        ...extra,
+      ], stdoutEncoding: utf8);
+      List<String> entries(ProcessResult r) {
+        expect(
+          r.exitCode,
+          0,
+          reason: 'shard-cover: --list failed: ${r.stderr}',
+        );
+        return (r.stdout as String)
+            .split('\n')
+            .where((l) => l.trim().isNotEmpty && !l.endsWith(' mutations'))
+            .toList();
+      }
+
+      final whole = entries(list(const []));
+      final shards = [
+        for (var k = 1; k <= _mutationShards; k++)
+          entries(list(['--shard', '$k/$_mutationShards'])),
+      ];
+      expect(
+        [for (final s in shards) ...s]..sort(),
+        [...whole]..sort(),
+        reason:
+            'shard-cover: the $_mutationShards shards together are not the '
+            'battery, each entry once. An entry in no shard is a defect CI '
+            'never reintroduces; one in two is run twice',
+      );
+      for (final (k, s) in shards.indexed) {
+        expect(
+          s,
+          isNotEmpty,
+          reason: 'shard-cover: shard ${k + 1} selects nothing',
+        );
+      }
+
+      for (final bad in const ['0/8', '9/8', '1/0', 'x', '3', '']) {
+        final r = list(['--shard', bad]);
+        expect(
+          r.exitCode,
+          2,
+          reason:
+              'shard-args: `--shard $bad` exited ${r.exitCode}, not 2. A '
+              'shard the battery cannot read must refuse, not run some other '
+              'selection',
+        );
+      }
+      expect(
+        list(['--shard', '1/8', '--only', 'ci']).exitCode,
+        2,
+        reason: 'shard-args: --shard with --only must refuse',
+      );
     });
 
     test('release.yml keeps the structure its criteria depend on', () {
@@ -2915,7 +3155,7 @@ void main() {
         const expected = [
           '.github/workflows/ci.yml gate guards',
           '.github/workflows/ci.yml gate gate',
-          '.github/workflows/ci.yml mutations mutations',
+          '.github/workflows/ci.yml mutation-shard mutations',
           '.github/workflows/engine-nightly.yml weekly weekly',
         ];
 
@@ -3181,7 +3421,8 @@ void main() {
         found,
         4,
         reason:
-            'flutter-pin: expected four Flutter setups (ci.yml\'s two jobs, '
+            'flutter-pin: expected four Flutter setups (ci.yml\'s gate and '
+            'mutation-shard, '
             'release.yml\'s ship and engine-nightly.yml\'s weekly); found '
             '$found. A new one is unpinned until it is counted here',
       );
@@ -3318,7 +3559,14 @@ void main() {
             'gate',
             'artifact',
           ],
-          'mutations': ['checkout', 'java', 'flutter', 'deps', 'mutations'],
+          'mutation-shard': [
+            'checkout',
+            'java',
+            'flutter',
+            'deps',
+            'mutations',
+          ],
+          'mutations': ['verdict'],
         },
         '.github/workflows/engine-nightly.yml': {
           'weekly': ['checkout', 'flutter', 'deps', 'weekly', 'summary'],
