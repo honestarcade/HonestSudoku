@@ -14,6 +14,8 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'leak_scan.dart';
+
 /// The repository root, asserted rather than assumed.
 ///
 /// Every guard resolves paths from here. Tests run with the package root as the
@@ -100,7 +102,7 @@ List<String> filesUnder(String relativeDir) {
 /// (`.gradle/`, `local.properties`, wrapper jars) is skipped by construction
 /// rather than by an exclusion list that would rot.
 List<String> trackedFilesUnder(String relativeDir) {
-  final result = Process.runSync('git', [
+  final result = runSealed('git', [
     'ls-files',
     relativeDir,
   ], workingDirectory: repoRoot.path);
