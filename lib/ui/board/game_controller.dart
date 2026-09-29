@@ -254,13 +254,18 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
             await _guard(store.deleteGame);
           } else {
             GameState? restored;
-            try {
-              if (supportedDifficulties(value.shape)
-                  .contains(value.difficulty)) {
+            if (!supportedDifficulties(value.shape)
+                .contains(value.difficulty)) {
+              _log(
+                'saved game does not restore: ${value.shape.label} '
+                '${value.difficulty.label} is not a supported pair',
+              );
+            } else {
+              try {
                 restored = value.toState(_settings.game);
+              } on Object catch (e) {
+                _log('saved game does not restore: $e');
               }
-            } on Object catch (e) {
-              _log('saved game does not restore: $e');
             }
             if (restored == null) {
               await _guard(store.deleteGame);

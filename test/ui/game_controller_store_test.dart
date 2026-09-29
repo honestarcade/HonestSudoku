@@ -33,12 +33,12 @@ void main() {
     dir.deleteSync(recursive: true);
   });
 
-  GameController make([AppStore? s]) {
+  GameController make([AppStore? s, void Function(String)? log]) {
     final c = GameController(
       generator: gen.call,
       seeds: CountingSeeds(),
       store: () async => s ?? store,
-      log: (_) {},
+      log: log ?? (_) {},
     );
     controllers.add(c);
     return c;
@@ -234,16 +234,23 @@ void main() {
     );
   });
 
-  test('a saved game from an unsupported pair is deleted', () async {
-    final a = make();
-    await a.load();
-    final puzzle = fixturePuzzle(GridShape.mini, difficulty: Difficulty.hard);
-    await store.writeGame(SavedGame.fromState(GameState.start(puzzle)));
-    final b = make(await AppStore.open(dir));
-    await b.load();
-    expect(b.state, isNull);
-    expect(await store.readGame(), isA<Absent<SavedGame>>());
-  });
+  test(
+    'a saved game from an unsupported pair is deleted with a log line',
+    () async {
+      final a = make();
+      await a.load();
+      final puzzle = fixturePuzzle(GridShape.mini, difficulty: Difficulty.hard);
+      await store.writeGame(SavedGame.fromState(GameState.start(puzzle)));
+      final lines = <String>[];
+      final b = make(await AppStore.open(dir), lines.add);
+      await b.load();
+      expect(b.state, isNull);
+      expect(await store.readGame(), isA<Absent<SavedGame>>());
+      expect(lines, [
+        contains('4×4 Hard is not a supported pair'),
+      ], reason: 'an unsupported saved game is deleted with one log line');
+    },
+  );
 
   testWidgets('the STREAK tile reads 1 after the first win', (tester) async {
     tester.view.physicalSize = const Size(390, 844);
