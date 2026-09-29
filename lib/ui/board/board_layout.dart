@@ -99,10 +99,11 @@ final class BoardLayout {
   /// Pencil-mark rows: every value has a fixed slot.
   int get noteRows => (_n / noteCols).ceil();
 
-  /// Note size: `max(6, round(cell / (cols + 1.6)))`, less one with large
-  /// digits.
-  double noteSize({required bool bigDigits}) =>
-      math.max(6, (cell / (noteCols + 1.6)).round()) - (bigDigits ? 1.0 : 0.0);
+  /// Note size: `max(6, round(cell / (cols + 1.6)) − big)`, where big is one
+  /// with large digits; the floor of 6 applies after the reduction.
+  double noteSize({required bool bigDigits}) => math
+      .max(6, (cell / (noteCols + 1.6)).round() - (bigDigits ? 1 : 0))
+      .toDouble();
 
   /// Where the notice goes: 12 under the grid.
   double get noticeY => kGridY + gridPx + 12;
