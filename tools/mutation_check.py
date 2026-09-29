@@ -74,6 +74,7 @@ class Mutation:
     slow: bool = False
     creates: tuple = ()
     suite: tuple = ()
+    binary: bool = False
     """A substring of the reason the RIGHT assertion prints when it fires.
 
     Without this the battery measures "the suite went red", which is not the
@@ -95,6 +96,11 @@ class Mutation:
     at a method that does not exist -- only breaks the compile. That reported
     WRONG-REASON, correctly, for two rounds. A mutation that cannot be written
     truthfully is not a mutation.
+
+    `binary` reads and writes every target as bytes, one character per byte
+    (latin-1), for defects that live in a font or a PNG rather than in text.
+    Bytes, not `read_text`: that translates newlines, and a PNG's signature
+    holds a CR LF (#318).
     """
 
 
@@ -1282,6 +1288,48 @@ MUTATIONS: list[Mutation] = [
              sub(r'stroke="#8448FC"', 'stroke="#FF00FF"'),
              "the listing would show a different mark from the app",
              "store-sources: the feature graphic's mark drifted from the icon"),
+    Mutation("#318", "a screenshot is captured at the phone's own aspect",
+             "ArtSource/store/screenshots/04-board-16x16.png",
+             sub(r"\A(.{12}IHDR\x00\x00\x04\x38)\x00\x00\x07\x80",
+                 "\\1\x00\x00\x09\x24", flags=re.S),
+             "Play refuses a 1080x2340 screenshot at upload",
+             'store-assets: 1 offender', binary=True),
+
+    # ---- #318: the guards #47 and #54 shipped without a mutation -----------
+    Mutation("#318", "a bundled font is not TrueType",
+             "assets/fonts/Outfit-Bold.ttf",
+             sub(r"\A\x00\x01\x00\x00", "wOFF"),
+             "the engine would fall back to a synthesised face at runtime",
+             'fonts-assets: 1 offender', binary=True),
+    Mutation("#318", "a mipmap is rendered at the wrong size",
+             "android/app/src/main/res/mipmap-hdpi/ic_launcher_foreground.png",
+             sub(r"\A(.{12}IHDR)\x00\x00\x00\xa2\x00\x00\x00\xa2",
+                 "\\1\x00\x00\x00\xa3\x00\x00\x00\xa3", flags=re.S),
+             "the launcher scales a blurred icon on hdpi devices",
+             'launcher-rasters: 1 offender', binary=True),
+    Mutation("#318", "the manifest points the icon somewhere else",
+             "android/app/src/main/AndroidManifest.xml",
+             sub(r'android:icon="@mipmap/ic_launcher"',
+                 'android:icon="@drawable/launch_background"'),
+             "the app would ship without its adaptive icon",
+             'launcher-manifest: the application icon'),
+    Mutation("#318", "the manifest declares a round icon",
+             "android/app/src/main/AndroidManifest.xml",
+             sub(r'(android:icon="@mipmap/ic_launcher")',
+                 r'android:roundIcon="@mipmap/ic_launcher"\n        \1'),
+             "launchers that prefer a round icon would skip the adaptive one",
+             'launcher-manifest: a round icon'),
+    Mutation("#318", "the native splash navy drifts from the app's",
+             "android/app/src/main/res/values/colors.xml",
+             sub(r'<color name="splash_navy">#FF05285F</color>',
+                 '<color name="splash_navy">#FF000000</color>'),
+             "the frame before Flutter's would not match the app behind it",
+             "launcher-colours: colors.xml's splash_navy"),
+    Mutation("#318", "the brand sources are shipped as app assets",
+             "pubspec.yaml",
+             sub(r"(  assets:\n    - assets/audio/\n)", r"\1    - assets/brand/\n"),
+             "the icon's SVG sources and notes would ride in every bundle",
+             'launcher-sources: the brand sources are not app assets'),
 
     # ---- the gate's own run, against stub tools (#121, #271, #26, #300) -----
     Mutation("#271", "step 5 never marks itself in progress", "tools/gate.sh",
@@ -1308,6 +1356,17 @@ MUTATIONS: list[Mutation] = [
 
 def run(cmd: list[str], **kw) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, **kw)
+
+
+def read_target(path: pathlib.Path, binary: bool) -> str:
+    return path.read_bytes().decode("latin-1") if binary else path.read_text()
+
+
+def write_target(path: pathlib.Path, text: str, binary: bool) -> None:
+    if binary:
+        path.write_bytes(text.encode("latin-1"))
+    else:
+        path.write_text(text)
 
 
 def parses_as_yaml(path: pathlib.Path) -> bool:
@@ -1573,7 +1632,7 @@ def main() -> int:
     for i, m in enumerate(selected, 1):
         edits = [(m.path, m.apply), *m.also]
         targets = [ROOT / path for path, _ in edits]
-        originals = [target.read_text() for target in targets]
+        originals = [read_target(target, m.binary) for target in targets]
         label = f"[{i}/{len(selected)}] {m.issue} {m.name}"
         try:
             mutated = [apply(text) for (_, apply), text in zip(edits, originals)]
@@ -1611,7 +1670,7 @@ def main() -> int:
             + "".join(f"  {path}\n" for path, _ in edits)
         )
         for target, text in zip(targets, mutated):
-            target.write_text(text)
+            write_target(target, text, m.binary)
         try:
             unparseable = [t for t in targets if not parses_as_yaml(t)]
             if unparseable:
@@ -1660,7 +1719,7 @@ def main() -> int:
                 print(f"  caught  {label}")
         finally:
             for target, text in zip(targets, originals):
-                target.write_text(text)
+                write_target(target, text, m.binary)
             for made in m.creates:
                 (ROOT / made).unlink(missing_ok=True)
             IN_FLIGHT.unlink(missing_ok=True)

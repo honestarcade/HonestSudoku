@@ -154,8 +154,20 @@ void main() {
       'launcher-manifest: the icon is @mipmap/ic_launcher, no roundIcon',
       () {
         final manifest = readFile('android/app/src/main/AndroidManifest.xml');
-        expect(manifest, contains('android:icon="@mipmap/ic_launcher"'));
-        expect(manifest, isNot(contains('roundIcon')));
+        expect(
+          manifest,
+          contains('android:icon="@mipmap/ic_launcher"'),
+          reason:
+              'launcher-manifest: the application icon is not '
+              '@mipmap/ic_launcher, the adaptive icon',
+        );
+        expect(
+          manifest,
+          isNot(contains('roundIcon')),
+          reason:
+              'launcher-manifest: a round icon is declared, and launchers '
+              'that prefer it would skip the adaptive icon',
+        );
       },
     );
 
@@ -171,10 +183,19 @@ void main() {
       ).firstMatch(themes)?[1];
       expect(navy, isNotNull);
       expect(grid, isNotNull);
-      expect(androidColor(colors, 'splash_navy'), navy!.toUpperCase());
+      expect(
+        androidColor(colors, 'splash_navy'),
+        navy!.toUpperCase(),
+        reason:
+            'launcher-colours: colors.xml\'s splash_navy is not the navy '
+            'tokens.dart gives the app',
+      );
       expect(
         androidColor(colors, 'ic_launcher_background'),
         grid!.toUpperCase(),
+        reason:
+            'launcher-colours: colors.xml\'s ic_launcher_background is not '
+            'the navy theme\'s grid colour',
       );
     });
 
