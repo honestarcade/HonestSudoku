@@ -32,12 +32,16 @@ void main() {
     dir.deleteSync(recursive: true);
   });
 
-  GameController make([AppStore? s]) {
+  GameController make({
+    AppStore? from,
+    BoardGenerator? generator,
+    void Function(String)? log,
+  }) {
     final c = GameController(
-      generator: gen.call,
+      generator: generator ?? gen.call,
       seeds: CountingSeeds(),
-      store: () async => s ?? store,
-      log: (_) {},
+      store: () async => from ?? store,
+      log: log ?? (_) {},
     );
     controllers.add(c);
     return c;
@@ -80,7 +84,7 @@ void main() {
     a.dispose();
     controllers.remove(a);
 
-    final b = make(await AppStore.open(dir));
+    final b = make(from: await AppStore.open(dir));
     await b.load();
     final after = b.state!;
     expect(after.values, before.values);
@@ -98,7 +102,7 @@ void main() {
     playEmpty(a, right: true, count: 16);
     expect(a.state!.won, isTrue);
     await a.flush();
-    final b = make(await AppStore.open(dir));
+    final b = make(from: await AppStore.open(dir));
     await b.load();
     expect(b.state, isNull);
     expect(await store.readGame(), isA<Absent<SavedGame>>());
@@ -205,7 +209,7 @@ void main() {
     await a.flush();
     // Someone changes the setup afterwards; the saved game keeps Zen.
     await store.writeSettings(const AppSettings());
-    final b = make(await AppStore.open(dir));
+    final b = make(from: await AppStore.open(dir));
     await b.load();
     expect(b.state!.settings.strikeMode, StrikeMode.zen);
     expect(b.settings.game.strikeMode, StrikeMode.zen);
@@ -220,7 +224,7 @@ void main() {
     await a.load();
     final puzzle = fixturePuzzle(GridShape.mini, difficulty: Difficulty.hard);
     await store.writeGame(SavedGame.fromState(GameState.start(puzzle)));
-    final b = make(await AppStore.open(dir));
+    final b = make(from: await AppStore.open(dir));
     await b.load();
     expect(b.state, isNull);
     expect(await store.readGame(), isA<Absent<SavedGame>>());
@@ -288,37 +292,79 @@ void main() {
     c.dispose();
   });
 
-  test('settings changes mid-game persist to the next new game (#320)', () async {
-    final a = make();
-    await a.load();
-    // Start a game with default settings (Immediately, 3 strikes)
-    a.startNew(GridShape.classic, Difficulty.medium);
-    await a.generationDone;
-    expect(a.state!.settings.announce, AnnounceMode.now);
-    expect(a.state!.settings.strikeMode, StrikeMode.three);
-    // Verify lastSetup matches the new game's mode
-    expect(a.settings.lastSetup.announce, AnnounceMode.now);
-    expect(a.settings.lastSetup.strikeMode, StrikeMode.three);
-    // Change settings mid-game
-    a.updateSettings(
-      a.settings.copyWith(
-        game: a.settings.game.copyWith(
-          announce: AnnounceMode.atEnd,
-          strikeMode: StrikeMode.zen,
+  test(
+    'settings changes mid-game persist to the next new game (#320)',
+    () async {
+      final a = make();
+      await a.load();
+      // Start a game with default settings (Immediately, 3 strikes)
+      a.startNew(GridShape.classic, Difficulty.medium);
+      await a.generationDone;
+      expect(a.state!.settings.announce, AnnounceMode.now);
+      expect(a.state!.settings.strikeMode, StrikeMode.three);
+      // Verify lastSetup matches the new game's mode
+      expect(a.settings.lastSetup.announce, AnnounceMode.now);
+      expect(a.settings.lastSetup.strikeMode, StrikeMode.three);
+      // Change settings mid-game
+      a.updateSettings(
+        a.settings.copyWith(
+          game: a.settings.game.copyWith(
+            announce: AnnounceMode.atEnd,
+            strikeMode: StrikeMode.zen,
+          ),
         ),
-      ),
-    );
-    // Verify the settings were updated in the current game
-    expect(a.state!.settings.announce, AnnounceMode.atEnd);  // Game updated
-    expect(a.settings.game.announce, AnnounceMode.atEnd);  // Settings updated
-    // Verify lastSetup was also updated (the fix for #320)
-    expect(a.settings.lastSetup.announce, AnnounceMode.atEnd);
-    expect(a.settings.lastSetup.strikeMode, StrikeMode.zen);
-    // Start a new game
-    a.startNew(GridShape.classic, Difficulty.hard);
-    await a.generationDone;
-    // The new game should have the updated settings (from lastSetup)
-    expect(a.state!.settings.announce, AnnounceMode.atEnd);
-    expect(a.state!.settings.strikeMode, StrikeMode.zen);
+      );
+      // Verify the settings were updated in the current game
+      expect(a.state!.settings.announce, AnnounceMode.atEnd); // Game updated
+      expect(a.settings.game.announce, AnnounceMode.atEnd); // Settings updated
+      // Verify lastSetup was also updated (the fix for #320)
+      expect(a.settings.lastSetup.announce, AnnounceMode.atEnd);
+      expect(a.settings.lastSetup.strikeMode, StrikeMode.zen);
+      // Start a new game
+      a.startNew(GridShape.classic, Difficulty.hard);
+      await a.generationDone;
+      // The new game should have the updated settings (from lastSetup)
+      expect(a.state!.settings.announce, AnnounceMode.atEnd);
+      expect(a.state!.settings.strikeMode, StrikeMode.zen);
+    },
+  );
+
+  group('settings the controller cannot use', () {
+    test('corrupt settings load as the defaults and are written back', () async {
+      File('${dir.path}/settings.json').writeAsStringSync('{"v": 1, "da');
+      final a = make();
+      await a.load();
+      expect(
+        a.settings,
+        const AppSettings(),
+        reason: 'corrupt settings load as the defaults, as absent ones do',
+      );
+      expect(
+        (await store.readSettings()).valueOrNull,
+        const AppSettings(),
+        reason:
+            'corrupt settings are replaced by the defaults on disk, as absent '
+            'ones are',
+      );
+    });
+
+    test('newer settings load as the defaults and are left alone', () async {
+      const newer = '{"v": 99, "data": {"themeKey": "paper"}}';
+      final file = File('${dir.path}/settings.json')..writeAsStringSync(newer);
+      final lines = <String>[];
+      final a = make(log: lines.add);
+      await a.load();
+      expect(
+        a.settings,
+        const AppSettings(),
+        reason: 'newer settings load as the defaults, as absent ones do',
+      );
+      expect(
+        lines.where((l) => l.startsWith('not written')),
+        isEmpty,
+        reason: 'loading newer settings asks the store for no settings write',
+      );
+      expect(file.readAsStringSync(), newer);
+    });
   });
 }
