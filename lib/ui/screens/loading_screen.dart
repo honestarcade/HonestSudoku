@@ -175,7 +175,16 @@ class _LoadingScreenState extends State<LoadingScreen>
   String get _label {
     if (_launch) return UiStrings.phaseLabel(GenerationPhase.ready);
     final status = _controller?.loading;
-    return UiStrings.phaseLabel(status?.phase ?? GenerationPhase.generating);
+    // After generation completes, _loadingStatus is null. Show READY, not GENERATING (#290).
+    if (status == null) {
+      // If there's a failure, keep showing GENERATING. Otherwise, show READY.
+      return UiStrings.phaseLabel(
+        _controller?.generationFailure != null
+            ? GenerationPhase.generating
+            : GenerationPhase.ready,
+      );
+    }
+    return UiStrings.phaseLabel(status.phase);
   }
 
   @override
