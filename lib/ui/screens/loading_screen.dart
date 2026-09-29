@@ -65,6 +65,7 @@ class _LoadingScreenState extends State<LoadingScreen>
   var _minimumPassed = false;
   var _ready = false;
   var _handedOver = false;
+  var _lastFraction = 0.0;
   Notice? _launchFailure;
 
   bool get _launch => widget.mode == LoadingMode.launch;
@@ -126,6 +127,7 @@ class _LoadingScreenState extends State<LoadingScreen>
   void _onProgress() {
     final status = _controller?.loading;
     if (status != null && mounted) {
+      _lastFraction = status.fraction;
       _bar.animateTo(status.fraction, curve: Curves.easeOut);
     }
     if (mounted) setState(() {});
@@ -147,6 +149,7 @@ class _LoadingScreenState extends State<LoadingScreen>
       return;
     }
     _bar.value = 0;
+    _lastFraction = 0;
     _controller!.retry();
     _watchGeneration();
     setState(() {});
@@ -174,17 +177,13 @@ class _LoadingScreenState extends State<LoadingScreen>
 
   String get _label {
     if (_launch) return UiStrings.phaseLabel(GenerationPhase.ready);
-    final status = _controller?.loading;
-    // After generation completes, _loadingStatus is null. Show READY, not GENERATING (#290).
-    if (status == null) {
-      // If there's a failure, keep showing GENERATING. Otherwise, show READY.
-      return UiStrings.phaseLabel(
-        _controller?.generationFailure != null
-            ? GenerationPhase.generating
-            : GenerationPhase.ready,
-      );
-    }
-    return UiStrings.phaseLabel(status.phase);
+    final c = _controller!;
+    final phase =
+        c.loading?.phase ??
+        (c.generationFailure == null
+            ? GenerationPhase.ready
+            : GenerationPhase.of(_lastFraction));
+    return UiStrings.phaseLabel(phase);
   }
 
   @override

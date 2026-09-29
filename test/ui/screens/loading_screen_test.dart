@@ -54,6 +54,43 @@ void main() {
     expect(find.byType(BoardGrid), findsOneWidget);
   });
 
+  testWidgets('the label reads READY once the board is done', (tester) async {
+    final gen = ManualGenerator();
+    await pumpGenerating(tester, gen);
+    gen.emit(GenerationProgress(.3));
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(label(tester), 'GENERATING');
+    gen.finish();
+    await tester.pump(const Duration(milliseconds: 40));
+    expect(
+      find.byKey(const ValueKey('loading-label')),
+      findsOneWidget,
+      reason: 'the hand-over waits for the bar and the 400 ms minimum',
+    );
+    expect(
+      label(tester),
+      'READY',
+      reason: 'a done board is READY whatever fraction came last',
+    );
+  });
+
+  testWidgets('after a failure the label keeps the phase the bar stopped at', (
+    tester,
+  ) async {
+    final gen = ManualGenerator();
+    await pumpGenerating(tester, gen);
+    gen.emit(GenerationProgress(.6));
+    await tester.pump(const Duration(milliseconds: 50));
+    gen.emit(const GenerationFailedEvent(timeoutFailure));
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.byKey(const ValueKey('loading-notice')), findsOneWidget);
+    expect(
+      label(tester),
+      'CARVING GIVENS',
+      reason: 'a failed generation labels the fraction it stopped at',
+    );
+  });
+
   testWidgets('a fast board still shows the screen for 400 ms', (tester) async {
     final gen = ManualGenerator();
     await pumpGenerating(tester, gen);
