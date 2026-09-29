@@ -1151,3 +1151,6 @@ than per-story.
 - **Change:** Back and `‹` on About Honest Arcade pop to whichever screen opened it: About the App when reached through Honest Arcade Promises, the menu when reached from the menu row, and the menu when nothing is beneath it. This amends #45's back AC and #46's back-destination AC ("the studio screen opened from About the App returns to the menu as the design does"), which followed the design's `goBack`.
   **Why:** The owner's call on 2026-09-29, after device UAT on v0.2.0-uat.1 found back from the studio screen skipping About the App (#321).
   **Affects:** #45, #46 (closed; their back-destination wording is now superseded); any later story or audit that re-derives back destinations from the design's `goBack`.
+- **Change:** The ScreenHeader `‹` is 26 pt in its 34-pt button (the design sets it at 16), placed so its ink rather than its line box is centred, and it no longer follows the system text size, as an icon in a fixed box would not.
+  **Why:** The owner's call on 2026-09-29, after device UAT on v0.2.0-uat.1 found the glyph too small (#323); at 1.3× system text a 26-pt glyph would outgrow the 34-pt box, and the button's spoken label "Back" is unaffected.
+  **Affects:** #46 and every screen story whose header follows the design's 16-pt glyph (Setup, Settings, Statistics, How to play, both About screens).
