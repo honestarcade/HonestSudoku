@@ -135,9 +135,29 @@ Map<String, Object?> _encodeSnapshot(Snapshot s) => {
   'notes': s.notes,
   'mistakes': s.mistakes,
   'moves': s.moves,
+  'quiet': s.quiet,
 };
 
-Snapshot _decodeSnapshot(Object? v, int cells) {
+/// The unannounced cells of [values] when a document predates `quiet`: under
+/// At the end every wrong entry went in unannounced; under Immediately none.
+List<int> _quietDefault(
+  List<int> values,
+  List<int> solution,
+  AnnounceMode announce,
+) => [
+  if (announce == AnnounceMode.atEnd)
+    for (var i = 0; i < values.length && i < solution.length; i++)
+      if (values[i] != 0 && values[i] != solution[i]) i,
+];
+
+List<int> _quiet(Object? v, List<int> Function() orElse) =>
+    v == null ? orElse() : _ints(v, 'quiet');
+
+Snapshot _decodeSnapshot(
+  Object? v,
+  int cells,
+  List<int> Function(List<int> values) quietDefault,
+) {
   final m = _map(v, 'snapshot');
   final values = _ints(m['values'], 'snapshot.values');
   final notes = [
@@ -151,6 +171,7 @@ Snapshot _decodeSnapshot(Object? v, int cells) {
     List.unmodifiable([for (final n in notes) List<int>.unmodifiable(n)]),
     _int(m['mistakes'], 'snapshot.mistakes'),
     _int(m['moves'], 'snapshot.moves'),
+    quiet: List.unmodifiable(_quiet(m['quiet'], () => quietDefault(values))),
   );
 }
 
@@ -175,6 +196,7 @@ Map<String, Object?> encodeGame(SavedGame g) => {
   'lost': g.lost,
   'noteMode': g.noteMode,
   'selected': g.selected,
+  'quiet': g.quiet,
 };
 
 /// JSON to a saved game. Checks that it would restore: the lists fit the
@@ -192,30 +214,34 @@ SavedGame decodeGame(Map<String, Object?> json) {
   final givens = [
     for (final g in _list(json['givens'], 'givens')) _bool(g, 'givens'),
   ];
+  final solution = _ints(json['solution'], 'solution');
+  final values = _ints(json['values'], 'values');
+  final announce = _byName(
+    AnnounceMode.values,
+    json['announceMode'],
+    'announceMode',
+  );
+  List<int> quietDefault(List<int> v) => _quietDefault(v, solution, announce);
   final game = SavedGame(
     shape: shape,
     difficulty: difficulty,
     seed: _int(json['seed'], 'seed'),
-    solution: _ints(json['solution'], 'solution'),
+    solution: solution,
     givens: givens,
-    values: _ints(json['values'], 'values'),
+    values: values,
     notes: [for (final n in _list(json['notes'], 'notes')) _ints(n, 'note')],
     mistakes: _int(json['mistakes'], 'mistakes'),
     moves: _int(json['moves'], 'moves'),
     elapsedSeconds: _int(json['elapsed'], 'elapsed'),
     strikeMode: _byName(StrikeMode.values, json['strikeMode'], 'strikeMode'),
-    announce: _byName(
-      AnnounceMode.values,
-      json['announceMode'],
-      'announceMode',
-    ),
+    announce: announce,
     history: _capped([
       for (final s in _list(json['history'] ?? const [], 'history'))
-        _decodeSnapshot(s, cells),
+        _decodeSnapshot(s, cells, quietDefault),
     ]),
     future: _capped([
       for (final s in _list(json['future'] ?? const [], 'future'))
-        _decodeSnapshot(s, cells),
+        _decodeSnapshot(s, cells, quietDefault),
     ]),
     revealed: _bool(json['revealed'], 'revealed', orElse: false),
     won: _bool(json['won'], 'won', orElse: false),
@@ -224,6 +250,7 @@ SavedGame decodeGame(Map<String, Object?> json) {
     selected: json['selected'] == null
         ? null
         : _int(json['selected'], 'selected'),
+    quiet: _quiet(json['quiet'], () => quietDefault(values)),
   );
   if (game.notes.length != cells) {
     throw const FormatException('notes have the wrong length');

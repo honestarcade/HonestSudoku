@@ -254,13 +254,18 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
             await _guard(store.deleteGame);
           } else {
             GameState? restored;
-            try {
-              if (supportedDifficulties(value.shape)
-                  .contains(value.difficulty)) {
+            if (!supportedDifficulties(value.shape)
+                .contains(value.difficulty)) {
+              _log(
+                'saved game does not restore: ${value.shape.label} '
+                '${value.difficulty.label} is not a supported pair',
+              );
+            } else {
+              try {
                 restored = value.toState(_settings.game);
+              } on Object catch (e) {
+                _log('saved game does not restore: $e');
               }
-            } on Object catch (e) {
-              _log('saved game does not restore: $e');
             }
             if (restored == null) {
               await _guard(store.deleteGame);
@@ -285,7 +290,8 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   /// touches play.
   void updateSettings(AppSettings next) {
     if (next == _settings) return;
-    // Update lastSetup with the new modes so the next game uses them (#320).
+    // The owner's call (2026-09-29, #320): a mode changed mid-game is the
+    // next board's too, so the last setup follows it.
     var updated = next;
     if (next.game.strikeMode != _settings.game.strikeMode ||
         next.game.announce != _settings.game.announce) {

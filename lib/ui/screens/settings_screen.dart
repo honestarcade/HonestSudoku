@@ -37,21 +37,12 @@ class SettingsScreen extends StatelessWidget {
     final settings = c.settings;
     final game = settings.game;
 
-    // The modes edit the running game; with none running they are also the
-    // next board's, so the last setup follows.
-    void setModes({StrikeMode? strike, AnnounceMode? announce}) {
-      final nextGame = game.copyWith(strikeMode: strike, announce: announce);
-      var next = settings.copyWith(game: nextGame);
-      if (!c.hasUnfinishedGame) {
-        next = next.copyWith(
-          lastSetup: settings.lastSetup.copyWith(
-            strikeMode: strike,
-            announce: announce,
+    void setModes({StrikeMode? strike, AnnounceMode? announce}) =>
+        c.updateSettings(
+          settings.copyWith(
+            game: game.copyWith(strikeMode: strike, announce: announce),
           ),
         );
-      }
-      c.updateSettings(next);
-    }
 
     return ScreenFrame(
       gap: 12,
