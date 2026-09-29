@@ -101,6 +101,11 @@ void main() {
         timeout: const Duration(milliseconds: 50),
       ).listen(events.add, onDone: done.complete);
       await done.future;
+      expect(
+        events.whereType<GenerationFailedEvent>(),
+        hasLength(1),
+        reason: 'exactly one failure event',
+      );
       final failure = events.last as GenerationFailedEvent;
       final reason = failure.reason as GenerationTimeout;
       expect(reason.seed, 5);
@@ -149,6 +154,43 @@ void main() {
     },
   );
 
+  // The ceiling is a Timer, so a zone that holds every timer the wrapper
+  // makes, and fires them by hand, runs the clock past 15 s without the real
+  // wait. The slow worker never finishes, so only a timer can end the stream.
+  for (final (timeout, ends) in [(kGenerationCeiling, true), (null, false)]) {
+    test('timeout: $timeout ${ends ? 'ends' : 'does not end'} a generation '
+        'still running past the 15 s ceiling', () async {
+      generateOverride = slowGenerate;
+      final held = <_HeldTimer>[];
+      final events = <GenerationEvent>[];
+      final sub = runZoned(
+        () => generateInIsolate(
+          const GenerationRequest(GridShape.classic, 5, Difficulty.easy),
+          timeout: timeout,
+        ).listen(events.add),
+        zoneSpecification: ZoneSpecification(
+          createTimer: (self, parent, zone, duration, callback) {
+            final timer = _HeldTimer(duration, callback);
+            held.add(timer);
+            return timer;
+          },
+        ),
+      );
+      for (final timer in held) {
+        if (timer.duration <= const Duration(seconds: 16)) timer.fire();
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(
+        events.whereType<GenerationFailedEvent>().map((e) => e.reason),
+        ends ? [isA<GenerationTimeout>()] : isEmpty,
+        reason: ends
+            ? 'the ceiling fails the request at 15 s'
+            : 'a null timeout sets no ceiling, so nothing fails at 16 s',
+      );
+      await sub.cancel();
+    });
+  }
+
   test('running out of attempts is an event carrying the seed', () async {
     // Real: 9×9 Expert from seed 1 needs more than one attempt.
     final events = await generateInIsolate(
@@ -159,6 +201,11 @@ void main() {
         maxAttempts: 1,
       ),
     ).toList();
+    expect(
+      events.whereType<GenerationFailedEvent>(),
+      hasLength(1),
+      reason: 'exactly one failure event',
+    );
     final reason = (events.last as GenerationFailedEvent).reason;
     expect(reason, isA<AttemptsExhausted>());
     expect((reason as AttemptsExhausted).seed, 1);
@@ -172,6 +219,11 @@ void main() {
       final events = await generateInIsolate(
         const GenerationRequest(GridShape.classic, 8, Difficulty.hard),
       ).toList();
+      expect(
+        events.whereType<GenerationFailedEvent>(),
+        hasLength(1),
+        reason: 'exactly one failure event',
+      );
       final reason = (events.last as GenerationFailedEvent).reason;
       expect(reason, isA<AttemptsExhausted>());
       expect((reason as AttemptsExhausted).seed, 8);
@@ -184,6 +236,11 @@ void main() {
     final events = await generateInIsolate(
       const GenerationRequest(GridShape.classic, 8, Difficulty.hard),
     ).toList();
+    expect(
+      events.whereType<GenerationFailedEvent>(),
+      hasLength(1),
+      reason: 'exactly one failure event',
+    );
     final reason = (events.last as GenerationFailedEvent).reason;
     expect(reason, isA<UnexpectedError>());
     expect((reason as UnexpectedError).message, contains('boom'));
@@ -197,4 +254,28 @@ void main() {
       throwsA(isA<UnsupportedDifficulty>()),
     );
   });
+}
+
+/// A timer that never fires on its own; the test fires it.
+final class _HeldTimer implements Timer {
+  _HeldTimer(this.duration, this._callback);
+
+  final Duration duration;
+  final void Function() _callback;
+  var _active = true;
+
+  void fire() {
+    if (!_active) return;
+    _active = false;
+    _callback();
+  }
+
+  @override
+  void cancel() => _active = false;
+
+  @override
+  bool get isActive => _active;
+
+  @override
+  int get tick => 0;
 }
