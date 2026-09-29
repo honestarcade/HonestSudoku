@@ -38,12 +38,23 @@ class AboutStudioScreen extends StatelessWidget {
       (HsColors.blueChip, HsColors.promiseBlue),
       (HsColors.violetChip, HsColors.promiseViolet),
     ];
-    // The design's goBack: to the board when opened from it — which this
-    // screen never is — otherwise to the menu, even from About the App.
+    // Back returns to whichever screen opened this one, About the App or the
+    // menu (the owner's call, 2026-09-29, #321, over the design's goBack,
+    // which went to the menu even from About the App); the menu when nothing
+    // is beneath it.
+    void back() {
+      final nav = Navigator.of(context);
+      if (nav.canPop()) {
+        nav.pop();
+      } else {
+        Routes.toMenu(context);
+      }
+    }
+
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) Routes.toMenu(context);
+        if (!didPop) back();
       },
       child: ScreenFrame(
         gradient: kStudioGradient,
@@ -52,7 +63,7 @@ class AboutStudioScreen extends StatelessWidget {
           ScreenHeader(
             title: Copy.aboutStudio,
             keyPrefix: 'studio',
-            onBack: () => Routes.toMenu(context),
+            onBack: back,
           ),
           const Padding(
             padding: EdgeInsets.only(top: 6, bottom: 2),

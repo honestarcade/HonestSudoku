@@ -1145,3 +1145,9 @@ than per-story.
 - **Change:** The mutation battery outgrew CI's 60-minute limit, then the 90-minute stopgap. M3's PR took about 80 minutes for 148 entries, and M4's run hit 90 at entry 149 of 150, all caught, at about 34 s an entry. It is 150 minutes now (on #288). Splitting it across jobs is #286 (needs-triage), and it needs a ci-shape exception for an `if: always()` aggregator, which is an owner call.
   **Why:** Every guard adds an entry and about 26 s, so each milestone that adds guards moves the merge gate closer to the limit.
   **Affects:** M6 and M7, whose stories add guards; each PR waits over an hour on `mutations` until #286 lands.
+
+## Ad-hoc — 2026-09-29
+
+- **Change:** Back and `‹` on About Honest Arcade pop to whichever screen opened it: About the App when reached through Honest Arcade Promises, the menu when reached from the menu row, and the menu when nothing is beneath it. This amends #45's back AC and #46's back-destination AC ("the studio screen opened from About the App returns to the menu as the design does"), which followed the design's `goBack`.
+  **Why:** The owner's call on 2026-09-29, after device UAT on v0.2.0-uat.1 found back from the studio screen skipping About the App (#321).
+  **Affects:** #45, #46 (closed; their back-destination wording is now superseded); any later story or audit that re-derives back destinations from the design's `goBack`.
