@@ -69,6 +69,9 @@ if ! "$EMULATOR" -list-avds | grep -qx "$AVD"; then
   } >>"$cfg"
 fi
 
+# The log's directory, which a fresh clone does not have; without it the
+# redirect fails, the emulator never starts and wait-for-device blocks.
+mkdir -p "$ROOT/build"
 "$EMULATOR" -avd "$AVD" -port "$PORT" -no-snapshot-load -no-boot-anim \
   -no-audio >"$ROOT/build/screenshots-emulator.log" 2>&1 &
 cleanup() { "$ADB" -s "$SERIAL" emu kill >/dev/null 2>&1 || true; }
