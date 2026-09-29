@@ -1145,3 +1145,12 @@ than per-story.
 - **Change:** The mutation battery outgrew CI's 60-minute limit, then the 90-minute stopgap. M3's PR took about 80 minutes for 148 entries, and M4's run hit 90 at entry 149 of 150, all caught, at about 34 s an entry. It is 150 minutes now (on #288). Splitting it across jobs is #286 (needs-triage), and it needs a ci-shape exception for an `if: always()` aggregator, which is an owner call.
   **Why:** Every guard adds an entry and about 26 s, so each milestone that adds guards moves the merge gate closer to the limit.
   **Affects:** M6 and M7, whose stories add guards; each PR waits over an hour on `mutations` until #286 lands.
+
+## Ad-hoc — 2026-09-29 (#324, #325: every process a guard starts goes through `test/guards/leak_scan.dart`)
+
+- **Change:** Workflow step bodies run by `workflow_guard_test.dart` are now searched with the same leak-form set as the credential scripts — base64, reversed, hex, lower and upper case, rot13, URL-encoding and the distinctive 8-character slices — on stdout, stderr, the command line, and the name and bytes of every file in the workspace and scratch. This reverses the "open by decision" exclusions #241 and #251 recorded in `_leakShapes`' docstring (hex, rot13, slices), which is deleted with the function. Every `_runStepBody` call is scanned now, not only the publish test's.
+  **Why:** One leak-form implementation instead of two, per the #222 spike (2026-09-29). The cost #251 weighed was run time: `workflow_guard_test.dart` took 24 s before this change and 16 s after it, one run each (2026-09-29, `flutter test --no-pub test/guards/workflow_guard_test.dart` timed with `date +%s`, at b36e9d4 and on the #325 branch).
+  **Affects:** #241, #251 (their exclusions no longer hold); any future workflow step whose fixture value contains its own variable name, which now reads as a leak of it.
+- **Change:** `chokepoint-exempt:` is retired. A comment exempts nothing; a process that needs no secret goes through `runSealed`, and a call whose purpose is to emit a secret names an entry of `leakAllowances`, which `leak_scan_test.dart` holds to its call sites.
+  **Why:** On CI the guard jobs set `GITHUB_TOKEN`, and every call that inherited the parent environment handed it to its child, so every existing `chokepoint-exempt:` reason ("passes no secret") was false there (#222 spike, 2026-09-29).
+  **Affects:** Any planned guard that starts a process: it must use `LeakScan.run` or `runSealed`, or `leak_scan_test.dart` fails.

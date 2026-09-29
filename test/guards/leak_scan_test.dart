@@ -13,22 +13,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'leak_scan.dart';
 import 'repo_files.dart';
 
-/// Files that still start a process outside `leak_scan.dart`, with how many
-/// starts each holds. The rule below asserts the offenders EQUAL this map, so
-/// a new start anywhere fails, and so does a migrated one whose entry was not
-/// brought down.
-const pendingMigration = <String, int>{
-  'test/guards/bundle_scan_test.dart': 5,
-  'test/guards/ci_version_test.dart': 1,
-  'test/guards/fonts_guard_test.dart': 1,
-  'test/guards/guard_hygiene_test.dart': 1,
-  'test/guards/play_promote_args_test.dart': 9,
-  'test/guards/play_release_codes_test.dart': 1,
-  'test/guards/repo_files.dart': 1,
-  'test/guards/signing_guard_test.dart': 7,
-  'test/guards/workflow_guard_test.dart': 5,
-};
-
 /// The functions in `leak_scan.dart` allowed to start a process, each found
 /// by the line that opens it.
 const _chokepoints = {
@@ -279,14 +263,13 @@ void main() {
       }
     }
     expect(
-      {for (final e in offenders.entries) e.key: e.value.length},
-      equals(pendingMigration),
+      offenders,
+      isEmpty,
       reason:
           'leak-chokepoint: these start a process outside LeakScan.run, '
           'runSealed and makeExecutable, so nothing derives their secrets or '
           'scans their output, and a comment beside one exempts nothing. '
-          'Route the call through leak_scan.dart, or bring its '
-          'pendingMigration entry down when it has been:\n'
+          'Route the call through leak_scan.dart:\n'
           '${offenders.entries.map((e) => '  ${e.key} lines ${e.value.join(', ')}').join('\n')}',
     );
   });
