@@ -46,7 +46,7 @@ COMMANDS=(
   "flutter pub get --enforce-lockfile"
   "dart analyze --fatal-infos"
   "dart format --output=none --set-exit-if-changed ."
-  "flutter test --no-pub --exclude-tags weekly,bench"
+  "flutter test --no-pub --reporter compact --exclude-tags weekly,bench"
   "flutter build appbundle --release --no-pub --build-name=$VERSION_NAME --build-number=$VERSION_CODE --dart-define=HS_VERSION=$VERSION_NAME+$VERSION_CODE"
   "tools/check_aab.sh"
 )
@@ -209,7 +209,13 @@ BUILD_LOG="$(mktemp "${TMPDIR:-/tmp}/hs-gate-build.XXXXXX")"
 VERDICT_FILE="$(mktemp "${TMPDIR:-/tmp}/hs-gate-verdict.XXXXXX")"
 : > "$VERDICT_FILE"
 export HS_SIGNING_VERDICT="$VERDICT_FILE"
-trap 'rm -f "$BUILD_LOG" "$VERDICT_FILE"' EXIT
+# Set for the whole of step 5 and cleared only once its cross-check agrees, so
+# every exit in between takes the bundle with it: a build that fails part-way,
+# or one that succeeds and then signs with the wrong key or says nothing about
+# its key. The removal above keeps the path empty until step 5; this keeps a
+# rejected bundle from sitting where GATE PASSED would have named it (#121).
+IN_BUILD=""
+trap 'rm -f "$BUILD_LOG" "$VERDICT_FILE"; if [ -n "$IN_BUILD" ]; then rm -f "$BUNDLE"; fi' EXIT
 SIGNING_MODE=""
 
 # Runs one step as an array of words.
@@ -232,6 +238,7 @@ while [ "$i" -lt "$total" ]; do
   command="${COMMANDS[$i]}"
 
   if [ "$step" -eq 5 ]; then
+    IN_BUILD=1
     warn_hs_release
     SIGNING_MODE="$(signing_mode)"
     echo "[$step/$total] $label ($SIGNING_MODE)"
@@ -248,11 +255,6 @@ while [ "$i" -lt "$total" ]; do
   if [ "$step" -eq 5 ]; then
     # Captured as well as streamed, so the cross-check below can read what
     # Gradle actually said. PIPESTATUS, not $?, because $? here would be tee.
-    # `set -e` plus `pipefail` killed the script on a failing pipeline before
-    # the assignment below could run, so the `GATE FAILED` block was dead code
-    # for the one step most likely to fail for a real reason (#121). `|| true`
-    # on the pipeline keeps the script alive; PIPESTATUS still carries what
-    # Gradle said, and `$?` would be tee's.
     # `set -e` plus `pipefail` killed the script on a failing pipeline before
     # the assignment below could run, so the `GATE FAILED` block was dead code
     # for the step most likely to fail for a real reason (#121).
@@ -325,6 +327,7 @@ while [ "$i" -lt "$total" ]; do
       exit 1
     fi
     echo "signing: Gradle used the $actual key (prediction agreed)"
+    IN_BUILD=""
   fi
   i=$((i + 1))
 done

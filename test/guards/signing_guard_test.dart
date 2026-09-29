@@ -782,6 +782,148 @@ void _hardFailTests() {
   });
 }
 
+/// The outcome of one run of the real gate against stub tools.
+class _StubGateRun {
+  const _StubGateRun(this.exitCode, this.output, this.bundleLeft, this.calls);
+  final int exitCode;
+  final String output;
+
+  /// Whether anything is at the path GATE PASSED names, after the run.
+  final bool bundleLeft;
+
+  /// The argument lists `flutter` was called with, one per call.
+  final List<List<String>> calls;
+}
+
+/// Runs a copy of `tools/gate.sh` in a scratch root where `flutter`, `dart`
+/// and `tools/check_aab.sh` are stubs.
+///
+/// The stub `flutter build` writes a bundle and the given verdict, then exits
+/// with [buildExit]: every step-5 outcome in seconds, and in a scratch root,
+/// so no run touches the repository's own `build/`.
+_StubGateRun _stubGate({required int buildExit, required String verdict}) {
+  final root = Directory.systemTemp.createTempSync('hs-stubgate');
+  addTearDown(() => root.deleteSync(recursive: true));
+  final bin = Directory('${root.path}/bin')..createSync();
+  Directory('${root.path}/tools').createSync();
+  final calls = File('${root.path}/calls');
+
+  File('${root.path}/pubspec.yaml').writeAsStringSync('version: 1.0.0+1\n');
+  File('${root.path}/tools/gate.sh')
+      .writeAsStringSync(readFile('tools/gate.sh'));
+  File('${root.path}/tools/check_aab.sh')
+      .writeAsStringSync('#!/bin/bash\nexit 0\n');
+  File('${bin.path}/dart').writeAsStringSync('#!/bin/bash\nexit 0\n');
+  // One argument per line, a blank line after each call.
+  File('${bin.path}/flutter').writeAsStringSync(
+    '#!/bin/bash\n'
+    'printf \'%s\\n\' "\$@" >> "\$HS_STUB_CALLS"\n'
+    'echo >> "\$HS_STUB_CALLS"\n'
+    'if [ "\$1" = build ]; then\n'
+    '  mkdir -p build/app/outputs/bundle/release\n'
+    '  : > build/app/outputs/bundle/release/app-release.aab\n'
+    '  printf \'%s\' "\$HS_STUB_VERDICT" > "\$HS_SIGNING_VERDICT"\n'
+    '  exit "\$HS_STUB_BUILD_EXIT"\n'
+    'fi\n',
+  );
+  Process.runSync('chmod', [
+    '+x',
+    '${bin.path}/dart',
+    '${bin.path}/flutter',
+    '${root.path}/tools/check_aab.sh',
+  ]);
+
+  final result = Process.runSync(
+    '/bin/bash',
+    ['${root.path}/tools/gate.sh'],
+    workingDirectory: root.path,
+    includeParentEnvironment: false,
+    environment: {
+      'PATH': '${bin.path}:/usr/bin:/bin',
+      'HOME': root.path,
+      'TMPDIR': root.path,
+      'HS_STUB_CALLS': calls.path,
+      'HS_STUB_VERDICT': verdict,
+      'HS_STUB_BUILD_EXIT': '$buildExit',
+    },
+    stdoutEncoding: utf8,
+    stderrEncoding: utf8,
+  );
+  final recorded = calls.existsSync() ? calls.readAsStringSync() : '';
+  return _StubGateRun(
+    result.exitCode,
+    '${result.stdout}${result.stderr}',
+    File('${root.path}/$_bundle').existsSync(),
+    [
+      for (final call in recorded.split('\n\n'))
+        if (call.trim().isNotEmpty) call.trim().split('\n'),
+    ],
+  );
+}
+
+void _stubGateTests() {
+  test('a passing run keeps its bundle and runs the PR test tiers', () {
+    final run = _stubGate(buildExit: 0, verdict: 'debug');
+    expect(
+      run.exitCode,
+      0,
+      reason:
+          'stub-gate: the harness itself is broken, so the cases below '
+          'prove nothing.\n${run.output}',
+    );
+    expect(run.output, contains('GATE PASSED'));
+    expect(run.bundleLeft, isTrue);
+
+    // #26: the 200-seed `weekly` tier and the `bench` timings are too slow
+    // for a pull request and run elsewhere. Read from the arguments the gate
+    // actually passed, not from the text of the file.
+    final tests = run.calls.where((c) => c.first == 'test').toList();
+    expect(tests, hasLength(1));
+    final args = tests.single;
+    final excluded = <String>{
+      for (var i = 0; i < args.length - 1; i++)
+        if (args[i] == '--exclude-tags') ...args[i + 1].split(','),
+    };
+    expect(
+      excluded,
+      containsAll(const ['weekly', 'bench']),
+      reason:
+          'gate-test-tiers: the gate\'s test step no longer excludes both '
+          'slow tiers, so the pull-request gate runs them. Called with: '
+          '$args',
+    );
+    final reporter = args.indexOf('--reporter');
+    expect(
+      reporter >= 0 && reporter + 1 < args.length ? args[reporter + 1] : null,
+      'compact',
+      reason:
+          'gate-reporter: the gate\'s test step does not pass '
+          '`--reporter compact`. Called with: $args',
+    );
+  });
+
+  // #121: a rejected build must not leave a bundle where GATE PASSED would
+  // have named one.
+  for (final c in const [
+    (name: 'the build fails', exit: 1, verdict: 'debug'),
+    (name: 'the key disagrees with the header', exit: 0, verdict: 'upload'),
+    (name: 'the build writes no verdict', exit: 0, verdict: ''),
+  ]) {
+    test('no bundle is left when ${c.name}', () {
+      final run = _stubGate(buildExit: c.exit, verdict: c.verdict);
+      expect(run.exitCode, isNot(0), reason: run.output);
+      expect(run.output, contains('GATE FAILED'));
+      expect(
+        run.bundleLeft,
+        isFalse,
+        reason:
+            'rejected-bundle: step 5 failed (${c.name}) and the bundle it '
+            'produced is still at the path GATE PASSED names.\n${run.output}',
+      );
+    });
+  }
+}
+
 void main() {
   // One directory per `flutter test` run was left behind: the fixture was
   // created in a top-level `final` with no teardown (#180).
@@ -793,6 +935,7 @@ void main() {
 
   group('gate.sh signing mode', _signingModeTests);
   group('hard failure produces nothing', _hardFailTests);
+  group('gate.sh against stub tools', _stubGateTests);
 
   test('the build file holds no literal secret', () {
     final gradle = readFile(_gradle);

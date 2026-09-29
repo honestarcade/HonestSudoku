@@ -1282,6 +1282,27 @@ MUTATIONS: list[Mutation] = [
              sub(r'stroke="#8448FC"', 'stroke="#FF00FF"'),
              "the listing would show a different mark from the app",
              "store-sources: the feature graphic's mark drifted from the icon"),
+
+    # ---- the gate's own run, against stub tools (#121, #271, #26, #300) -----
+    Mutation("#271", "step 5 never marks itself in progress", "tools/gate.sh",
+             sub(r"\n    IN_BUILD=1\n", "\n"),
+             "a rejected build leaves its bundle where GATE PASSED would name it",
+             'rejected-bundle: step 5 failed'),
+    Mutation("#271", "the exit trap no longer removes the bundle", "tools/gate.sh",
+             sub(r'; if \[ -n "\$IN_BUILD" \]; then rm -f "\$BUNDLE"; fi\' EXIT',
+                 "' EXIT"),
+             "a rejected build leaves its bundle where GATE PASSED would name it",
+             'rejected-bundle: step 5 failed'),
+    Mutation("#300", "the gate's test step runs the weekly tier",
+             "tools/gate.sh",
+             sub(r"--exclude-tags weekly,bench\"", '--exclude-tags bench"'),
+             "the 200-seed engine tier lands in every pull-request gate",
+             'gate-test-tiers: the gate'),
+    Mutation("#300", "the gate's test step drops the compact reporter",
+             "tools/gate.sh",
+             sub(r" --reporter compact", ""),
+             "the gate's test output is not the one #26 specified",
+             'gate-reporter: the gate'),
 ]
 
 
