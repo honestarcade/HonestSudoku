@@ -1282,6 +1282,21 @@ MUTATIONS: list[Mutation] = [
              sub(r'stroke="#8448FC"', 'stroke="#FF00FF"'),
              "the listing would show a different mark from the app",
              "store-sources: the feature graphic's mark drifted from the icon"),
+
+    # ---- #312: the How to play and About screens reach links one way --------
+    Mutation("#312", "How to play reaches for url_launcher itself",
+             "lib/ui/screens/howto_screen.dart",
+             sub(r"^import '\.\./a11y/speak\.dart';$",
+                 "import 'package:url_launcher/url_launcher.dart';\n"
+                 "import '../a11y/speak.dart';", flags=re.M),
+             "a screen could open a browser without the opener, untested",
+             'link-sources: 1 way(s) round links.dart'),
+    Mutation("#312", "About the App parses a link of its own",
+             "lib/ui/screens/about_app_screen.dart",
+             sub(r"uri: AppLinks\.source,",
+                 "uri: Uri.parse(AppLinks.source.toString()),"),
+             "a link parsed in a widget is a second source for it",
+             'link-sources: 1 way(s) round links.dart'),
 ]
 
 
