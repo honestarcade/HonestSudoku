@@ -367,4 +367,193 @@ void main() {
       expect(file.readAsStringSync(), newer);
     });
   });
+
+  group('when things are written', () {
+    int writes(StoreDocument d) => store.writeCounts[d] ?? 0;
+    // Long enough for a write on the local disk, well inside the debounce.
+    Future<void> settle([int ms = 100]) =>
+        Future<void>.delayed(Duration(milliseconds: ms));
+
+    test('statistics are not written as the clock runs', () async {
+      final a = await started(GridShape.classic, Difficulty.medium);
+      await a.flush();
+      final seconds = a.state!.elapsedSeconds;
+      final before = writes(StoreDocument.stats);
+      await settle(2500);
+      expect(a.state!.elapsedSeconds - seconds, greaterThanOrEqualTo(2));
+      expect(
+        writes(StoreDocument.stats),
+        before,
+        reason: 'a tick of the clock writes no statistics',
+      );
+    });
+
+    // Backgrounding a paused game is the case where only the lifecycle's own
+    // write can save it.
+    for (final (what, paused, trigger)
+        in <(String, bool, void Function(GameController))>[
+          ('pausing', false, (c) => c.pause()),
+          (
+            'going to the background',
+            true,
+            (c) => c.didChangeAppLifecycleState(AppLifecycleState.paused),
+          ),
+          ('leaving the board', false, (c) => c.setBoardVisible(false)),
+        ]) {
+      test('$what writes the game at once and cancels the pending '
+          'write', () async {
+        final a = await started(GridShape.classic, Difficulty.medium);
+        if (paused) a.pause();
+        await a.flush();
+        a.updateSettings(
+          a.settings.copyWith(
+            game: a.settings.game.copyWith(strikeMode: StrikeMode.five),
+          ),
+        );
+        trigger(a);
+        await settle();
+        expect(
+          (await store.readGame()).valueOrNull,
+          SavedGame.fromState(a.state!),
+          reason: '$what writes the game at once',
+        );
+        final after = writes(StoreDocument.game);
+        await settle(400);
+        expect(
+          writes(StoreDocument.game),
+          after,
+          reason: '$what cancels the pending debounced write',
+        );
+      });
+    }
+
+    test('a new board is written at once and cancels the pending '
+        'write', () async {
+      final manual = ManualGenerator();
+      final a = make(generator: manual.call);
+      await a.load();
+      a.startNew(GridShape.classic, Difficulty.medium);
+      manual.finish();
+      await a.generationDone;
+      a.enterBoard();
+      await a.flush();
+      a.startNew(GridShape.classic, Difficulty.medium);
+      await settle();
+      final old = a.state!.puzzle.seed;
+      a.select(1);
+      expect(
+        [a.state!.puzzle.seed, a.state!.selected],
+        [old, 1],
+        reason: 'the old board is still the game while the new one is made',
+      );
+      manual.finish();
+      await a.generationDone;
+      await settle();
+      expect(
+        (await store.readGame()).valueOrNull?.seed,
+        a.state!.puzzle.seed,
+        reason:
+            'a new board is written at once, so a kill cannot bring back the '
+            'game it replaced',
+      );
+      final after = writes(StoreDocument.game);
+      await settle(400);
+      expect(
+        writes(StoreDocument.game),
+        after,
+        reason: "the new board's write cancels the pending debounced write",
+      );
+    });
+
+    for (final how in ['fails', 'never arrives']) {
+      test('an abandon is saved at once when the new board $how', () async {
+        final a = await started(GridShape.mini, Difficulty.easy);
+        playEmpty(a, right: true, count: 16);
+        a.startNew(GridShape.mini, Difficulty.easy);
+        await a.generationDone;
+        await a.flush();
+        expect(
+          (await store.readStats()).valueOrNull!.streak(Difficulty.easy),
+          1,
+        );
+        if (how == 'fails') {
+          gen.failWith = timeoutFailure;
+        } else {
+          gen.hang = true;
+        }
+        a.startNew(GridShape.mini, Difficulty.easy);
+        await settle();
+        expect(
+          how == 'fails' ? a.generationFailure : a.loading,
+          isNotNull,
+          reason: 'the new board $how',
+        );
+        expect(
+          (await store.readStats()).valueOrNull!.streak(Difficulty.easy),
+          0,
+          reason: 'the abandon is on disk whether or not the new board arrives',
+        );
+      });
+    }
+
+    test('losing a restarted puzzle again records no second loss', () async {
+      final a = await started(GridShape.classic, Difficulty.medium);
+      playEmpty(a, right: false, count: 3);
+      expect(a.state!.lost, isTrue);
+      await settle();
+      a.restart();
+      final book = a.book;
+      playEmpty(a, right: false, count: 3);
+      expect(a.state!.lost, isTrue);
+      final stats = writes(StoreDocument.stats);
+      await settle();
+      expect(a.book, same(book));
+      expect(
+        writes(StoreDocument.stats),
+        stats,
+        reason:
+            'a second loss of one puzzle is not recorded: it is saved like '
+            'any other move, after the debounce',
+      );
+    });
+
+    test('a new last setup never reaches the running game', () async {
+      final a = await started(GridShape.classic, Difficulty.medium);
+      final modes = a.state!.settings;
+      a.updateSettings(
+        a.settings.copyWith(
+          lastSetup: const LastSetup(
+            strikeMode: StrikeMode.zen,
+            announce: AnnounceMode.atEnd,
+          ),
+        ),
+      );
+      expect(
+        a.state!.settings,
+        modes,
+        reason: 'updateSettings applies no last setup to a running game',
+      );
+    });
+
+    test('no settings write is asked of the store while its document is '
+        'newer', () async {
+      const newer = '{"v": 99, "data": {"themeKey": "paper"}}';
+      final file = File('${dir.path}/settings.json')..writeAsStringSync(newer);
+      final lines = <String>[];
+      final a = make(log: lines.add);
+      await a.load();
+      a.updateSettings(a.settings.copyWith(themeKey: 'paper'));
+      a.startNew(GridShape.classic, Difficulty.medium);
+      await a.generationDone;
+      await a.flush();
+      expect(
+        lines.where((l) => l.startsWith('not written')),
+        isEmpty,
+        reason:
+            'the controller skips settings writes while the document is '
+            'newer',
+      );
+      expect(file.readAsStringSync(), newer);
+    });
+  });
 }
