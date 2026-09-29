@@ -27,13 +27,18 @@
 #   done
 #   env -i PATH="$BIN" HOME="$HOME" "$BIN/bash" tools/check_aab.sh   # rc=0
 #
-# Dropping dirname from that loop reproduces `line 26: dirname: command not
-# found`. Re-run it whenever this script gains a command.
+# Dropping dirname from that loop reproduces `dirname: command not found`
+# from the `cd "$(dirname "$0")/.."` below. Re-verified 2026-09-29 (#269), with
+# the bundle path passed as the argument: rc=0 with dirname linked, and
+# without it the error prints and the scan still exits 0, because a failed
+# substitution inside `cd`'s argument does not trip `set -e` and an absolute
+# argument does not need the repository root. Re-run it whenever this script
+# gains a command.
 # (awk arrived with the element decoder in #80 and the list was not updated
-# until #105; dirname was missing from the day the `cd` on line 26 was
-# written and survived #105's correction of the line directly above it — the
-# fourth occurrence of a header sentence asserted rather than checked, in one
-# file (#87, #105, #114).)
+# until #105; dirname was missing from the day the `cd` below was written and
+# survived #105's correction of the line directly above it — the fourth
+# occurrence of a header sentence asserted rather than checked, in one file
+# (#87, #105, #114).)
 set -euo pipefail
 export LC_ALL=C
 
