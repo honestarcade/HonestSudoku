@@ -290,7 +290,8 @@ class GameController extends ChangeNotifier with WidgetsBindingObserver {
   /// touches play.
   void updateSettings(AppSettings next) {
     if (next == _settings) return;
-    // Update lastSetup with the new modes so the next game uses them (#320).
+    // The owner's call (2026-09-29, #320): a mode changed mid-game is the
+    // next board's too, so the last setup follows it.
     var updated = next;
     if (next.game.strikeMode != _settings.game.strikeMode ||
         next.game.announce != _settings.game.announce) {

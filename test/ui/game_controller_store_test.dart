@@ -314,18 +314,15 @@ void main() {
     c.dispose();
   });
 
-  test('settings changes mid-game persist to the next new game (#320)', () async {
+  test('mode changes mid-game carry into the next new game', () async {
     final a = make();
     await a.load();
-    // Start a game with default settings (Immediately, 3 strikes)
     a.startNew(GridShape.classic, Difficulty.medium);
     await a.generationDone;
-    expect(a.state!.settings.announce, AnnounceMode.now);
-    expect(a.state!.settings.strikeMode, StrikeMode.three);
-    // Verify lastSetup matches the new game's mode
-    expect(a.settings.lastSetup.announce, AnnounceMode.now);
-    expect(a.settings.lastSetup.strikeMode, StrikeMode.three);
-    // Change settings mid-game
+    expect(
+      [a.state!.settings.strikeMode, a.state!.settings.announce],
+      [StrikeMode.three, AnnounceMode.now],
+    );
     a.updateSettings(
       a.settings.copyWith(
         game: a.settings.game.copyWith(
@@ -334,17 +331,45 @@ void main() {
         ),
       ),
     );
-    // Verify the settings were updated in the current game
-    expect(a.state!.settings.announce, AnnounceMode.atEnd);  // Game updated
-    expect(a.settings.game.announce, AnnounceMode.atEnd);  // Settings updated
-    // Verify lastSetup was also updated (the fix for #320)
-    expect(a.settings.lastSetup.announce, AnnounceMode.atEnd);
-    expect(a.settings.lastSetup.strikeMode, StrikeMode.zen);
-    // Start a new game
+    expect(
+      [a.state!.settings.strikeMode, a.state!.settings.announce],
+      [StrikeMode.zen, AnnounceMode.atEnd],
+      reason: 'a mode change reaches the running game',
+    );
+    expect(
+      [a.settings.lastSetup.strikeMode, a.settings.lastSetup.announce],
+      [StrikeMode.zen, AnnounceMode.atEnd],
+      reason: 'a mode change mid-game is copied into the last setup',
+    );
     a.startNew(GridShape.classic, Difficulty.hard);
     await a.generationDone;
-    // The new game should have the updated settings (from lastSetup)
-    expect(a.state!.settings.announce, AnnounceMode.atEnd);
-    expect(a.state!.settings.strikeMode, StrikeMode.zen);
+    expect(
+      [a.state!.settings.strikeMode, a.state!.settings.announce],
+      [StrikeMode.zen, AnnounceMode.atEnd],
+      reason: 'the next board takes the modes changed mid-game',
+    );
+  });
+
+  test('a theme picked mid-game survives the game ending, a new board and '
+      'a relaunch', () async {
+    final a = await started(GridShape.mini, Difficulty.easy);
+    a.updateSettings(a.settings.copyWith(themeKey: BoardTheme.paper.key));
+    playEmpty(a, right: true, count: 16);
+    expect(a.state!.won, isTrue);
+    a.startNew(GridShape.mini, Difficulty.easy);
+    await a.generationDone;
+    expect(
+      a.themeKey,
+      BoardTheme.paper.key,
+      reason: 'a new board keeps the theme',
+    );
+    await a.flush();
+    final b = make(await AppStore.open(dir));
+    await b.load();
+    expect(
+      b.themeKey,
+      BoardTheme.paper.key,
+      reason: 'the theme is read back from the settings document',
+    );
   });
 }

@@ -1145,3 +1145,9 @@ than per-story.
 - **Change:** The mutation battery outgrew CI's 60-minute limit, then the 90-minute stopgap. M3's PR took about 80 minutes for 148 entries, and M4's run hit 90 at entry 149 of 150, all caught, at about 34 s an entry. It is 150 minutes now (on #288). Splitting it across jobs is #286 (needs-triage), and it needs a ci-shape exception for an `if: always()` aggregator, which is an owner call.
   **Why:** Every guard adds an entry and about 26 s, so each milestone that adds guards moves the merge gate closer to the limit.
   **Affects:** M6 and M7, whose stories add guards; each PR waits over an hour on `mutations` until #286 lands.
+
+## Ad-hoc — 2026-09-29 (device-UAT fixes on fix/bugs-from-verification: #320, #322)
+
+- **Change:** A strike-limit or announce change made mid-game is also copied into `lastSetup`, so the next board keeps it. Story #42's AC ("with no game in progress the change is also copied into `lastSetup`") becomes "always copied"; `GameController.updateSettings` does it for every caller, and the Settings screen no longer checks for a running game. `updateSettings` still never applies `lastSetup` to a running game (#39's API AC).
+  **Why:** The owner's call on 2026-09-29, after #320's device UAT on v0.2.0-uat.1: a mode changed from the pause card's Settings reverted on the next board. The theme half of #320 did not reproduce at the controller: a theme picked mid-game survives the win, a new board and a relaunch (`game_controller_store_test.dart`, "a theme picked mid-game survives …").
+  **Affects:** #42 (amended AC), #39; the #309/#311 test gaps that ask for "`lastSetup` unchanged when modes change mid-game" are inverted by this (assert it is updated).
