@@ -27,7 +27,7 @@ tools/gate.sh
 
 Six steps, stopping at the first failure: resolve dependencies against the
 lockfile, analyze (infos are fatal), check formatting, run the tests including
-the invariant guards (`flutter test --no-pub --exclude-tags weekly,bench`),
+the invariant guards (`flutter test --no-pub --reporter compact --exclude-tags weekly,bench`),
 build the release bundle, and scan that bundle for Android permissions. It
 reports rather than rewrites — a formatting failure names the file and leaves
 it alone.

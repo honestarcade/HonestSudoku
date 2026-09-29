@@ -5,7 +5,8 @@ import 'package:honest_sudoku/engine/engine.dart';
 
 /// Reads the player's statistics.
 abstract interface class StatsSource {
-  /// Solves in a row at [shape] and [difficulty], before the one just won.
+  /// The current streak at [difficulty] as recorded, so a win recorded
+  /// before the call is already in it; 0 for a [shape] it does not support.
   int currentStreak({required GridShape shape, required Difficulty difficulty});
 }
 

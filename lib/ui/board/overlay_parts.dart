@@ -135,19 +135,11 @@ class StatTile extends StatelessWidget {
 }
 
 /// The design's primary button colours.
-const ButtonStyleSpec primarySpec = ButtonStyleSpec(
-  edge: Color(0x00000000),
-  bg: HsColors.teal,
-  fg: HsColors.deepNavy,
-);
+final ButtonStyleSpec primarySpec = DesignButtonVariant.primary.spec;
 
 /// Restart and new-deal buttons on the pause card; New puzzle on the lost
 /// card.
-const ButtonStyleSpec secondarySpec = ButtonStyleSpec(
-  edge: HsColors.edge18,
-  bg: HsColors.fill05,
-  fg: HsColors.white,
-);
+final ButtonStyleSpec secondarySpec = DesignButtonVariant.secondary.spec;
 
 /// `Change size or difficulty` on the game-over card (a 16 % edge).
 const ButtonStyleSpec changeSetupSpec = ButtonStyleSpec(
@@ -157,18 +149,10 @@ const ButtonStyleSpec changeSetupSpec = ButtonStyleSpec(
 );
 
 /// Rules and Settings on the pause card.
-const ButtonStyleSpec softSpec = ButtonStyleSpec(
-  edge: HsColors.edge14,
-  bg: HsColors.fill04,
-  fg: HsColors.chipFg,
-);
+final ButtonStyleSpec softSpec = DesignButtonVariant.soft.spec;
 
 /// Main menu on both cards.
-const ButtonStyleSpec ghostSpec = ButtonStyleSpec(
-  edge: Color(0x00000000),
-  bg: Color(0x00000000),
-  fg: HsColors.muted,
-);
+final ButtonStyleSpec ghostSpec = DesignButtonVariant.ghost.spec;
 
 /// The cards' drop shadow, `0 24px 60px rgba(0,0,0,.55)`, scaled.
 List<BoxShadow> cardShadow(double scale) => [
