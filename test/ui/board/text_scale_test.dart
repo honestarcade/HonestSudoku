@@ -216,6 +216,83 @@ void main() {
     }
   });
 
+  group('the notice line cap', () {
+    final long = Notice(BannerKind.hint, 'HINT · HIDDEN PAIR', 'x ' * 150);
+    const short = Notice(BannerKind.hint, 'HINT', 'One place for a 7.');
+
+    testWidgets('a long body stops at the cap, with an ellipsis', (
+      tester,
+    ) async {
+      for (final lines in [3, 2]) {
+        await tester.pumpWidget(
+          MediaQuery(
+            data: const MediaQueryData(textScaler: TextScaler.linear(1.3)),
+            child: Directionality(
+              textDirection: TextDirection.ltr,
+              child: Align(
+                alignment: Alignment.topLeft,
+                child: NoticeBanner(notice: long, scale: 1, maxLines: lines),
+              ),
+            ),
+          ),
+        );
+        final body = tester.renderObject<RenderParagraph>(find.text(long.body));
+        expect(
+          body.didExceedMaxLines,
+          isTrue,
+          reason: 'the banner body stops at $lines lines',
+        );
+        expect(
+          tester.widget<Text>(find.text(long.body)).overflow,
+          TextOverflow.ellipsis,
+        );
+        double measured(int cap) => NoticeBanner.measureHeight(
+          notice: long,
+          scale: 1,
+          textScaler: const TextScaler.linear(1.3),
+          maxLines: cap,
+        );
+        expect(
+          tester.getSize(find.byType(NoticeBanner)).height,
+          closeTo(measured(lines), .5),
+          reason: 'the banner is $lines lines tall',
+        );
+        expect(measured(lines), lessThan(measured(50)));
+      }
+    });
+
+    test('16×16 at 1.3× on 360 px: a long hint drops to 2 lines, a short '
+        'one keeps 3', () {
+      final layout = BoardLayout.of(GridShape.monster);
+      const scale = 360 / 390;
+      double h(Notice n, int lines) =>
+          NoticeBanner.measureHeight(
+            notice: n,
+            scale: scale,
+            textScaler: const TextScaler.linear(1.3),
+            maxLines: lines,
+          ) /
+          scale;
+      expect(
+        layout.noticeY + h(long, 3) + kNoticeGap + layout.padHeight,
+        greaterThan(kToolBarY - kToolClearance),
+        reason:
+            'three lines of the long hint would put the pad past the '
+            'tool clearance',
+      );
+      expect(
+        layout.noticeMaxLines(h(long, 3)),
+        2,
+        reason: 'a notice that would crowd the tools drops to 2 lines',
+      );
+      expect(
+        layout.noticeMaxLines(h(short, 3)),
+        3,
+        reason: 'a notice with room keeps 3 lines',
+      );
+    });
+  });
+
   group('the worst notice never pushes the pad into the tools', () {
     for (final shape in GridShape.all) {
       test('${shape.label}, a 300-character hint at 1.3× on 360 px', () {
