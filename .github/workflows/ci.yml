@@ -148,29 +148,29 @@ jobs:
   # Its own job rather than a step in gate.sh: it runs the guard suite once
   # per mutation, which is minutes, and tools/gate.sh is the script a
   # contributor runs locally before every commit.
-  mutations:
+  #
+  # Split into shards because one job outgrew every limit it was given: 60
+  # minutes ran out at entry 131 of 147 (run 35932979896, 2026-09-23) and 90
+  # at entry 149 of 150 (PR #288, 2026-09-24), both recorded on #286. A shard
+  # takes every eighth entry of `--list`, so the shards add up to the whole
+  # battery and each grows at an eighth of its rate.
+  mutation-shard:
     runs-on: ubuntu-latest
-    # Measured, not guessed, and the number it is measured against is
-    # `tools/mutation_check.py --list` rather than one written here — a count
-    # in this comment was stale within the same commit that wrote it (#251).
-    #
-    # The history this budget exists for: 102 entries hit a 30-minute limit
-    # exactly and were cancelled with an empty log; 45 minutes then held
-    # until the battery reached 127, where this job took 42m52s on one run
-    # (35770339392) and 45m22s on the next (35783678379) — the second was
-    # cancelled at the limit and took the first release with it (#252).
-    #
-    # Each mutation is one run of the guard suite, so the cost is linear in
-    # the battery's size and the run-to-run variance is minutes, not seconds.
-    # 60 was the limit until run 35932979896 (2026-09-23) reached entry 131
-    # of 147 when it expired; 90 until PR #288's run (2026-09-24) reached
-    # entry 149 of 150 when it did, every entry caught, at about 34 s an
-    # entry as the guard suite grows. Splitting across jobs is the lasting
-    # answer, but the one required `mutations` check would then hang on an
-    # aggregating job that must run even when a shard fails -- a job-level
-    # `if:` that ci-shape refuses, for good reason -- so it waits on #286.
-    # 150 is the stopgap; a pass that adds entries re-reads this line.
-    timeout-minutes: 150
+    # A shard repeats the setup and the baseline suite run that the single
+    # job made once, then runs its eighth of the battery. At the 34 s an
+    # entry that #286 records for PR #288 (2026-09-24), an eighth of the
+    # battery `--list` counts is minutes rather than tens of minutes, and
+    # `tools/mutation_check.py --only ci.yml` (19 entries plus the baseline,
+    # about a shard's size) took 8m27s on a developer Mac on 2026-09-29. 45
+    # leaves room for setup and growth; a pass that adds entries by the
+    # dozen re-reads this line.
+    timeout-minutes: 45
+    strategy:
+      # Every shard reports, so one red shard does not hide what the other
+      # seven would have said.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     env:
       FLUTTER_SUPPRESS_ANALYTICS: "true"
     steps:
@@ -200,11 +200,10 @@ jobs:
 
       - id: mutations
         name: Mutation battery
-        # One suite run per mutation, so this job alone makes one call to
-        # that endpoint per entry in the battery — over a hundred, and
-        # `--list` says how many today. Anonymous it would exhaust the
-        # hourly limit partway through and report the remainder as
-        # WRONG-REASON (#219).
+        # One suite run per mutation, so each shard makes one call to that
+        # endpoint per entry it runs. Anonymous, the shared hourly limit can
+        # run out partway through and report the remainder as WRONG-REASON
+        # (#219).
         env:
           # HS_RULESET_READ_TOKEN can read `bypass_actors`; `github.token`
           # cannot (#228). The fallback is for a fork, whose PRs cannot see
@@ -221,4 +220,34 @@ jobs:
           # job left NO progress lines — not one `[N/102]`. Unbuffered, the
           # log shows how far it got and which entry was running.
           PYTHONUNBUFFERED: "1"
-        run: tools/mutation_check.py
+          # Through env:, because an expression in a run: body is text the
+          # shell would execute.
+          SHARD: ${{ matrix.shard }}
+        run: tools/mutation_check.py --shard "$SHARD/8"
+
+  # The required check. The ruleset binds the check-run name `mutations`, and
+  # a matrix job reports one check per shard under its own name (#286), so
+  # this job carries the name and the shards' verdict.
+  #
+  # `always()` because a job whose `needs` failed is SKIPPED, and a skipped
+  # required check does not block a merge (#189, #286). So it runs whatever
+  # the shards did, and fails unless their result is `success` (owner
+  # decision, 2026-09-29, #286).
+  mutations:
+    needs: mutation-shard
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - id: verdict
+        name: Every shard succeeded
+        env:
+          SHARDS: ${{ needs.mutation-shard.result }}
+        run: |
+          set -euo pipefail
+          if [ "$SHARDS" != "success" ]; then
+            echo "mutation shards: $SHARDS, not success; this check fails" \
+              | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "mutation shards: success" | tee -a "$GITHUB_STEP_SUMMARY"

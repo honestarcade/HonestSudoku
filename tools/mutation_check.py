@@ -21,7 +21,7 @@ Two rules learned the hard way:
     pass -- which is exactly what #172 was: `replaceFirst` inserted a literal
     `$1`, the YAML broke, and the battery called it caught.
 
-Usage:  tools/mutation_check.py [--list] [--only SUBSTRING]
+Usage:  tools/mutation_check.py [--list] [--only SUBSTRING | --shard K/N]
 Exit:   0 every mutation was caught
         1 at least one survived (the suite stayed green)
         2 the battery could not run (dirty tree, bad pattern, unparseable)
@@ -1282,6 +1282,59 @@ MUTATIONS: list[Mutation] = [
              sub(r'stroke="#8448FC"', 'stroke="#FF00FF"'),
              "the listing would show a different mark from the app",
              "store-sources: the feature graphic's mark drifted from the icon"),
+
+    # ---- #286: the battery split across shards -----------------------------
+    Mutation("#286", "the mutations check passes whatever the shards did",
+             ".github/workflows/ci.yml",
+             sub(r"^            exit 1$", "            exit 0", 1, flags=re.M),
+             "a red shard would report a green required check",
+             'always-verdict: job `mutations` passed with'),
+    Mutation("#286", "the mutations check stops reading the shards' result",
+             ".github/workflows/ci.yml",
+             sub(r"SHARDS: \$\{\{ needs\.mutation-shard\.result \}\}",
+                 "SHARDS: success", 1),
+             "the verdict is a constant, so every shard can fail under it",
+             'never reads `needs.mutation-shard.result`'),
+    Mutation("#286", "the mutations check runs on success() instead of always()",
+             ".github/workflows/ci.yml",
+             sub(r"^    if: always\(\)$", "    if: success()", 1, flags=re.M),
+             "a failed shard skips the required check, and a skip does not block",
+             'The aggregator may run `always()` and nothing else'),
+    Mutation("#286", "a job-level if: always() on a shard job",
+             ".github/workflows/ci.yml",
+             sub(r"^  mutation-shard:\n    runs-on: ubuntu-latest$",
+                 "  mutation-shard:\n    if: always()\n    runs-on: ubuntu-latest",
+                 1, flags=re.M),
+             "the exception is for the aggregator alone",
+             'ci-shape: job `mutation-shard` carries `if:'),
+    Mutation("#286", "the mutations job is renamed away from the required check",
+             ".github/workflows/ci.yml",
+             sub(r"^  mutations:\n    needs: mutation-shard$",
+                 "  mutations:\n    name: Mutation verdict\n    needs: mutation-shard",
+                 1, flags=re.M),
+             "the ruleset would require a check-run name nothing reports",
+             'ci-shape: job `mutations` carries `name:'),
+    Mutation("#286", "a shard is dropped from the matrix",
+             ".github/workflows/ci.yml",
+             sub(r"shard: \[1, 2, 3, 4, 5, 6, 7, 8\]", "shard: [1, 2, 3, 4, 5, 6, 7]", 1),
+             "every eighth entry would run nowhere",
+             'shard-matrix: ci.yml runs shards'),
+    Mutation("#286", "one red shard cancels the others",
+             ".github/workflows/ci.yml",
+             sub(r"fail-fast: false", "fail-fast: true", 1),
+             "the other shards' findings are lost with the first failure",
+             'shard-matrix: fail-fast is'),
+    Mutation("#286", "the shard selector skips an entry",
+             "tools/mutation_check.py",
+             sub(r"if i % n == k - 1\]", "if i % n == k - 1 and i != 5]", 1),
+             "one entry of the battery would run in no shard",
+             'shard-cover: the'),
+    Mutation("#286", "a shard past the last one is accepted",
+             "tools/mutation_check.py",
+             sub(r"    if k > n:\n        raise ValueError\(f\"--shard \{value\}: shard \{k\} of only \{n\}\"\)\n",
+                 "", 1),
+             "a typo in the matrix would run an empty shard, green",
+             'shard-args: `--shard 9/8`'),
 ]
 
 
@@ -1325,16 +1378,55 @@ def compiles_as_dart(paths: list[pathlib.Path]) -> bool:
     return probe.returncode == 0
 
 
+def parse_shard(value: str) -> tuple[int, int]:
+    """`K/N`, 1-based, as (k, n). Anything else is a ValueError."""
+    match = re.fullmatch(r"([1-9][0-9]*)/([1-9][0-9]*)", value.strip())
+    if not match:
+        raise ValueError(f"--shard wants K/N with 1 <= K <= N, got {value!r}")
+    k, n = int(match.group(1)), int(match.group(2))
+    if k > n:
+        raise ValueError(f"--shard {value}: shard {k} of only {n}")
+    return k, n
+
+
+def shard_of(entries: list, k: int, n: int) -> list:
+    """Shard K of N, round-robin over the battery's own order.
+
+    Round-robin rather than contiguous blocks: entries are grouped by issue,
+    and a group of `slow` or engine entries in one block would make one shard
+    the long pole of the whole check (#286).
+    """
+    return [m for i, m in enumerate(entries) if i % n == k - 1]
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--audit", action="store_true",
                     help="run the marker preflight alone and exit")
     ap.add_argument("--only", default="")
+    ap.add_argument("--shard", default=None,
+                    help="K/N: run only the K-th of N round-robin shards")
     args = ap.parse_args()
 
     selected = [m for m in MUTATIONS if args.only.lower() in
                 f"{m.issue} {m.name} {m.path}".lower()]
+
+    if args.shard is not None:
+        # Refused together with --only. A shard is defined against the WHOLE
+        # battery, which is what lets the eight CI shards add up to it; a
+        # shard of a filtered list is neither that nor the filter, and a
+        # command line that says both is more likely a mistake than a need.
+        if args.only:
+            print("mutation_check: --shard and --only select differently; "
+                  "use one", file=sys.stderr)
+            return 2
+        try:
+            k, n = parse_shard(args.shard)
+        except ValueError as exc:
+            print(f"mutation_check: {exc}", file=sys.stderr)
+            return 2
+        selected = shard_of(MUTATIONS, k, n)
 
     if args.list:
         for m in selected:
