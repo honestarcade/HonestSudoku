@@ -12,6 +12,8 @@ import 'package:honest_sudoku/ui/routes.dart';
 import 'package:honest_sudoku/ui/screens/menu_screen.dart';
 import 'package:honest_sudoku/ui/screens/settings_screen.dart';
 import 'package:honest_sudoku/ui/theme/board_theme.dart';
+import 'package:honest_sudoku/ui/theme/tokens.dart';
+import 'package:honest_sudoku/ui/widgets/design_button.dart';
 
 import '../helpers.dart';
 
@@ -73,26 +75,62 @@ void main() {
     );
   });
 
-  testWidgets('Paper restyles the previews selection and is stored', (
-    tester,
-  ) async {
+  testWidgets('Paper moves the selection to its preview and becomes the '
+      'board theme', (tester) async {
     await pumpApp(tester, initialRoute: Routes.settings);
     final c = controllerOf(tester, SettingsScreen);
+    Color edge(BoardTheme t) => tester
+        .widget<DesignButton>(find.byKey(ValueKey('settings-theme-${t.key}')))
+        .spec
+        .edge;
+    Color? label(BoardTheme t) => tester
+        .widget<Text>(
+          find.descendant(
+            of: find.byKey(ValueKey('settings-theme-${t.key}')),
+            matching: find.text(t.label),
+          ),
+        )
+        .style!
+        .color;
+    Color? previewBg(BoardTheme t) =>
+        (tester
+                    .widget<Container>(
+                      find.byKey(ValueKey('settings-preview-${t.key}')),
+                    )
+                    .decoration!
+                as BoxDecoration)
+            .color;
+
     expect(c.themeKey, 'navy');
+    expect(
+      [edge(BoardTheme.navy), edge(BoardTheme.paper)],
+      [HsColors.teal, HsColors.track],
+      reason: 'the selected theme card has the teal edge',
+    );
     await tapVisible(tester, 'settings-theme-paper');
     expect(c.themeKey, 'paper');
     expect(c.theme, BoardTheme.paper);
-    final preview = tester.widget<Container>(
-      find.byKey(const ValueKey('settings-preview-paper')),
+    expect(
+      [edge(BoardTheme.navy), edge(BoardTheme.paper)],
+      [HsColors.track, HsColors.teal],
+      reason: 'picking Paper moves the teal edge to its card',
     );
     expect(
-      (preview.decoration! as BoxDecoration).color,
-      BoardTheme.paper.gridBg,
+      [label(BoardTheme.navy), label(BoardTheme.paper)],
+      [HsColors.desc, HsColors.teal],
+      reason: 'picking Paper moves the teal label to its card',
     );
+    for (final t in BoardTheme.all) {
+      expect(
+        previewBg(t),
+        t.gridBg,
+        reason: 'each preview shows its own theme, whichever is picked',
+      );
+    }
   });
 
-  testWidgets('a strike change reaches the running game; with none running it '
-      'also becomes the next board\'s', (tester) async {
+  testWidgets('with no game running, a strike change becomes the next '
+      "board's", (tester) async {
     await pumpApp(tester, initialRoute: Routes.settings);
     final c = controllerOf(tester, SettingsScreen);
     await tapVisible(tester, 'settings-strike-five');
@@ -100,7 +138,41 @@ void main() {
     expect(
       c.settings.lastSetup.strikeMode,
       StrikeMode.five,
-      reason: 'no game running',
+      reason: "a strike change with no game running is the next board's",
+    );
+  });
+
+  testWidgets('during a game, strike and announce changes reach it and '
+      "become the next board's", (tester) async {
+    await pumpApp(tester);
+    await startFromMenu(tester);
+    await tester.tap(find.byKey(const ValueKey('pause-button')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('btn-settings')));
+    await tester.pumpAndSettle();
+    final c = controllerOf(tester, SettingsScreen);
+    expect(c.hasUnfinishedGame, isTrue);
+    expect(
+      [c.state!.settings.strikeMode, c.state!.settings.announce],
+      [StrikeMode.three, AnnounceMode.now],
+    );
+    await tapVisible(tester, 'settings-strike-five');
+    await tapVisible(tester, 'settings-announce-atEnd');
+    expect(
+      [c.state!.settings.strikeMode, c.state!.settings.announce],
+      [StrikeMode.five, AnnounceMode.atEnd],
+      reason: 'strike and announce changes reach the running game',
+    );
+    expect(
+      [c.settings.game.strikeMode, c.settings.game.announce],
+      [StrikeMode.five, AnnounceMode.atEnd],
+    );
+    expect(
+      [c.settings.lastSetup.strikeMode, c.settings.lastSetup.announce],
+      [StrikeMode.five, AnnounceMode.atEnd],
+      reason:
+          "strike and announce changes during a game are the next board's "
+          'too',
     );
   });
 

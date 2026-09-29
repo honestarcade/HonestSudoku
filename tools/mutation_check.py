@@ -1404,6 +1404,41 @@ MUTATIONS: list[Mutation] = [
                  "", 1),
              "a typo in the matrix would run an empty shard, green",
              'shard-args: `--shard 9/8`'),
+
+    # ---- #312: the How to play and About screens reach links one way --------
+    Mutation("#312", "How to play reaches for url_launcher itself",
+             "lib/ui/screens/howto_screen.dart",
+             sub(r"^import '\.\./a11y/speak\.dart';$",
+                 "import 'package:url_launcher/url_launcher.dart';\n"
+                 "import '../a11y/speak.dart';", flags=re.M),
+             "a screen could open a browser without the opener, untested",
+             'link-sources: 1 way(s) round links.dart'),
+    Mutation("#312", "About the App parses a link of its own",
+             "lib/ui/screens/about_app_screen.dart",
+             sub(r"uri: AppLinks\.source,",
+                 "uri: Uri.parse(AppLinks.source.toString()),"),
+             "a link parsed in a widget is a second source for it",
+             'link-sources: 1 way(s) round links.dart'),
+
+    # ---- #313: the board and the menu are reached through Routes only -------
+    Mutation("#313", "Keep playing pushes '/board' by hand",
+             "lib/ui/screens/setup_screen.dart",
+             sub(r"onPressed: \(\) => Routes\.toBoardPaused\(context\),",
+                 "onPressed: () => Navigator.of(context).pushNamed('/board'),"),
+             "a second board route could be stacked on the first",
+             'route-push: 1 direct push(es)'),
+    Mutation("#313", "About the App pushes the menu through Navigator's static form",
+             "lib/ui/screens/about_app_screen.dart",
+             sub(r"onBack: \(\) => Routes\.toMenu\(context\),",
+                 "onBack: () => Navigator.pushNamedAndRemoveUntil(\n"
+                 "              context, Routes.menu, (_) => false),"),
+             "the menu push the old scan could not see: context comes first",
+             'route-push: 1 direct push(es)'),
+    Mutation("#313", "a screen spells the menu route by hand",
+             "lib/ui/screens/stats_screen.dart",
+             append("\n/// Where back goes.\nconst String home = '/menu';\n"),
+             "a hand-spelled route name is a push waiting to happen",
+             'route-names: 1 route name(s) spelled by hand'),
 ]
 
 

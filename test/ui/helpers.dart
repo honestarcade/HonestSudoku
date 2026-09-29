@@ -1,12 +1,16 @@
 // Shared helpers for tests that run the whole app.
 
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:honest_sudoku/build_info.dart';
 import 'package:honest_sudoku/store/app_store.dart';
 import 'package:honest_sudoku/ui/app.dart';
 import 'package:honest_sudoku/ui/link_opener.dart';
 import 'package:honest_sudoku/ui/routes.dart';
+import 'package:honest_sudoku/ui/theme/tokens.dart';
 import 'package:honest_sudoku/ui/widgets/app_mark.dart';
 
 import 'stub_generator.dart';
@@ -18,6 +22,23 @@ final class RecordingLinkOpener extends LinkOpener {
 
   @override
   Future<void> open(Uri uri, LinkMode mode) async => opened.add((uri, mode));
+}
+
+/// Registers the bundled Outfit and IBM Plex Mono faces, so text is laid out
+/// in the app's own fonts rather than the test font.
+Future<void> loadAppFonts() async {
+  Future<ByteData> bytes(String f) async =>
+      ByteData.sublistView(await File('assets/fonts/$f').readAsBytes());
+  final outfit = FontLoader(kFontOutfit);
+  for (final w in ['Light', 'Regular', 'Medium', 'SemiBold', 'Bold']) {
+    outfit.addFont(bytes('Outfit-$w.ttf'));
+  }
+  await outfit.load();
+  final mono = FontLoader(kFontMono);
+  for (final w in ['Regular', 'Medium', 'SemiBold']) {
+    mono.addFont(bytes('IBMPlexMono-$w.ttf'));
+  }
+  await mono.load();
 }
 
 /// A logical [width]×[height] screen at pixel ratio 1.

@@ -1,12 +1,12 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:honest_sudoku/links.dart';
+import 'package:honest_sudoku/ui/board/board_screen.dart';
 import 'package:honest_sudoku/ui/link_opener.dart';
 import 'package:honest_sudoku/ui/routes.dart';
 import 'package:honest_sudoku/ui/screens/about_app_screen.dart';
 import 'package:honest_sudoku/ui/screens/about_studio_screen.dart';
+import 'package:honest_sudoku/ui/screens/howto_screen.dart';
 import 'package:honest_sudoku/ui/screens/menu_screen.dart';
 import 'package:honest_sudoku/ui/widgets/app_mark.dart';
 
@@ -136,18 +136,68 @@ void main() {
     expect(find.byType(MenuScreen), findsOneWidget);
   });
 
-  test('the About screens take their URLs from links.dart only', () {
-    for (final path in [
-      'lib/ui/screens/about_app_screen.dart',
-      'lib/ui/screens/about_studio_screen.dart',
-      'lib/ui/link_opener.dart',
-    ]) {
-      final source = File(path).readAsStringSync();
-      expect(source, isNot(contains('https://')), reason: path);
+  testWidgets('How to play: ‹ and the phone back return to the paused board '
+      'when opened from the pause card, and to the menu otherwise', (
+    tester,
+  ) async {
+    await pumpApp(tester);
+    await tester.tap(find.byKey(const ValueKey('menu-howto')));
+    await tester.pumpAndSettle();
+    expect(find.byType(HowToScreen), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('howto-back')));
+    await tester.pumpAndSettle();
+    expect(find.byType(MenuScreen), findsOneWidget);
+
+    await startFromMenu(tester);
+    Future<void> openRules() async {
+      await tester.tap(find.byKey(const ValueKey('pause-button')));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('btn-rules')));
+      await tester.pumpAndSettle();
+      expect(find.byType(HowToScreen), findsOneWidget);
     }
-    expect(
-      File('lib/ui/link_opener.dart').readAsStringSync(),
-      contains("import '../links.dart';"),
-    );
+
+    for (final (how, back) in <(String, Future<void> Function())>[
+      ('‹', () => tester.tap(find.byKey(const ValueKey('howto-back')))),
+      ('the phone back', () => tester.binding.handlePopRoute()),
+    ]) {
+      await openRules();
+      await back();
+      await tester.pumpAndSettle();
+      expect(find.byType(HowToScreen), findsNothing, reason: how);
+      expect(
+        find.text('Paused'),
+        findsOneWidget,
+        reason: '$how on How to play returns to the paused board',
+      );
+      await tester.tap(find.text('Resume'));
+      await tester.pump();
+    }
+  });
+
+  testWidgets('About the App: ‹ and the phone back go to the menu, even when '
+      'it was opened over the board', (tester) async {
+    await pumpApp(tester);
+    await startFromMenu(tester);
+    await tester.tap(find.byKey(const ValueKey('pause-button')));
+    await tester.pump();
+    for (final (how, back) in <(String, Future<void> Function())>[
+      ('‹', () => tester.tap(find.byKey(const ValueKey('about-back')))),
+      ('the phone back', () => tester.binding.handlePopRoute()),
+    ]) {
+      Navigator.of(tester.element(find.byType(BoardScreen)))
+          .pushNamed(Routes.aboutApp);
+      await tester.pumpAndSettle();
+      expect(find.byType(AboutAppScreen), findsOneWidget);
+      await back();
+      await tester.pumpAndSettle();
+      expect(
+        find.byType(MenuScreen),
+        findsOneWidget,
+        reason: '$how on About the App goes to the menu',
+      );
+      await tester.tap(find.byKey(const ValueKey('menu-continue')));
+      await tester.pumpAndSettle();
+    }
   });
 }

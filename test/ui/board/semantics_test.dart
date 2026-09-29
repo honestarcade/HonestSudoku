@@ -1,3 +1,5 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -86,10 +88,16 @@ void main() {
     await board(tester, (c) async {
       await tester.tap(find.byKey(const ValueKey('cell-5')));
       await tester.pump();
-      expect(cell(tester, 5), isSemantics(isSelected: true));
-      for (final i in [3, 7, 13]) {
-        expect(cell(tester, i), isSemantics(isSelected: false));
-      }
+      expect(
+        [
+          for (var i = 0; i < 81; i++)
+            if (cell(tester, i).getSemanticsData().flagsCollection.isSelected ==
+                Tristate.isTrue)
+              i,
+        ],
+        [5],
+        reason: 'only the selected cell carries the selected flag',
+      );
     });
   });
 
@@ -251,6 +259,25 @@ void main() {
         find.bySemanticsLabel(RegExp(r'^9 by 9, Medium, ')),
         findsOneWidget,
       );
+    });
+  });
+
+  testWidgets('out of strikes there is no cell to reach, and the title is '
+      'announced', (tester) async {
+    await board(tester, (c) async {
+      expect(find.bySemanticsLabel(RegExp('^Row ')), findsNWidgets(81));
+      for (final i in [1, 3, 5]) {
+        c.select(i);
+        c.place(wrongFor(c, i));
+      }
+      expect(c.state!.lost, isTrue);
+      await tester.pump();
+      expect(
+        find.bySemanticsLabel(RegExp('^Row ')),
+        findsNothing,
+        reason: 'no cell node behind the out-of-strikes card',
+      );
+      expect(label(tester, 'overlay-live'), startsWith('Out of strikes'));
     });
   });
 

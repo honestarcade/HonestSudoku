@@ -59,6 +59,8 @@ class _LoadingScreenState extends State<LoadingScreen>
     duration: widget.mode == LoadingMode.launch
         ? kSplashMinimum
         : kProgressTween,
+    // The bar's motion is progress, which Remove animations must not shorten.
+    animationBehavior: AnimationBehavior.preserve,
   );
   GameController? _controller;
   Timer? _minimum;
