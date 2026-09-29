@@ -299,8 +299,8 @@ void main() {
       expect(onScreen(tester), 'menu');
     });
 
-    testWidgets('loading a board: the phone back cancels it and returns to '
-        'setup', (tester) async {
+    testWidgets('loading a board: the phone back cancels it, shows the '
+        'notice, and a second back returns to setup', (tester) async {
       await pumpApp(tester, gen: StubGenerator()..hang = true);
       await tester.tap(find.byKey(const ValueKey('menu-new-card')));
       await tester.pumpAndSettle();
@@ -309,6 +309,13 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 500));
       expect(onScreen(tester), 'loading');
+      expect(await tester.binding.handlePopRoute(), isTrue);
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('loading-notice')),
+        findsOneWidget,
+        reason: 'the first back cancels and shows the notice (#291)',
+      );
       expect(await tester.binding.handlePopRoute(), isTrue);
       await tester.pumpAndSettle();
       expect(onScreen(tester), 'setup');
