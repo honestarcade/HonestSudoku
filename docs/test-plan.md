@@ -202,17 +202,17 @@ Play at least one board per row, with the modes that row names, and tick it. The
 
 | Size | Difficulty | Strikes | Announce | Theme | Note mode | Auto candidates | Done | Build | Device |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 4×4 | Easy | Zen | Immediately | Navy | on | off | - [ ] | | |
-| 6×6 | Easy | 3 | Immediately | Paper | off | on | - [ ] | | |
-| 6×6 | Medium | 5 | At the end | Navy | on | off | - [ ] | | |
-| 6×6 | Hard | No limit | Immediately | Paper | off | off | - [ ] | | |
-| 9×9 | Easy | 3 | At the end | Navy | off | on | - [ ] | | |
-| 9×9 | Medium | 3 | Immediately | Paper | on | off | - [ ] | | |
-| 9×9 | Hard | 5 | Immediately | Navy | off | off | - [ ] | | |
-| 9×9 | Expert | No limit | At the end | Paper | on | off | - [ ] | | |
-| 9×9 | Evil | Zen | At the end | Navy | off | on | - [ ] | | |
-| 16×16 | Medium | 5 | At the end | Paper | on | off | - [ ] | | |
-| 16×16 | Evil | 3 | Immediately | Navy | off | off | - [ ] | | |
+| 4×4 | Easy | Zen | Immediately | Navy | on | off | - [x] | 0.9.0-rc.1 (1041) | sudoku-min emulator, Android 7.0 (API 24) |
+| 6×6 | Easy | 3 | Immediately | Paper | off | on | - [x] | 0.9.0-rc.1 (1041) | sudoku-min emulator, Android 7.0 (API 24) |
+| 6×6 | Medium | 5 | At the end | Navy | on | off | - [x] | 0.9.0-rc.1 (1041) | sudoku-min emulator, Android 7.0 (API 24) |
+| 6×6 | Hard | No limit | Immediately | Paper | off | off | - [x] | 0.9.0-rc.1 (1041) | sudoku-min emulator, Android 7.0 (API 24) |
+| 9×9 | Easy | 3 | At the end | Navy | off | on | - [x] | 0.9.0-rc.1 (1041) | sudoku-min emulator, Android 7.0 (API 24) |
+| 9×9 | Medium | 3 | Immediately | Paper | on | off | - [x] | 0.9.0-rc.1 (1041) | sudoku-min emulator, Android 7.0 (API 24) |
+| 9×9 | Hard | 5 | Immediately | Navy | off | off | - [x] | 0.9.0-rc.1 (1041) | sudoku-min emulator, Android 7.0 (API 24) |
+| 9×9 | Expert | No limit | At the end | Paper | on | off | - [x] | 0.9.0-rc.1 (1041) | sudoku-min emulator, Android 7.0 (API 24) |
+| 9×9 | Evil | Zen | At the end | Navy | off | on | - [x] | 0.9.0-rc.1 (1041) | sudoku-min emulator, Android 7.0 (API 24) |
+| 16×16 | Medium | 5 | At the end | Paper | on | off | - [x] | 0.9.0-rc.1 (1041) | sudoku-min emulator, Android 7.0 (API 24) |
+| 16×16 | Evil | 3 | Immediately | Navy | off | off | - [x] | 0.9.0-rc.1 (1041) | sudoku-min emulator, Android 7.0 (API 24) |
 
 "Note mode on" means you place pencil marks with NOTES during the board; "Auto candidates on" means the Auto candidate notes toggle in Settings is on, and the NOTES tool then reads AUTO.
 
@@ -357,6 +357,31 @@ One block per pass, newest at the bottom. Copy the template below, fill every fi
 - Ran by:
 - Sections completed:
 - Issues filed:
+
+### Pass — 2026-09-30
+
+- Date: 2026-09-30
+- Build version: 0.9.0-rc.1 — the release build of tag `v0.9.0-rc.1` (0d229c1), built locally with `flutter build apk --release --build-name=0.9.0-rc.1 --build-number=1041 --dart-define=HS_VERSION=0.9.0-rc.1+1041` and no `HS_*` signing variables, so signed with the debug key (build.gradle.kts's documented fallback); Settings read `v0.9.0-rc.1 · BUILD 1041`.
+- Build code: 1041 (the code the tag's Release run, number 4 attempt 1, computes with `tools/ci_version.sh`).
+- Device (model, Android version): `sudoku-min` emulator from `tools/matrix_avds.sh` — Android 7.0 (API 24), google_apis arm64-v8a, 720×1280 at 320 dpi. Defects re-checked on `sudoku-big` — Android 14 (API 34), google_apis arm64-v8a, 1080×2400 at 400 dpi.
+- Ran by: Claude (agent, #61), driving the emulator with `adb shell input` and judging screenshots.
+- Sections completed:
+  - [x] Loading — every line on `sudoku-min`, except that the GENERATING label was never on screen long enough to capture; CARVING GIVENS and READY were seen, and the bar never went backwards.
+  - [x] Main menu — every line, including a force-stop and relaunch that restored the 4×4 paused at the same time and entries.
+  - [x] New puzzle — every line.
+  - [x] Board — every line, including the owner amendments (#320 mid-game Settings carry-over, #322 Retry and the loss still counted in Statistics).
+  - [x] Statistics — every line.
+  - [x] How to play — every line.
+  - [x] Settings — every line; all eleven toggles and the Paper theme survived a force-stop.
+  - [x] About the App — every line; links open the system's only browser (WebView Browser Tester on this image).
+  - [x] About Honest Arcade — every line; the largest-font step run at Android 7's largest font scale (1.3).
+  - [x] Modes — all eleven rows (table above).
+  - [x] Launcher icon and cold-start splash — the legacy launcher PNG in the drawer and on the home screen; API 24 offers no themed icons; no Android 12 splash; on-device frame captures of two cold starts (from the white app drawer and from the home screen) show the launcher, then a navy window, then the app's own splash, with no white frame.
+  - Not run: Sound (emulator started with `-no-audio`), Haptics (no vibrator on the emulator), TalkBack, Largest system font beyond the header check, Remove animations, Greyscale.
+  - Bundled fonts: Outfit and the mono face render on every screen; the system's Roboto appears only in the launcher and the browser.
+  - 16×16 Evil generation on `sudoku-min`, timed 2026-09-30 by polling screenshots from the host (each sample one screencap round-trip, about 0.5 s) from the Start tap to the board's first frame, three random seeds: 6.1–6.6 s, 7.4–8.1 s, 11.5–12.0 s. The board's timer read 0:01 on arrival, so generation time is not counted as play. For #65.
+  - Timeout path, bracketed: the release build was uninstalled, a debug build with the ceiling lowered to one second installed, a 16×16 Evil requested, "GENERATION FAILED / Couldn't build a board in time. Try again." shown with TRY AGAIN, and TRY AGAIN produced a board; then the debug build was uninstalled and the release build reinstalled. The isolate does not read `HS_GENERATION_CEILING_MS`, so that debug build carried a throwaway local edit of `kGenerationCeiling` rather than the define.
+- Issues filed: two defects found on `sudoku-min`, both re-checked on `sudoku-big`: the loading screen's failure notice and Back button span the full 360-dp width with no margin (did not reproduce on `sudoku-big`, where they sit inside a margin); the 16×16 selection ring covers the selected cell's outer pencil marks (reproduced on `sudoku-big`, less severely). Issue numbers to be added when filed.
 
 ### Reporting a bug
 
