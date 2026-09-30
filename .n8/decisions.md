@@ -1244,3 +1244,12 @@ than per-story.
 - **Decision:** #61's defects were filed as #330 (`sev:medium`: 16×16 selection ring hides pencil marks — it hides what the player marked in the cell they are working on, the owner's "misleads" bar) and #331 (`sev:low`: the loading notice runs edge to edge at 360 dp — cosmetic, controls work), under epic #58 per #67's convention.
   **Why:** The project's severity labels are the `sev:*` set in `reference/github.md`, and #64's blocking bar (misleads or blocks play) sorts the two.
   **Issue:** #330, #331
+- **Decision:** #63's twelve candidates (three per clip) were generated on 2026-09-30 with the owner's ElevenLabs key into `build/sfx-audition/` (gitignored), before the owner's audition.
+  **Why:** #63's first criterion directs `tools/sfx.py` to run with the owner's key, so the spend is the planned one; generating ahead leaves the owner only the listening and the choice.
+  **Issue:** #63
+- **Decision:** #63's code lands in two parts: `tools/sfx.py --audition` (with `test/guards/sfx_audition_test.dart` and eight mutations) now, and the upload-blocking `tools/check_no_placeholder_audio.sh` + `release.yml` step + `release_workflow_guard_test.dart` + README wording held on branch `m6-audio-gate` @ `94e2958` until the owner's clips are installed.
+  **Why:** Landing the hard failure while the four placeholders are still in `assets/audio/` would fail every candidate tag's `ship` job, and the README wording describes clips that do not exist yet.
+  **Issue:** #63
+- **Decision:** `--audition` writes `selections.json` beside the candidates (`build/sfx-audition/`, not the Discretion line's `build/sfx-candidates/`), takes Enter rather than a single keypress, runs `flutter run --release --no-resident` with flutter's stdin closed, and plays each take at its `MIX_DB` level; `--install` still takes the file path rather than reading `selections.json`.
+  **Why:** The candidates live in `build/sfx-audition/`; line input is scriptable and testable, and a closed stdin stops flutter swallowing the Enter; takes at the shipping level are what the owner should judge. Reading `selections.json` in `--install` is a convenience left for the install step.
+  **Issue:** #63
