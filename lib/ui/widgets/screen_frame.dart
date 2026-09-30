@@ -7,6 +7,9 @@ import 'package:flutter/material.dart';
 import '../a11y/speak.dart';
 import '../theme/tokens.dart';
 
+/// The side margin a screen's content keeps.
+const double kScreenGutter = 20;
+
 /// A scrolling screen.
 class ScreenFrame extends StatelessWidget {
   /// Creates the frame.
@@ -14,7 +17,12 @@ class ScreenFrame extends StatelessWidget {
     required this.children,
     this.gradient,
     this.gap = 13,
-    this.padding = const EdgeInsets.fromLTRB(20, 12, 20, 30),
+    this.padding = const EdgeInsets.fromLTRB(
+      kScreenGutter,
+      12,
+      kScreenGutter,
+      30,
+    ),
     this.overlay,
     super.key,
   });
