@@ -177,7 +177,9 @@ rights: fork the game freely, but ship it under your own name and mark.
 
 **Sound tooling.** `tools/make_placeholder_sfx.py` synthesises the
 placeholders; `tools/sfx.py` generates candidate clips with the owner's
-ElevenLabs key and `--install` swaps one in for its placeholder.
+ElevenLabs key, `--audition <clip>` plays each candidate in turn through a
+release build on the attached phone, and `--install` swaps the winner in for
+its placeholder.
 
 ## Security
 
