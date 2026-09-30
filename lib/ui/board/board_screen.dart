@@ -84,8 +84,13 @@ class _BoardScreenState extends State<BoardScreen> with RouteAware {
     super.dispose();
   }
 
+  // Subscribing reports the push from didChangeDependencies, inside the
+  // route's first build, where pausing would notify listeners mid-build
+  // (#328); the pause waits for the frame to finish.
   @override
-  void didPush() => _c.enterBoard();
+  void didPush() => WidgetsBinding.instance.addPostFrameCallback((_) {
+    if (mounted) _c.enterBoard();
+  });
 
   @override
   void didPushNext() => _c.setBoardVisible(false);
