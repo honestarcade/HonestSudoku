@@ -1193,3 +1193,24 @@ than per-story.
 - **Decision:** Saved-game documents stay at format version 1 with #292's optional `quiet` key; the fixture README's rule now asks for a version bump only on an incompatible change.
   **Why:** Owner decision 2026-09-29: older builds ignore an unknown key, and `store_fixture_test.dart` already asserts what the v1 fixture, which lacks the key, decodes to.
   **Issue:** #292
+
+## /n8-exec M6 — 2026-09-30
+
+- **Decision:** M5 counts as executed although #50, #53, #54 and #56 are open: each carries a "Done" comment on PR #289 and was left open only for a manual box that M6's device stories (#61, #62, #64) now own.
+  **Why:** The in-order precondition asks whether the milestone's work landed, and it did; the open boxes are the device checks this milestone exists to run.
+  **Issue:** #50, #53, #54, #56
+- **Decision:** #59's local signed build loads the four `HS_` values through `set_ci_secrets.sh`'s own `read_credential` parser from a scratch wrapper, never sourcing the credentials file or echoing a value, then runs `tools/gate.sh` unchanged.
+  **Why:** The AC asks for the documented local path with the variables exported; parsing is the project's rule for that file (#119, #126), and the wrapper adds no committed code.
+  **Issue:** #59
+- **Decision:** `tools/verify_release_artifact.sh` also compares the downloaded bundle's sha256 with the `.sha256` the release job uploads beside it, and exits 4 on a mismatch.
+  **Why:** The story's point is checking the exact file the run uploaded; the run already records its digest, so a mismatch is cheap to catch and would otherwise pass silently.
+  **Issue:** #59
+- **Decision:** #328's pause moves into a post-frame callback in the board screen's `didPush`, rather than pausing before every push.
+  **Why:** Fresh board pushes come from several call sites; deferring in the one screen covers all of them. Cost: a board fading in over a running game can show unpaused for one frame.
+  **Issue:** #328
+- **Decision:** #60's mode table uses the supported pairs M2 settled (4×4 Easy only; 6×6 to Hard), not the planner's eleven rows, and its sections follow the menu's real order (Statistics, How to play, Settings); the test holds both to the code.
+  **Why:** The planner's list predates M2's narrowed table (2026-09-23) and misordered two menu rows; the story's own rule is "menu-navigation order" and the engine's table.
+  **Issue:** #60
+- **Decision:** `docs/test-plan.md` is excluded from the GitHub Pages site via `docs/_config.yml`, and `.n8/memory/pages.md` names the exception; #60 created `.n8/memory/device-testing.md` with the link only, for #59 to fill.
+  **Why:** Pages renders any `.md` in `docs/`, and the plan is an internal checklist; #60's AC needs the memory file to link the run log before #59's device block exists.
+  **Issue:** #60, #59
