@@ -26,4 +26,4 @@ Read with `adb shell getprop ro.product.model`, `getprop ro.build.version.releas
 
 | Date | Tag | Run | Version code | Install result | Notes |
 |---|---|---|---|---|---|
-| 2026-09-30T00:14-04:00 | v0.9.0-rc.1 | [36666424239](https://github.com/honestarcade/HonestSudoku/actions/runs/36666424239) | 1041 | not attempted | on the internal track; awaiting the owner's install and smoke test |
+| 2026-09-30T00:14-04:00 | v0.9.0-rc.1 | run 36666424239 | 1041 | not attempted | on the internal track; awaiting the owner's install and smoke test |
