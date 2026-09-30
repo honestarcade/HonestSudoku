@@ -1187,3 +1187,9 @@ than per-story.
 - **Decision:** After a loss, Retry keeps the loss recorded and the retried game counts as new play (a win on it records a win, an abandon an abandon) — the behaviour #322 shipped with.
   **Why:** Owner decision 2026-09-29, answering the question #322's ledger entry left open; honest about what was played.
   **Issue:** #322, #64
+- **Decision:** The `‹` back glyph stays a fixed 26 pt in its 34-pt button and does not follow system text size (#323's ledger entry, 2026-09-29).
+  **Why:** Owner decision 2026-09-29: the glyph is an icon in a fixed box, and its spoken label "Back" is what text-size users rely on; headers' titles still scale.
+  **Issue:** #323
+- **Decision:** Saved-game documents stay at format version 1 with #292's optional `quiet` key; the fixture README's rule now asks for a version bump only on an incompatible change.
+  **Why:** Owner decision 2026-09-29: older builds ignore an unknown key, and `store_fixture_test.dart` already asserts what the v1 fixture, which lacks the key, decodes to.
+  **Issue:** #292
