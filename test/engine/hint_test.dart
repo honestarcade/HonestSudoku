@@ -150,6 +150,17 @@ void main() {
       )!;
       expect(h.body, hiddenARow1);
     });
+    test('4×4: named by its row', () {
+      // 1 at R2C3 shuts R1C3 and R1C4 out, 1 at R4C2 shuts R1C2 out; every
+      // empty cell keeps at least three candidates.
+      final values = List.filled(16, 0)
+        ..[6] = 1
+        ..[13] = 1;
+      final h = nextHint(GridShape.mini, values, basePattern(GridShape.mini))!;
+      expect(h.kind, HintKind.hiddenSingle);
+      expect(h.body, hidden1Row1);
+      expect([h.cellIndex, h.value], [0, 1]);
+    });
   });
 
   group('harder step', () {
@@ -172,6 +183,17 @@ void main() {
         harderR1C1is4,
         reason: 'a harder step always explains',
       );
+    });
+
+    test('4×4: an empty board reveals the first cell from the solution', () {
+      final h = nextHint(
+        GridShape.mini,
+        List.filled(16, 0),
+        basePattern(GridShape.mini),
+      )!;
+      expect(h.kind, HintKind.harderStep);
+      expect(h.body, harderR1C1is1);
+      expect([h.cellIndex, h.value], [0, 1]);
     });
 
     test('16×16: reveals G', () {
@@ -199,8 +221,14 @@ void main() {
   });
 
   test('a full board has no hint', () {
-    final solution = basePattern(GridShape.mini);
-    expect(nextHint(GridShape.mini, solution, solution), isNull);
+    for (final shape in [GridShape.mini, GridShape.classic]) {
+      final solution = basePattern(shape);
+      expect(
+        nextHint(shape, solution, solution),
+        isNull,
+        reason: 'a full ${shape.n}×${shape.n} board has no empty cell to hint',
+      );
+    }
   });
 
   test('a wrong entry counts as placed and shrinks its peers', () {

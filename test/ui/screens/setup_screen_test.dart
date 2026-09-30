@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:honest_sudoku/engine/engine.dart';
 import 'package:honest_sudoku/game/game.dart';
+import 'package:honest_sudoku/ui/app_scope.dart';
+import 'package:honest_sudoku/ui/board/board_grid.dart';
 import 'package:honest_sudoku/ui/routes.dart';
 import 'package:honest_sudoku/ui/screens/setup_screen.dart';
 
@@ -99,7 +101,7 @@ void main() {
   });
 
   testWidgets('choices are remembered; Start generates the chosen board with '
-      'the chosen modes', (tester) async {
+      'the chosen modes; Keep playing returns to it paused', (tester) async {
     final app = await pumpApp(tester, initialRoute: Routes.setup);
     await tapVisible(tester, 'setup-size-6×6');
     await tapVisible(tester, 'setup-diff-hard');
@@ -111,7 +113,18 @@ void main() {
     await tester.pumpAndSettle();
     final r = app.gen.requests.single;
     expect([r.shape, r.difficulty], [GridShape.short, Difficulty.hard]);
+    expect(find.byType(BoardGrid), findsOneWidget);
     expect(find.text('ZEN'), findsOneWidget, reason: 'the board runs in Zen');
+    final c = AppScope.of(tester.element(find.byType(BoardGrid))).controller;
+    expect(
+      [
+        c.state!.shape,
+        c.state!.settings.strikeMode,
+        c.state!.settings.announce,
+      ],
+      [GridShape.short, StrikeMode.zen, AnnounceMode.atEnd],
+      reason: 'the new game runs with the modes chosen on setup',
+    );
     // Back on setup, the choices are still there, and Keep playing shows.
     await tester.binding.handlePopRoute();
     await tester.pumpAndSettle();
@@ -120,6 +133,49 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('menu-new-card')));
     await tester.pumpAndSettle();
     expect(meta(tester), '6×6 · HARD · ZEN');
-    expect(find.byKey(const ValueKey('setup-keep')), findsOneWidget);
+    await tapVisible(tester, 'setup-keep');
+    expect(find.byType(SetupScreen), findsNothing);
+    expect(
+      find.text('Paused'),
+      findsOneWidget,
+      reason: 'Keep playing returns to the board, paused',
+    );
+    expect(c.state!.paused, isTrue);
+  });
+
+  testWidgets('choices made on setup during a game leave its modes alone', (
+    tester,
+  ) async {
+    await pumpApp(tester);
+    await startFromMenu(tester);
+    await tester.tap(find.byKey(const ValueKey('pause-button')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('btn-main-menu')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('menu-new-card')));
+    await tester.pumpAndSettle();
+    final c = AppScope.of(tester.element(find.byType(SetupScreen))).controller;
+    final running = c.state!.settings;
+    expect(
+      [running.strikeMode, running.announce],
+      [StrikeMode.three, AnnounceMode.now],
+    );
+    await tapVisible(tester, 'setup-strike-zen');
+    await tapVisible(tester, 'setup-announce-atEnd');
+    expect(meta(tester), '9×9 · MEDIUM · ZEN');
+    expect(
+      [c.settings.lastSetup.strikeMode, c.settings.lastSetup.announce],
+      [StrikeMode.zen, AnnounceMode.atEnd],
+    );
+    expect(
+      c.state!.settings,
+      running,
+      reason: "a choice on setup leaves the running game's modes alone",
+    );
+    expect(
+      [c.settings.game.strikeMode, c.settings.game.announce],
+      [StrikeMode.three, AnnounceMode.now],
+      reason: "a choice on setup leaves the running game's modes alone",
+    );
   });
 }

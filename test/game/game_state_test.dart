@@ -30,7 +30,6 @@ void main() {
         var s = at(p, const GameSettings(announce: AnnounceMode.now));
         s = s.place(wrong); // leaves a MISTAKE notice
         expect(s.notice, isNotNull);
-        s = s.toggleNoteMode().place(right == 1 ? 2 : 1).toggleNoteMode();
         s = s.place(right);
         expect(s.values[cell], right);
         expect(s.notes[cell], isEmpty);
@@ -60,9 +59,18 @@ void main() {
         expect(identical(won.place(right), won), isTrue);
       });
 
-      test('note mode toggles a sorted pencil mark on an empty cell', () {
-        var s = at(p).toggleNoteMode();
-        s = s.place(3).place(1);
+      test('note mode toggles a sorted pencil mark on an empty cell and '
+          'clears the notice', () {
+        final other = p.givens.indexOf(false, cell + 1);
+        var s = GameState.start(p)
+            .select(other)
+            .place(wrongValue(p, other)) // leaves a MISTAKE notice
+            .select(cell)
+            .toggleNoteMode();
+        expect(s.notice, isNotNull);
+        s = s.place(3);
+        expect(s.notice, isNull, reason: 'a pencil mark clears the notice');
+        s = s.place(1);
         expect(s.notes[cell], [1, 3]);
         expect(s.values[cell], 0);
         s = s.place(3);
@@ -276,6 +284,39 @@ void main() {
         expect(atEnd.copyWith(revealed: true).showWrong, isTrue);
         final s = at(p).place(wrong);
         expect([s.isWrong(cell), s.isWrong(0)], [true, false]);
+      });
+
+      test('a switch to Immediately leaves an unannounced entry untinted, '
+          'through undo and redo, until a reveal', () {
+        const now = GameSettings();
+        final placed = at(
+          p,
+          const GameSettings(announce: AnnounceMode.atEnd),
+        ).place(wrong);
+        final s = placed.withSettings(now);
+        expect(s.isWrong(cell), isTrue);
+        expect(
+          s.wrongShown(cell),
+          isFalse,
+          reason: 'a wrong entry placed at the end is not re-flagged',
+        );
+        final replaced = s.erase().place(wrong);
+        expect(
+          replaced.wrongShown(cell),
+          isTrue,
+          reason: 'the same entry placed again after the switch is announced',
+        );
+        expect(
+          replaced.undo().undo().wrongShown(cell),
+          isFalse,
+          reason: 'undo restores the entry with its unannounced flag',
+        );
+        expect(replaced.undo().undo().redo().redo().wrongShown(cell), isTrue);
+        expect(
+          s.check().wrongShown(cell),
+          isTrue,
+          reason: 'Check reveals every wrong entry',
+        );
       });
 
       test('conflicts: peers holding the selected value, only when on', () {

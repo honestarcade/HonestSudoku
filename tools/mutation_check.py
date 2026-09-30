@@ -21,7 +21,7 @@ Two rules learned the hard way:
     pass -- which is exactly what #172 was: `replaceFirst` inserted a literal
     `$1`, the YAML broke, and the battery called it caught.
 
-Usage:  tools/mutation_check.py [--list] [--only SUBSTRING]
+Usage:  tools/mutation_check.py [--list] [--only SUBSTRING | --shard K/N]
 Exit:   0 every mutation was caught
         1 at least one survived (the suite stayed green)
         2 the battery could not run (dirty tree, bad pattern, unparseable)
@@ -74,6 +74,7 @@ class Mutation:
     slow: bool = False
     creates: tuple = ()
     suite: tuple = ()
+    binary: bool = False
     """A substring of the reason the RIGHT assertion prints when it fires.
 
     Without this the battery measures "the suite went red", which is not the
@@ -95,6 +96,11 @@ class Mutation:
     at a method that does not exist -- only breaks the compile. That reported
     WRONG-REASON, correctly, for two rounds. A mutation that cannot be written
     truthfully is not a mutation.
+
+    `binary` reads and writes every target as bytes, one character per byte
+    (latin-1), for defects that live in a font or a PNG rather than in text.
+    Bytes, not `read_text`: that translates newlines, and a PNG's signature
+    holds a CR LF (#318).
     """
 
 
@@ -252,11 +258,11 @@ MUTATIONS: list[Mutation] = [
              "the suffix exemption covered any path ending in that name",
              'leak:'),
     Mutation("#208", "a process is started outside the chokepoint",
-             "test/guards/secrets_scripts_test.dart",
-             sub(r"(\nvoid main\(\) \{)",
+             "test/guards/leak_scan.dart",
+             sub(r"(\nbool _samePath\()",
                  r'\nvoid _bypass() async {\n'
                  r'  await Process.start("/bin/bash", ["x.sh"]);\n'
-                 r'}\1', 1),
+                 r'}\n\1', 1),
              "Process.start, Process.run and tear-offs all walked past the old rule",
              'leak-chokepoint'),
     # ---- #206: the key link, proven by running the step ------------------
@@ -446,35 +452,15 @@ MUTATIONS: list[Mutation] = [
              sub(r'echo "gcloud \\\$\*" >> "\$\{_tmp\.path\}/gcloud\.log"\n', "", 1),
              "the channel that catches a key on a command line goes quiet",
              'argv: gcloud.log is empty'),
-    # Two edits, because removing a protection proves nothing unless the thing
-    # it protects against is present. Nothing in the file has the laundering
-    # shape today, so the widened window alone changed no verdict and the
-    # entry SURVIVED -- the battery reporting, correctly, that it tested
-    # nothing (#230).
-    Mutation("#220", "the harmless exemption widens, and a call hides behind it",
-             "test/guards/secrets_scripts_test.dart",
-             chain(
-                 sub(r"      if \(harmless\.hasMatch\(lines\[i\]\)\) continue;",
-                     "      if (harmless.hasMatch(\n"
-                     "        lines.sublist(i, (i + 3).clamp(0, lines.length)).join(' '),\n"
-                     "      )) {\n        continue;\n      }", 1),
-                 sub(r"(\nvoid main\(\) \{)",
-                     r'\nvoid _launder() {\n'
-                     r'  Process.runSync("/bin/sh", ["-c", "echo hi"]);\n'
-                     r'  Process.runSync("chmod", ["+x", "/tmp/x"]);\n'
-                     r'}\1', 1),
-             ),
-             "a raw call with a chmod two lines away is laundered by the window",
-             'leak-chokepoint'),
     Mutation("#230", "make_upload_key stops enforcing a minimum password length",
              "tools/make_upload_key.sh",
              sub(r'if \[ "\$\{#HS_KEYSTORE_PASS\}" -lt 12 \]; then\n(?:.*\n)*?fi\n', "", 1),
              "the leak scan only searches transformed forms for 8+ characters",
              'password-length'),
     Mutation("#230", "the sentinel floor drops back below the transformed-forms threshold",
-             "test/guards/secrets_scripts_test.dart",
-             sub(r"  if \(v\.length < 8\) \{\n    fail\(\n      'leak-fixture:",
-                 "  if (v.length < 4) {\n    fail(\n      'leak-fixture:", 1),
+             "test/guards/leak_scan.dart",
+             sub(r"    if \(v\.length < 8\) \{\n      if \(!floor\) return;\n      fail\(\n        'leak-fixture:",
+                 "    if (v.length < 4) {\n      if (!floor) return;\n      fail(\n        'leak-fixture:", 1),
              "a five-to-seven character fixture is searched verbatim only, silently",
              'fixture-floor'),
     Mutation("#230", "make_upload_key stops cd-ing to the repository root",
@@ -482,6 +468,118 @@ MUTATIONS: list[Mutation] = [
              sub(r'cd "\$\(dirname "\$0"\)/\.\."\n', "", 1),
              "the refusal over the committed certificate checks the caller's directory",
              'cert-cwd'),
+    # ---- #324: every process start goes through leak_scan.dart ------------
+    Mutation("#324", "a raw process start in a file with none",
+             "test/guards/memory_guard_test.dart",
+             sub(r"(\nvoid main\(\) \{)",
+                 "\nvoid _raw() {\n  Process.runSync('true', []);\n}\n\\1", 1),
+             "the rule covered one file, so a start anywhere else was never looked at",
+             'leak-chokepoint'),
+    Mutation("#324", "a typedef alias of Process",
+             "test/guards/bundle_scan_test.dart",
+             sub(r"(\nconst _package = )", "\ntypedef _Launcher = Process;\n\\1", 1),
+             "an alias starts processes under a name the old pattern never matched",
+             'leak-chokepoint'),
+    Mutation("#324", "a raw start under a long chokepoint-exempt comment",
+             "test/guards/permissions_guard_test.dart",
+             sub(r"(\nvoid main\(\) \{)",
+                 "\n// chokepoint-exempt: lists nothing, is handed no secret and "
+                 "prints nothing worth scanning\n"
+                 "void _exempted() {\n  Process.runSync('true', []);\n}\n\\1", 1),
+             "a comment granted the exemption, and a comment cannot be checked",
+             'leak-chokepoint'),
+    Mutation("#324", "an allowance with no reason",
+             "test/guards/leak_scan.dart",
+             sub(r"    reason:\n        \"parses the credentials file with set_ci_secrets\.sh's own \"\n"
+                 r"        'read_credential; the password printed back unchanged is the assertion',",
+                 "    reason: '',", 1),
+             "an allowance lets a secret through; one with no reason is granted in silence",
+             'leak-allowance'),
+    Mutation("#324", "an allow: id nothing registered",
+             "test/guards/secrets_scripts_test.dart",
+             sub(r"allow: \['credentials-parse'\]", "allow: ['credentials-parse-all']", 1),
+             "a call lets a secret through on an allowance nobody wrote down",
+             'leak-allowance'),
+    Mutation("#324", "the scan stops reading stdout", "test/guards/leak_scan.dart",
+             sub(r"\(key: 'stdout', where: 'stdout', text: out, path: ''\)",
+                 "(key: 'stdout', where: 'stdout', text: '', path: '')", 1),
+             "a script printing its password passes",
+             'leak-canary: stdout'),
+    Mutation("#324", "the scan stops reading stderr", "test/guards/leak_scan.dart",
+             sub(r"\(key: 'stderr', where: 'stderr', text: err, path: ''\)",
+                 "(key: 'stderr', where: 'stderr', text: '', path: '')", 1),
+             "a debugging echo to stderr passes",
+             'leak-canary: stderr'),
+    Mutation("#324", "the scan stops reading file bytes", "test/guards/leak_scan.dart",
+             sub(r"(          key: 'file',\n          where: 'file \$\{display\(entity\.path\)\}',\n"
+                 r"          text: )text,", r"\1'',", 1),
+             "a password dumped to $TMPDIR or $RUNNER_TEMP passes",
+             'leak-canary: file bytes'),
+    Mutation("#324", "the scan stops reading file names", "test/guards/leak_scan.dart",
+             sub(r"(          key: 'name',\n          where: 'the name of \$\{display\(entity\.path\)\}',\n"
+                 r"          text: )relative,", r"\1'',", 1),
+             "upload-artifact lists the names it sweeps; a secret as a file name passes",
+             'leak-canary: file name'),
+    Mutation("#324", "the scan stops reading the workspace", "test/guards/leak_scan.dart",
+             sub(r"if \(_samePath\(cwd, repoRoot\.path\)\) _collectWorkspace",
+                 "if (_samePath(cwd, repoRoot.path) && cwd.isEmpty) _collectWorkspace", 1),
+             "on CI the working directory is $GITHUB_WORKSPACE, which upload-artifact sweeps",
+             'leak-canary: untracked workspace file'),
+    Mutation("#324", "the scan stops reading the stubs' argv logs", "test/guards/leak_scan.dart",
+             sub(r"text: latin1\.decode\(f\.readAsBytesSync\(\), allowInvalid: true\),",
+                 "text: '',", 1),
+             "a secret on a stubbed command's command line passes",
+             'leak-canary: argv log'),
+    Mutation("#324", "the scan stops reading the call's own argv", "test/guards/leak_scan.dart",
+             sub(r"text: \[executable, \.\.\.args\]\.join\(' '\),", "text: '',", 1),
+             "a secret the harness itself puts on a command line passes",
+             'leak-canary: own argv'),
+    Mutation("#324", "runSealed inherits the environment", "test/guards/leak_scan.dart",
+             sub(r"(ProcessResult runSealed\([\s\S]*?includeParentEnvironment: )false",
+                 r"\1true", 1),
+             "every sealed child gets the CI token the guard job holds",
+             'leak-sealed'),
+    Mutation("#324", "runSealed accepts a secret-shaped name", "test/guards/leak_scan.dart",
+             sub(r"environment\.keys\.where\(_looksSecret\)",
+                 "environment.keys.where((_) => false)", 1),
+             "a secret handed to a sealed call is searched for nowhere",
+             'leak-sealed'),
+    Mutation("#324", "sentinels are no longer cleared per test", "test/guards/leak_scan.dart",
+             sub(r"    addTearDown\(_clear\);\n", "", 1),
+             "one test's value reads as a leak in another's unrelated output",
+             'sentinel-isolation'),
+    # ---- #325: the remaining starts, migrated ------------------------------
+    # The first needs a token in the environment to have anything to find,
+    # which the CI mutations job provides; without one the probe carries no
+    # header at all.
+    Mutation("#325", "the ruleset token goes back on curl's argv",
+             "test/guards/workflow_guard_test.dart",
+             sub(r"'@\$\{header\.path\}'", "'Authorization: Bearer $token'", 1),
+             "the CI token sits in the process table for as long as curl runs",
+             'bearer-argv: test/guards/workflow_guard_test.dart'),
+    Mutation("#325", "a sealed call in repo_files.dart inherits the environment",
+             "test/guards/repo_files.dart",
+             sub(r"runSealed\('git', \[", "Process.runSync('git', [", 1),
+             "every tracked-file listing hands git the CI token again",
+             'leak-chokepoint'),
+    # ---- #326: a bearer token on curl's command line ----------------------
+    Mutation("#326", "play_promote.sh puts the Play token back on curl's argv",
+             "tools/play_promote.sh",
+             sub(r'auth=\(-H "@\$AUTH_HEADER_FILE"\)',
+                 'auth=(-H "Authorization: Bearer $PLAY_TOKEN")', 1),
+             "the token is in the process table for as long as each curl runs",
+             'bearer-argv'),
+    Mutation("#326", "play-api-check puts the access token back on curl's argv",
+             ".github/workflows/play-api-check.yml",
+             sub(r'-H @"\$auth" -H "Content-Type: application/json"',
+                 '-H "Authorization: Bearer $token" -H "Content-Type: application/json"', 1),
+             "the token is in the process table for as long as the call runs",
+             'bearer-argv'),
+    Mutation("#326", "play_promote.sh leaves its header file behind",
+             "tools/play_promote.sh",
+             sub(r'  if \[ -n "\$AUTH_HEADER_FILE" \]; then rm -f "\$AUTH_HEADER_FILE"; fi\n', "", 1),
+             "the token outlives the run in a file under $TMPDIR",
+             'leak:'),
     # ---- #226, the second half: summary, name_failure, and the two steps ----
     # in play-promote that were run by nothing. All GREEN at 9cc2317.
     Mutation("#226", "the release summary claims production and drops the track",
@@ -1282,11 +1380,173 @@ MUTATIONS: list[Mutation] = [
              sub(r'stroke="#8448FC"', 'stroke="#FF00FF"'),
              "the listing would show a different mark from the app",
              "store-sources: the feature graphic's mark drifted from the icon"),
+    Mutation("#318", "a screenshot is captured at the phone's own aspect",
+             "ArtSource/store/screenshots/04-board-16x16.png",
+             sub(r"\A(.{12}IHDR\x00\x00\x04\x38)\x00\x00\x07\x80",
+                 "\\1\x00\x00\x09\x24", flags=re.S),
+             "Play refuses a 1080x2340 screenshot at upload",
+             'store-assets: 1 offender', binary=True),
+
+    # ---- #318: the guards #47 and #54 shipped without a mutation -----------
+    Mutation("#318", "a bundled font is not TrueType",
+             "assets/fonts/Outfit-Bold.ttf",
+             sub(r"\A\x00\x01\x00\x00", "wOFF"),
+             "the engine would fall back to a synthesised face at runtime",
+             'fonts-assets: 1 offender', binary=True),
+    Mutation("#318", "a mipmap is rendered at the wrong size",
+             "android/app/src/main/res/mipmap-hdpi/ic_launcher_foreground.png",
+             sub(r"\A(.{12}IHDR)\x00\x00\x00\xa2\x00\x00\x00\xa2",
+                 "\\1\x00\x00\x00\xa3\x00\x00\x00\xa3", flags=re.S),
+             "the launcher scales a blurred icon on hdpi devices",
+             'launcher-rasters: 1 offender', binary=True),
+    Mutation("#318", "the manifest points the icon somewhere else",
+             "android/app/src/main/AndroidManifest.xml",
+             sub(r'android:icon="@mipmap/ic_launcher"',
+                 'android:icon="@drawable/launch_background"'),
+             "the app would ship without its adaptive icon",
+             'launcher-manifest: the application icon'),
+    Mutation("#318", "the manifest declares a round icon",
+             "android/app/src/main/AndroidManifest.xml",
+             sub(r'(android:icon="@mipmap/ic_launcher")',
+                 r'android:roundIcon="@mipmap/ic_launcher"\n        \1'),
+             "launchers that prefer a round icon would skip the adaptive one",
+             'launcher-manifest: a round icon'),
+    Mutation("#318", "the native splash navy drifts from the app's",
+             "android/app/src/main/res/values/colors.xml",
+             sub(r'<color name="splash_navy">#FF05285F</color>',
+                 '<color name="splash_navy">#FF000000</color>'),
+             "the frame before Flutter's would not match the app behind it",
+             "launcher-colours: colors.xml's splash_navy"),
+    Mutation("#318", "the brand sources are shipped as app assets",
+             "pubspec.yaml",
+             sub(r"(  assets:\n    - assets/audio/\n)", r"\1    - assets/brand/\n"),
+             "the icon's SVG sources and notes would ride in every bundle",
+             'launcher-sources: the brand sources are not app assets'),
+
+    # ---- the gate's own run, against stub tools (#121, #271, #26, #300) -----
+    Mutation("#271", "step 5 never marks itself in progress", "tools/gate.sh",
+             sub(r"\n    IN_BUILD=1\n", "\n"),
+             "a rejected build leaves its bundle where GATE PASSED would name it",
+             'rejected-bundle: step 5 failed'),
+    Mutation("#271", "the exit trap no longer removes the bundle", "tools/gate.sh",
+             sub(r'; if \[ -n "\$IN_BUILD" \]; then rm -f "\$BUNDLE"; fi\' EXIT',
+                 "' EXIT"),
+             "a rejected build leaves its bundle where GATE PASSED would name it",
+             'rejected-bundle: step 5 failed'),
+    Mutation("#300", "the gate's test step runs the weekly tier",
+             "tools/gate.sh",
+             sub(r"--exclude-tags weekly,bench\"", '--exclude-tags bench"'),
+             "the 200-seed engine tier lands in every pull-request gate",
+             'gate-test-tiers: the gate'),
+    Mutation("#300", "the gate's test step drops the compact reporter",
+             "tools/gate.sh",
+             sub(r" --reporter compact", ""),
+             "the gate's test output is not the one #26 specified",
+             'gate-reporter: the gate'),
+
+    # ---- #286: the battery split across shards -----------------------------
+    Mutation("#286", "the mutations check passes whatever the shards did",
+             ".github/workflows/ci.yml",
+             sub(r"^            exit 1$", "            exit 0", 1, flags=re.M),
+             "a red shard would report a green required check",
+             'always-verdict: job `mutations` passed with'),
+    Mutation("#286", "the mutations check stops reading the shards' result",
+             ".github/workflows/ci.yml",
+             sub(r"SHARDS: \$\{\{ needs\.mutation-shard\.result \}\}",
+                 "SHARDS: success", 1),
+             "the verdict is a constant, so every shard can fail under it",
+             'never reads `needs.mutation-shard.result`'),
+    Mutation("#286", "the mutations check runs on success() instead of always()",
+             ".github/workflows/ci.yml",
+             sub(r"^    if: always\(\)$", "    if: success()", 1, flags=re.M),
+             "a failed shard skips the required check, and a skip does not block",
+             'The aggregator may run `always()` and nothing else'),
+    Mutation("#286", "a job-level if: always() on a shard job",
+             ".github/workflows/ci.yml",
+             sub(r"^  mutation-shard:\n    runs-on: ubuntu-latest$",
+                 "  mutation-shard:\n    if: always()\n    runs-on: ubuntu-latest",
+                 1, flags=re.M),
+             "the exception is for the aggregator alone",
+             'ci-shape: job `mutation-shard` carries `if:'),
+    Mutation("#286", "the mutations job is renamed away from the required check",
+             ".github/workflows/ci.yml",
+             sub(r"^  mutations:\n    needs: mutation-shard$",
+                 "  mutations:\n    name: Mutation verdict\n    needs: mutation-shard",
+                 1, flags=re.M),
+             "the ruleset would require a check-run name nothing reports",
+             'ci-shape: job `mutations` carries `name:'),
+    Mutation("#286", "a shard is dropped from the matrix",
+             ".github/workflows/ci.yml",
+             sub(r"shard: \[1, 2, 3, 4, 5, 6, 7, 8\]", "shard: [1, 2, 3, 4, 5, 6, 7]", 1),
+             "every eighth entry would run nowhere",
+             'shard-matrix: ci.yml runs shards'),
+    Mutation("#286", "one red shard cancels the others",
+             ".github/workflows/ci.yml",
+             sub(r"fail-fast: false", "fail-fast: true", 1),
+             "the other shards' findings are lost with the first failure",
+             'shard-matrix: fail-fast is'),
+    Mutation("#286", "the shard selector skips an entry",
+             "tools/mutation_check.py",
+             sub(r"if i % n == k - 1\]", "if i % n == k - 1 and i != 5]", 1),
+             "one entry of the battery would run in no shard",
+             'shard-cover: the'),
+    Mutation("#286", "a shard past the last one is accepted",
+             "tools/mutation_check.py",
+             sub(r"    if k > n:\n        raise ValueError\(f\"--shard \{value\}: shard \{k\} of only \{n\}\"\)\n",
+                 "", 1),
+             "a typo in the matrix would run an empty shard, green",
+             'shard-args: `--shard 9/8`'),
+
+    # ---- #312: the How to play and About screens reach links one way --------
+    Mutation("#312", "How to play reaches for url_launcher itself",
+             "lib/ui/screens/howto_screen.dart",
+             sub(r"^import '\.\./a11y/speak\.dart';$",
+                 "import 'package:url_launcher/url_launcher.dart';\n"
+                 "import '../a11y/speak.dart';", flags=re.M),
+             "a screen could open a browser without the opener, untested",
+             'link-sources: 1 way(s) round links.dart'),
+    Mutation("#312", "About the App parses a link of its own",
+             "lib/ui/screens/about_app_screen.dart",
+             sub(r"uri: AppLinks\.source,",
+                 "uri: Uri.parse(AppLinks.source.toString()),"),
+             "a link parsed in a widget is a second source for it",
+             'link-sources: 1 way(s) round links.dart'),
+
+    # ---- #313: the board and the menu are reached through Routes only -------
+    Mutation("#313", "Keep playing pushes '/board' by hand",
+             "lib/ui/screens/setup_screen.dart",
+             sub(r"onPressed: \(\) => Routes\.toBoardPaused\(context\),",
+                 "onPressed: () => Navigator.of(context).pushNamed('/board'),"),
+             "a second board route could be stacked on the first",
+             'route-push: 1 direct push(es)'),
+    Mutation("#313", "About the App pushes the menu through Navigator's static form",
+             "lib/ui/screens/about_app_screen.dart",
+             sub(r"onBack: \(\) => Routes\.toMenu\(context\),",
+                 "onBack: () => Navigator.pushNamedAndRemoveUntil(\n"
+                 "              context, Routes.menu, (_) => false),"),
+             "the menu push the old scan could not see: context comes first",
+             'route-push: 1 direct push(es)'),
+    Mutation("#313", "a screen spells the menu route by hand",
+             "lib/ui/screens/stats_screen.dart",
+             append("\n/// Where back goes.\nconst String home = '/menu';\n"),
+             "a hand-spelled route name is a push waiting to happen",
+             'route-names: 1 route name(s) spelled by hand'),
 ]
 
 
 def run(cmd: list[str], **kw) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, **kw)
+
+
+def read_target(path: pathlib.Path, binary: bool) -> str:
+    return path.read_bytes().decode("latin-1") if binary else path.read_text()
+
+
+def write_target(path: pathlib.Path, text: str, binary: bool) -> None:
+    if binary:
+        path.write_bytes(text.encode("latin-1"))
+    else:
+        path.write_text(text)
 
 
 def parses_as_yaml(path: pathlib.Path) -> bool:
@@ -1325,16 +1585,55 @@ def compiles_as_dart(paths: list[pathlib.Path]) -> bool:
     return probe.returncode == 0
 
 
+def parse_shard(value: str) -> tuple[int, int]:
+    """`K/N`, 1-based, as (k, n). Anything else is a ValueError."""
+    match = re.fullmatch(r"([1-9][0-9]*)/([1-9][0-9]*)", value.strip())
+    if not match:
+        raise ValueError(f"--shard wants K/N with 1 <= K <= N, got {value!r}")
+    k, n = int(match.group(1)), int(match.group(2))
+    if k > n:
+        raise ValueError(f"--shard {value}: shard {k} of only {n}")
+    return k, n
+
+
+def shard_of(entries: list, k: int, n: int) -> list:
+    """Shard K of N, round-robin over the battery's own order.
+
+    Round-robin rather than contiguous blocks: entries are grouped by issue,
+    and a group of `slow` or engine entries in one block would make one shard
+    the long pole of the whole check (#286).
+    """
+    return [m for i, m in enumerate(entries) if i % n == k - 1]
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--audit", action="store_true",
                     help="run the marker preflight alone and exit")
     ap.add_argument("--only", default="")
+    ap.add_argument("--shard", default=None,
+                    help="K/N: run only the K-th of N round-robin shards")
     args = ap.parse_args()
 
     selected = [m for m in MUTATIONS if args.only.lower() in
                 f"{m.issue} {m.name} {m.path}".lower()]
+
+    if args.shard is not None:
+        # Refused together with --only. A shard is defined against the WHOLE
+        # battery, which is what lets the eight CI shards add up to it; a
+        # shard of a filtered list is neither that nor the filter, and a
+        # command line that says both is more likely a mistake than a need.
+        if args.only:
+            print("mutation_check: --shard and --only select differently; "
+                  "use one", file=sys.stderr)
+            return 2
+        try:
+            k, n = parse_shard(args.shard)
+        except ValueError as exc:
+            print(f"mutation_check: {exc}", file=sys.stderr)
+            return 2
+        selected = shard_of(MUTATIONS, k, n)
 
     if args.list:
         for m in selected:
@@ -1552,7 +1851,7 @@ def main() -> int:
     for i, m in enumerate(selected, 1):
         edits = [(m.path, m.apply), *m.also]
         targets = [ROOT / path for path, _ in edits]
-        originals = [target.read_text() for target in targets]
+        originals = [read_target(target, m.binary) for target in targets]
         label = f"[{i}/{len(selected)}] {m.issue} {m.name}"
         try:
             mutated = [apply(text) for (_, apply), text in zip(edits, originals)]
@@ -1590,7 +1889,7 @@ def main() -> int:
             + "".join(f"  {path}\n" for path, _ in edits)
         )
         for target, text in zip(targets, mutated):
-            target.write_text(text)
+            write_target(target, text, m.binary)
         try:
             unparseable = [t for t in targets if not parses_as_yaml(t)]
             if unparseable:
@@ -1639,7 +1938,7 @@ def main() -> int:
                 print(f"  caught  {label}")
         finally:
             for target, text in zip(targets, originals):
-                target.write_text(text)
+                write_target(target, text, m.binary)
             for made in m.creates:
                 (ROOT / made).unlink(missing_ok=True)
             IN_FLIGHT.unlink(missing_ok=True)

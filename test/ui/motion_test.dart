@@ -1,13 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:honest_sudoku/engine/engine.dart';
+import 'package:honest_sudoku/ui/app.dart';
 import 'package:honest_sudoku/ui/app_scope.dart';
 import 'package:honest_sudoku/ui/board/board_grid.dart';
 import 'package:honest_sudoku/ui/board/game_over_overlay.dart';
 import 'package:honest_sudoku/ui/board/pause_overlay.dart';
+import 'package:honest_sudoku/ui/motion.dart';
 import 'package:honest_sudoku/ui/routes.dart';
 import 'package:honest_sudoku/ui/screens/settings_screen.dart';
 
 import 'helpers.dart';
+import 'stub_generator.dart';
 
 /// The phone's "Remove animations" setting, for this test.
 void removeAnimations(WidgetTester tester) {
@@ -150,6 +154,50 @@ void main() {
       await startFromMenu(tester);
       await win(tester);
       expect(cardOpacity(tester), 1);
+    });
+
+    testWidgets('the loading bar still tweens to each progress step', (
+      tester,
+    ) async {
+      removeAnimations(tester);
+      setScreen(tester, 390, 844);
+      final gen = ManualGenerator();
+      await tester.pumpWidget(
+        HonestSudokuApp(
+          generator: gen.call,
+          seeds: CountingSeeds(),
+          store: () async => null,
+          links: RecordingLinkOpener(),
+          initialRoute: Routes.setup,
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byKey(const ValueKey('setup-start')));
+      await tester.tap(find.byKey(const ValueKey('setup-start')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      double bar() => tester
+          .widget<FractionallySizedBox>(
+            find.descendant(
+              of: find.byKey(const ValueKey('loading-bar')),
+              matching: find.byType(FractionallySizedBox),
+            ),
+          )
+          .widthFactor!;
+      expect(bar(), 0);
+      gen.emit(GenerationProgress(.6));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 16));
+      await tester.pump(kProgressTween ~/ 2);
+      expect(
+        bar(),
+        inExclusiveRange(0, .6),
+        reason:
+            'under Remove animations the loading bar still tweens: its motion '
+            'is progress',
+      );
+      await tester.pump(kProgressTween);
+      expect(bar(), closeTo(.6, 1e-9));
     });
   });
 

@@ -13,11 +13,11 @@ library;
 // enrolled. M7's enrolment uses the committed public certificate for that. It
 // also says nothing about whether a real build succeeds — only what the gate
 // reports it is about to do.
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'leak_scan.dart';
 import 'repo_files.dart';
 
 const _gradle = 'android/app/build.gradle.kts';
@@ -44,30 +44,28 @@ const _requiredIgnores = [
 /// real HS_* variables exported would otherwise flip every one of these cases
 /// and the suite would pass for the wrong reason.
 String _signingMode(Map<String, String> env) {
-  final result = Process.runSync(
+  final result = _scan.run(
     'tools/gate.sh',
     ['--signing-mode'],
     workingDirectory: repoRoot.path,
-    includeParentEnvironment: false,
     environment: {
       'PATH': Platform.environment['PATH'] ?? '/usr/bin:/bin',
       ...env,
     },
-    stdoutEncoding: utf8,
-    stderrEncoding: utf8,
+    why: 'gate.sh --signing-mode',
   );
   expect(
-    result.exitCode,
+    result.code,
     0,
-    reason: 'signing-mode: the query flag must not fail.\n${result.stderr}',
+    reason: 'signing-mode: the query flag must not fail.\n${result.err}',
   );
   expect(
-    result.stdout.toString(),
+    result.out,
     isNot(contains('[1/')),
     reason:
         'signing-mode: --signing-mode must report and stop, not run the gate',
   );
-  return result.stdout.toString().trim();
+  return result.out.trim();
 }
 
 const _keystorePath = 'HS_KEYSTORE_PATH';
@@ -86,11 +84,26 @@ final Directory _fakeKeystoreDir = Directory.systemTemp.createTempSync(
 final File _fakeKeystore = File('${_fakeKeystoreDir.path}/upload.p12')
   ..writeAsStringSync('not a real keystore');
 
+/// Scratch space for every scanned call in this file, removed with the fake
+/// keystore.
+final Directory _scratchDir = Directory.systemTemp.createTempSync(
+  'hs-signing-scratch',
+);
+
+final _scan = LeakScan(
+  roots: () => [_fakeKeystoreDir.path],
+  scratch: () => _scratchDir.path,
+);
+
+/// The password every fixture hands the gate and the build. Long and
+/// distinctive enough for the leak scan to search every transformed form.
+const _fixturePass = 'SIGNING-fixture-pw-7q';
+
 Map<String, String> get _allFour => {
   'HS_KEYSTORE_PATH': _fakeKeystore.path,
-  'HS_KEYSTORE_PASS': 'x',
+  'HS_KEYSTORE_PASS': _fixturePass,
   'HS_KEY_ALIAS': 'upload',
-  'HS_KEY_PASS': 'x',
+  'HS_KEY_PASS': _fixturePass,
 };
 
 void _signingModeTests() {
@@ -238,11 +251,10 @@ void _signingModeTests() {
     final keystore = File('${secrets.path}/sudoku-upload.keystore');
     final credentials = File('${secrets.path}/sudoku-signing-credentials.txt');
 
-    ProcessResult run() => Process.runSync(
+    LeakRun run() => _scan.run(
       'tools/make_upload_key.sh',
       const [],
       workingDirectory: repoRoot.path,
-      includeParentEnvironment: false,
       environment: {
         'PATH': Platform.environment['PATH'] ?? '/usr/bin:/bin',
         'HOME': home.path,
@@ -250,34 +262,33 @@ void _signingModeTests() {
         // password. Never a real one: this script must not reach keytool.
         'HS_KEYSTORE_PASS': 'not-used-because-it-refuses',
       },
-      stdoutEncoding: utf8,
-      stderrEncoding: utf8,
+      why: 'make_upload_key.sh refusing to overwrite',
     );
 
     try {
       keystore.writeAsStringSync('pretend keystore');
       var result = run();
       expect(
-        result.exitCode,
+        result.code,
         2,
         reason:
             'key-refusal: an existing keystore must stop the run.\n'
-            '${result.stderr}',
+            '${result.err}',
       );
-      expect(result.stderr, contains('refusing to overwrite'));
+      expect(result.err, contains('refusing to overwrite'));
 
       keystore.deleteSync();
       credentials.writeAsStringSync('THE PASSWORD OF A LIVE KEY\n');
       result = run();
       expect(
-        result.exitCode,
+        result.code,
         2,
         reason:
             'key-refusal: an existing credentials file must stop the run too. '
             'With the keystore moved aside this used to overwrite the only '
-            'record of a live key\'s password and exit 0.\n${result.stderr}',
+            'record of a live key\'s password and exit 0.\n${result.err}',
       );
-      expect(result.stderr, contains('sudoku-signing-credentials.txt'));
+      expect(result.err, contains('sudoku-signing-credentials.txt'));
       expect(
         credentials.readAsStringSync(),
         'THE PASSWORD OF A LIVE KEY\n',
@@ -388,12 +399,7 @@ void _signingModeTests() {
           'signing_prediction() { echo "$prediction"; }\n'
           '$block',
         );
-      final r = Process.runSync(
-        '/bin/bash',
-        [script.path],
-        stdoutEncoding: utf8,
-        stderrEncoding: utf8,
-      );
+      final r = runSealed('/bin/bash', [script.path]);
       return (
         code: r.exitCode,
         out: r.stdout.toString(),
@@ -511,18 +517,11 @@ void _signingModeTests() {
     expect(pathExists(script), isTrue, reason: 'verify-cert: $script missing');
 
     ProcessResult run(List<String> args, [Map<String, String>? extra]) =>
-        Process.runSync(
+        runSealed(
           script,
           args,
           workingDirectory: repoRoot.path,
-          includeParentEnvironment: false,
-          environment: {
-            'PATH': Platform.environment['PATH'] ?? '/usr/bin:/bin',
-            'HOME': Platform.environment['HOME'] ?? '',
-            ...?extra,
-          },
-          stdoutEncoding: utf8,
-          stderrEncoding: utf8,
+          environment: {...?extra},
         );
 
     final missing = run(['/tmp/hs-definitely-not-a-bundle.aab']);
@@ -634,20 +633,23 @@ _BuildOutcome? _releaseBuild(Map<String, String> env) {
   final sizeBefore = existedBefore ? file.lengthSync() : -1;
   final modifiedBefore = existedBefore ? file.lastModifiedSync() : null;
 
-  late ProcessResult result;
+  late LeakRun result;
   try {
-    result = Process.runSync(
+    // Scanned like any other call, so a build that printed the password it
+    // was handed fails here. `build/` is not a root: the refusals under test
+    // happen at Gradle configuration time, before anything is written there.
+    result = _scan.run(
       'flutter',
       ['build', 'appbundle', '--release', '--no-pub'],
       workingDirectory: repoRoot.path,
-      includeParentEnvironment: false,
       environment: {
         'PATH': Platform.environment['PATH'] ?? '/usr/bin:/bin',
-        'HOME': Platform.environment['HOME'] ?? '',
         ...env,
       },
-      stdoutEncoding: utf8,
-      stderrEncoding: utf8,
+      // The real HOME, where the toolchain's caches are. Inherited by name
+      // rather than handed, so no credentials file under it is read.
+      inherit: const {'HOME'},
+      why: 'flutter build appbundle --release',
     );
   } on ProcessException catch (e) {
     // ignore: avoid_print
@@ -658,7 +660,7 @@ _BuildOutcome? _releaseBuild(Map<String, String> env) {
     return null;
   }
 
-  final output = '${result.stdout}${result.stderr}';
+  final output = '${result.out}${result.err}';
   for (final marker in _toolchainAbsent) {
     if (output.contains(marker)) {
       // ignore: avoid_print
@@ -677,7 +679,7 @@ _BuildOutcome? _releaseBuild(Map<String, String> env) {
             after.lastModifiedSync() == modifiedBefore
       : !after.existsSync();
 
-  return _BuildOutcome(result.exitCode, output, bundleUntouched);
+  return _BuildOutcome(result.code, output, bundleUntouched);
 }
 
 class _BuildOutcome {
@@ -782,17 +784,158 @@ void _hardFailTests() {
   });
 }
 
+/// The outcome of one run of the real gate against stub tools.
+class _StubGateRun {
+  const _StubGateRun(this.exitCode, this.output, this.bundleLeft, this.calls);
+  final int exitCode;
+  final String output;
+
+  /// Whether anything is at the path GATE PASSED names, after the run.
+  final bool bundleLeft;
+
+  /// The argument lists `flutter` was called with, one per call.
+  final List<List<String>> calls;
+}
+
+/// Runs a copy of `tools/gate.sh` in a scratch root where `flutter`, `dart`
+/// and `tools/check_aab.sh` are stubs.
+///
+/// The stub `flutter build` writes a bundle and the given verdict, then exits
+/// with [buildExit]: every step-5 outcome in seconds, and in a scratch root,
+/// so no run touches the repository's own `build/`.
+_StubGateRun _stubGate({required int buildExit, required String verdict}) {
+  final root = Directory.systemTemp.createTempSync('hs-stubgate');
+  addTearDown(() => root.deleteSync(recursive: true));
+  final bin = Directory('${root.path}/bin')..createSync();
+  Directory('${root.path}/tools').createSync();
+  final calls = File('${root.path}/calls');
+
+  File('${root.path}/pubspec.yaml').writeAsStringSync('version: 1.0.0+1\n');
+  File('${root.path}/tools/gate.sh')
+      .writeAsStringSync(readFile('tools/gate.sh'));
+  File('${root.path}/tools/check_aab.sh')
+      .writeAsStringSync('#!/bin/bash\nexit 0\n');
+  File('${bin.path}/dart').writeAsStringSync('#!/bin/bash\nexit 0\n');
+  // One argument per line, a blank line after each call.
+  File('${bin.path}/flutter').writeAsStringSync(
+    '#!/bin/bash\n'
+    'printf \'%s\\n\' "\$@" >> "\$HS_STUB_CALLS"\n'
+    'echo >> "\$HS_STUB_CALLS"\n'
+    'if [ "\$1" = build ]; then\n'
+    '  mkdir -p build/app/outputs/bundle/release\n'
+    '  : > build/app/outputs/bundle/release/app-release.aab\n'
+    '  printf \'%s\' "\$HS_STUB_VERDICT" > "\$HS_SIGNING_VERDICT"\n'
+    '  exit "\$HS_STUB_BUILD_EXIT"\n'
+    'fi\n',
+  );
+  for (final stub in [
+    '${bin.path}/dart',
+    '${bin.path}/flutter',
+    '${root.path}/tools/check_aab.sh',
+  ]) {
+    makeExecutable(stub);
+  }
+
+  final result = runSealed(
+    '/bin/bash',
+    ['${root.path}/tools/gate.sh'],
+    workingDirectory: root.path,
+    environment: {
+      'PATH': '${bin.path}:/usr/bin:/bin',
+      'HOME': root.path,
+      'TMPDIR': root.path,
+      'HS_STUB_CALLS': calls.path,
+      'HS_STUB_VERDICT': verdict,
+      'HS_STUB_BUILD_EXIT': '$buildExit',
+    },
+  );
+  final recorded = calls.existsSync() ? calls.readAsStringSync() : '';
+  return _StubGateRun(
+    result.exitCode,
+    '${result.stdout}${result.stderr}',
+    File('${root.path}/$_bundle').existsSync(),
+    [
+      for (final call in recorded.split('\n\n'))
+        if (call.trim().isNotEmpty) call.trim().split('\n'),
+    ],
+  );
+}
+
+void _stubGateTests() {
+  test('a passing run keeps its bundle and runs the PR test tiers', () {
+    final run = _stubGate(buildExit: 0, verdict: 'debug');
+    expect(
+      run.exitCode,
+      0,
+      reason:
+          'stub-gate: the harness itself is broken, so the cases below '
+          'prove nothing.\n${run.output}',
+    );
+    expect(run.output, contains('GATE PASSED'));
+    expect(run.bundleLeft, isTrue);
+
+    // #26: the 200-seed `weekly` tier and the `bench` timings are too slow
+    // for a pull request and run elsewhere. Read from the arguments the gate
+    // actually passed, not from the text of the file.
+    final tests = run.calls.where((c) => c.first == 'test').toList();
+    expect(tests, hasLength(1));
+    final args = tests.single;
+    final excluded = <String>{
+      for (var i = 0; i < args.length - 1; i++)
+        if (args[i] == '--exclude-tags') ...args[i + 1].split(','),
+    };
+    expect(
+      excluded,
+      containsAll(const ['weekly', 'bench']),
+      reason:
+          'gate-test-tiers: the gate\'s test step no longer excludes both '
+          'slow tiers, so the pull-request gate runs them. Called with: '
+          '$args',
+    );
+    final reporter = args.indexOf('--reporter');
+    expect(
+      reporter >= 0 && reporter + 1 < args.length ? args[reporter + 1] : null,
+      'compact',
+      reason:
+          'gate-reporter: the gate\'s test step does not pass '
+          '`--reporter compact`. Called with: $args',
+    );
+  });
+
+  // #121: a rejected build must not leave a bundle where GATE PASSED would
+  // have named one.
+  for (final c in const [
+    (name: 'the build fails', exit: 1, verdict: 'debug'),
+    (name: 'the key disagrees with the header', exit: 0, verdict: 'upload'),
+    (name: 'the build writes no verdict', exit: 0, verdict: ''),
+  ]) {
+    test('no bundle is left when ${c.name}', () {
+      final run = _stubGate(buildExit: c.exit, verdict: c.verdict);
+      expect(run.exitCode, isNot(0), reason: run.output);
+      expect(run.output, contains('GATE FAILED'));
+      expect(
+        run.bundleLeft,
+        isFalse,
+        reason:
+            'rejected-bundle: step 5 failed (${c.name}) and the bundle it '
+            'produced is still at the path GATE PASSED names.\n${run.output}',
+      );
+    });
+  }
+}
+
 void main() {
   // One directory per `flutter test` run was left behind: the fixture was
   // created in a top-level `final` with no teardown (#180).
   tearDownAll(() {
-    if (_fakeKeystoreDir.existsSync()) {
-      _fakeKeystoreDir.deleteSync(recursive: true);
+    for (final dir in [_fakeKeystoreDir, _scratchDir]) {
+      if (dir.existsSync()) dir.deleteSync(recursive: true);
     }
   });
 
   group('gate.sh signing mode', _signingModeTests);
   group('hard failure produces nothing', _hardFailTests);
+  group('gate.sh against stub tools', _stubGateTests);
 
   test('the build file holds no literal secret', () {
     final gradle = readFile(_gradle);
@@ -944,22 +1087,16 @@ void main() {
     const pinned = '/opt/homebrew/opt/openjdk@21/bin/keytool';
     final keytool = File(pinned).existsSync()
         ? pinned
-        : (Process.runSync('/usr/bin/which', ['keytool']).stdout as String)
-              .trim();
+        : findOnPath('keytool') ?? '';
     if (keytool.isEmpty) {
       markTestSkipped('no keytool available');
       return;
     }
-    final printed = Process.runSync(
-      keytool,
-      [
-        '-printcert',
-        '-file',
-        '${repoRoot.path}/android/signing/upload_certificate.pem',
-      ],
-      stdoutEncoding: utf8,
-      stderrEncoding: utf8,
-    );
+    final printed = runSealed(keytool, [
+      '-printcert',
+      '-file',
+      '${repoRoot.path}/android/signing/upload_certificate.pem',
+    ]);
     expect(printed.exitCode, 0, reason: 'cert: ${printed.stderr}');
     final fingerprint = RegExp(r'SHA256: ([0-9A-F:]+)')
         .firstMatch(printed.stdout.toString())

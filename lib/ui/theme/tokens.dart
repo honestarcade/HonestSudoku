@@ -268,7 +268,7 @@ abstract final class HsColors {
   static const lostRing = Color.fromRGBO(224, 90, 78, .35);
 }
 
-/// The design's sans-serif (bundled in M5; until then the system font).
+/// The design's sans-serif.
 const String kFontOutfit = 'Outfit';
 
 /// The design's monospace.

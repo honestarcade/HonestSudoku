@@ -61,17 +61,44 @@ void main() {
     expect(calls, isEmpty);
   });
 
-  testWidgets('with auto-notes the notes tool reads AUTO and ignores taps', (
-    tester,
-  ) async {
-    await pumpTools(
-      tester,
-      GameState.start(classic, const GameSettings(autoNotes: true)),
+  testWidgets('with auto-notes the notes tool reads AUTO, ignores taps and '
+      'keeps the default styling even with note mode on', (tester) async {
+    final s = GameState.start(
+      classic,
+      const GameSettings(autoNotes: true),
+    ).toggleNoteMode();
+    expect(
+      (s.noteMode, s.effectiveNoteMode),
+      (true, false),
+      reason: 'fixture: raw note mode on, effective note mode off',
     );
+    await pumpTools(tester, s);
     expect(find.text('AUTO'), findsOneWidget);
     expect(find.text('NOTES'), findsNothing);
+    final spec = tester
+        .widget<DesignButton>(find.byKey(const ValueKey('tool-notes')))
+        .spec;
+    expect(
+      (spec.edge, spec.bg, spec.fg),
+      (
+        const Color.fromRGBO(255, 255, 255, .14),
+        const Color.fromRGBO(255, 255, 255, .06),
+        const Color(0xFFDCE9F8),
+      ),
+      reason: 'AUTO keeps the inactive styling',
+    );
     await tester.tap(find.byKey(const ValueKey('tool-notes')));
     expect(calls['notes'], isNull);
+  });
+
+  testWidgets('with auto-notes off the notes tool reads NOTES and toggles', (
+    tester,
+  ) async {
+    await pumpTools(tester, GameState.start(classic));
+    expect(find.text('NOTES'), findsOneWidget, reason: 'reads NOTES');
+    expect(find.text('AUTO'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('tool-notes')));
+    expect(calls['notes'], 1);
   });
 
   testWidgets('notes is yellow only in effective note mode', (tester) async {

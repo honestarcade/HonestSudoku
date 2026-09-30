@@ -14,33 +14,24 @@ library;
 //   1  no release with that status  (stdout empty)
 //   2  stdin was not the JSON this expects  (stdout empty)
 
-import 'dart:convert';
-import 'dart:io';
-
 import 'package:flutter_test/flutter_test.dart';
 
+import 'leak_scan.dart';
 import 'repo_files.dart';
 
 String get _script => '${repoRoot.path}/tools/play_release_codes.py';
 
-/// Runs the script with [json] on stdin, which `Process.runSync` cannot do
+/// Runs the script with [json] on stdin, which `runSealed` cannot do
 /// directly — so the JSON is piped in by a shell.
 ({int code, String out, String err}) _pipe(String json, {String? status}) {
-  // chokepoint-exempt: runs play_release_codes.py over a fixture JSON of
-  // version codes; no secret is passed and nothing it prints is one.
-  final r = Process.runSync(
-    '/bin/bash',
-    [
-      '-c',
-      'printf %s "\$1" | python3 "\$2" \$3',
-      'bash',
-      json,
-      _script,
-      status ?? '',
-    ],
-    stdoutEncoding: utf8,
-    stderrEncoding: utf8,
-  );
+  final r = runSealed('/bin/bash', [
+    '-c',
+    'printf %s "\$1" | python3 "\$2" \$3',
+    'bash',
+    json,
+    _script,
+    status ?? '',
+  ]);
   return (code: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString());
 }
 

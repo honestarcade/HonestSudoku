@@ -41,9 +41,11 @@ final class GameState {
     this.notice,
     this.paused = false,
     this.hintedCell,
+    List<int> quiet = const [],
     List<Snapshot> history = const [],
     List<Snapshot> future = const [],
   }) : values = List.unmodifiable(values),
+       quiet = List.unmodifiable(quiet),
        notes = List.unmodifiable([
          for (final list in notes) List<int>.unmodifiable(list),
        ]),
@@ -58,6 +60,9 @@ final class GameState {
     }
     final s = selected;
     if (s != null) checkIndex(puzzle.shape, s);
+    for (final i in this.quiet) {
+      checkIndex(puzzle.shape, i);
+    }
   }
 
   /// A fresh game on [puzzle]: givens filled, nothing selected, and every
@@ -123,6 +128,11 @@ final class GameState {
   /// any change of selection or notice.
   final int? hintedCell;
 
+  /// Wrong entries placed while mistakes were announced at the end. They
+  /// stay untinted after a switch to Immediately until a reveal, because a
+  /// mode change applies from the next placement (story #42).
+  final List<int> quiet;
+
   /// Undo steps, oldest first.
   final List<Snapshot> history;
 
@@ -155,6 +165,11 @@ final class GameState {
   bool get showWrong =>
       settings.strikeMode != StrikeMode.zen &&
       (settings.announce == AnnounceMode.now || revealed);
+
+  /// Whether cell [i] is tinted as wrong: a wrong entry while [showWrong],
+  /// unless it went in unannounced and nothing has revealed it since.
+  bool wrongShown(int i) =>
+      showWrong && isWrong(i) && (revealed || !quiet.contains(i));
 
   /// True for a given cell.
   bool isGiven(int i) => puzzle.givens[i];
@@ -246,6 +261,7 @@ final class GameState {
     if (values[i] == value) {
       final cleared = _snapshotted().copyWith(
         values: _replace(values, i, 0),
+        quiet: _quietAt(i, false),
         clearNotice: true,
       );
       return settings.autoNotes ? cleared._autoNoted() : cleared;
@@ -304,6 +320,10 @@ final class GameState {
     final next = _snapshotted().copyWith(
       values: nextValues,
       notes: nextNotes,
+      quiet: _quietAt(
+        i,
+        value != solution[i] && settings.announce == AnnounceMode.atEnd,
+      ),
       moves: moves + 1,
       mistakes: nextMistakes,
       lost: nextLost,
@@ -324,6 +344,7 @@ final class GameState {
     final next = _snapshotted().copyWith(
       values: _replace(values, i, 0),
       notes: _replace(notes, i, const <int>[]),
+      quiet: _quietAt(i, false),
       clearNotice: true,
     );
     return settings.autoNotes ? next._autoNoted() : next;
@@ -337,6 +358,7 @@ final class GameState {
     return copyWith(
       values: back.values,
       notes: back.notes,
+      quiet: back.quiet,
       mistakes: back.mistakes,
       moves: back.moves,
       history: history.sublist(0, history.length - 1),
@@ -361,6 +383,7 @@ final class GameState {
     return copyWith(
       values: forward.values,
       notes: forward.notes,
+      quiet: forward.quiet,
       mistakes: forward.mistakes,
       moves: forward.moves,
       history: _capped([...history, _snapshot]),
@@ -444,7 +467,16 @@ final class GameState {
       '${shape.label} · ${difficulty.label} · ${fmt(elapsedSeconds)}'
           .toUpperCase();
 
-  Snapshot get _snapshot => Snapshot(values, notes, mistakes, moves);
+  Snapshot get _snapshot =>
+      Snapshot(values, notes, mistakes, moves, quiet: quiet);
+
+  /// [quiet] with cell [i] in or out, ascending.
+  List<int> _quietAt(int i, bool isQuiet) {
+    if (quiet.contains(i) == isQuiet) return quiet;
+    return isQuiet
+        ? ([...quiet, i]..sort())
+        : quiet.where((j) => j != i).toList();
+  }
 
   /// This state with its current values pushed onto the history and the
   /// redo stack emptied: what every changing verb does first.
@@ -484,6 +516,7 @@ final class GameState {
     bool clearNotice = false,
     bool? paused,
     int? hintedCell,
+    List<int>? quiet,
     List<Snapshot>? history,
     List<Snapshot>? future,
   }) {
@@ -512,6 +545,7 @@ final class GameState {
       notice: nextNotice,
       paused: paused ?? this.paused,
       hintedCell: nextHinted,
+      quiet: quiet ?? this.quiet,
       history: history ?? this.history,
       future: future ?? this.future,
     );
@@ -535,6 +569,7 @@ final class GameState {
       other.notice == notice &&
       other.paused == paused &&
       other.hintedCell == hintedCell &&
+      listEquals(other.quiet, quiet) &&
       listEquals(other.history, history) &&
       listEquals(other.future, future);
 
@@ -555,6 +590,7 @@ final class GameState {
     notice,
     paused,
     hintedCell,
+    Object.hashAll(quiet),
     Object.hashAll(history),
     Object.hashAll(future),
   );

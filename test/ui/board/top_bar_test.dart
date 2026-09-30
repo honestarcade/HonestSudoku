@@ -52,6 +52,31 @@ void main() {
     expect(paused, 1);
   });
 
+  testWidgets('the pause button paints the design pill, centred in the bar', (
+    tester,
+  ) async {
+    await pumpBar(tester, GameState.start(classic));
+    final pill = find.descendant(
+      of: find.byKey(const ValueKey('pause-button')),
+      matching: find.byType(DecoratedBox),
+    );
+    final text = tester.getSize(find.text('❚❚ 9×9 · Medium')).height;
+    expect(
+      tester.getSize(pill).height,
+      8 + text + 8 + 2,
+      reason:
+          'the pause button paints padding 8, its text, padding 8 and a '
+          '1-pt edge each side, not the bar\'s 44',
+    );
+    expect(text, closeTo(11.5, 1), reason: 'the pause text is one 11.5 line');
+    final bar = tester.getRect(find.byType(TopBar));
+    expect(
+      tester.getCenter(pill).dy,
+      bar.center.dy,
+      reason: 'the pause pill sits centred in the top bar',
+    );
+  });
+
   testWidgets('the pause button is inert once the game is over', (
     tester,
   ) async {

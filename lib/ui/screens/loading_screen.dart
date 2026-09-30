@@ -59,12 +59,15 @@ class _LoadingScreenState extends State<LoadingScreen>
     duration: widget.mode == LoadingMode.launch
         ? kSplashMinimum
         : kProgressTween,
+    // The bar's motion is progress, which Remove animations must not shorten.
+    animationBehavior: AnimationBehavior.preserve,
   );
   GameController? _controller;
   Timer? _minimum;
   var _minimumPassed = false;
   var _ready = false;
   var _handedOver = false;
+  var _lastFraction = 0.0;
   Notice? _launchFailure;
 
   bool get _launch => widget.mode == LoadingMode.launch;
@@ -126,6 +129,7 @@ class _LoadingScreenState extends State<LoadingScreen>
   void _onProgress() {
     final status = _controller?.loading;
     if (status != null && mounted) {
+      _lastFraction = status.fraction;
       _bar.animateTo(status.fraction, curve: Curves.easeOut);
     }
     if (mounted) setState(() {});
@@ -147,6 +151,7 @@ class _LoadingScreenState extends State<LoadingScreen>
       return;
     }
     _bar.value = 0;
+    _lastFraction = 0;
     _controller!.retry();
     _watchGeneration();
     setState(() {});
@@ -154,7 +159,10 @@ class _LoadingScreenState extends State<LoadingScreen>
 
   void _back() {
     final c = _controller!;
-    if (!_launch && c.loading != null) c.cancelGeneration();
+    if (!_launch && c.loading != null) {
+      c.cancelGeneration();
+      return;
+    }
     // pop, not maybePop: this screen's PopScope refuses a pop and sends it
     // here, so maybePop would loop.
     final nav = Navigator.of(context);
@@ -174,16 +182,22 @@ class _LoadingScreenState extends State<LoadingScreen>
 
   String get _label {
     if (_launch) return UiStrings.phaseLabel(GenerationPhase.ready);
-    final status = _controller?.loading;
-    return UiStrings.phaseLabel(status?.phase ?? GenerationPhase.generating);
+    final c = _controller!;
+    final phase =
+        c.loading?.phase ??
+        (c.generationFailure == null
+            ? GenerationPhase.ready
+            : GenerationPhase.of(_lastFraction));
+    return UiStrings.phaseLabel(phase);
   }
 
   @override
   Widget build(BuildContext context) {
     final failure = _failure;
     return PopScope(
-      // Back during the launch splash leaves the app; during generation it
-      // cancels and returns to whatever lies beneath.
+      // Back during the launch splash leaves the app. During generation it
+      // cancels, so the player sees why the board did not arrive and can
+      // try again; back while that notice shows is the notice's Back.
       canPop: _launch,
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) _back();

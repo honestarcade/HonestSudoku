@@ -44,7 +44,7 @@ class BoardOverlays extends StatelessWidget {
   /// Resume.
   final VoidCallback onResume;
 
-  /// Restart this puzzle.
+  /// Restart this puzzle, and the lost card's Retry.
   final VoidCallback onRestart;
 
   /// New puzzle, same settings / Next puzzle / New puzzle.
@@ -71,6 +71,7 @@ class BoardOverlays extends StatelessWidget {
         state: state,
         stats: stats,
         scale: scale,
+        onRetry: onRestart,
         onNewDeal: onNewDeal,
         onChangeSetup: onChangeSetup,
         onMainMenu: onMainMenu,

@@ -3,13 +3,10 @@
 # tools/make_upload_key.sh wrote.
 #
 # It PARSES that file rather than sourcing it, which is a deliberate departure
-# from #19's wording. The file executes arbitrary code when sourced (#119,
-# open): it is written by an unquoted heredoc with double-quoted values, so a
-# password containing `$(` or a backtick runs on `. this-file`, and the value
-# it records is the expanded form rather than the one the keystore was made
-# with. Building a new happy path on `source` while that is open would be
-# adding a second caller to a known defect. Parsing costs three lines and keeps
-# working whichever way the quoting is fixed.
+# from #19's wording. Sourcing a file runs whatever it holds, so a value
+# containing `$(` or a backtick would execute on `. this-file`, and the
+# script's safety would rest on how another script quotes what it writes.
+# Parsing holds whatever that file's quoting becomes.
 #
 # Prints the names of the secrets it set. Never a value.
 #

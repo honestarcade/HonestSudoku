@@ -14,9 +14,8 @@ import 'board_layout.dart';
 /// The cells tinted and underlined as wrong: wrong entries while the model
 /// shows them. The tint and the underline read this one predicate (#52).
 Set<int> wrongShownCells(GameState s) => {
-  if (s.showWrong)
-    for (var i = 0; i < s.values.length; i++)
-      if (s.isWrong(i)) i,
+  for (var i = 0; i < s.values.length; i++)
+    if (s.wrongShown(i)) i,
 };
 
 /// The peers tinted and dotted as conflicting (empty with conflicts off).
@@ -37,7 +36,7 @@ Color cellBackground(GameState s, BoardTheme t, int i) {
 
 /// A cell's digit colour: wrong (when shown), given, or the player's.
 Color cellForeground(GameState s, BoardTheme t, int i) {
-  if (s.showWrong && s.isWrong(i)) return t.wrongFg;
+  if (s.wrongShown(i)) return t.wrongFg;
   return s.isGiven(i) ? t.givenFg : t.userFg;
 }
 
@@ -171,7 +170,7 @@ String cellLabelFor(GameState s, int i) {
     given: s.isGiven(i),
     notes: [for (final v in s.notes[i]) s.shape.symbolFor(v)],
     candidates: s.settings.autoNotes,
-    wrong: s.showWrong && s.isWrong(i),
+    wrong: s.wrongShown(i),
     conflict: s.conflictCells.contains(i),
     hint: s.hintedCell == i,
   );

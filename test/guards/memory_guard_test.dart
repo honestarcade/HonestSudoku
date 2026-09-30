@@ -59,11 +59,9 @@ void main() {
         final text = file.readAsStringSync();
         secretShapes.forEach((what, pattern) {
           // A match on a line that DECLARES itself is allowed, with a reason
-          // of real length — the same mechanism as the chokepoint rule's
-          // `chokepoint-exempt:`, and for the same reason: the alternative
-          // was weakening the pattern until the honest case passed, which is
-          // how the base64 floor reached 60 and let a whole 32-byte key
-          // through (#263).
+          // of real length, because the alternative was weakening the
+          // pattern until the honest case passed, which is how the base64
+          // floor reached 60 and let a whole 32-byte key through (#263).
           //
           // The case this exists for: `play-console.md` records the service
           // account's key ID, which is a 40-character hex run and is public

@@ -52,8 +52,11 @@ abstract final class UiStrings {
 
   /// Lost card body.
   static String lostBody(int limit) =>
-      'You set a limit of $limit. The puzzle is still here if you undo — or '
-      'take a fresh one.';
+      'You set a limit of $limit. Retry this puzzle from the start, or take '
+      'a fresh one.';
+
+  /// Lost card primary: the same puzzle again from the start.
+  static const retry = 'Retry';
 
   /// Lost card primary.
   static const newPuzzle = 'New puzzle';

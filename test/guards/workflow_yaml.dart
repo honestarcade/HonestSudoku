@@ -100,10 +100,24 @@ class WorkflowJob {
     this.environment,
     this.permissionsScalar,
     this.env = const {},
+    this.displayName,
+    this.matrix = const {},
+    this.failFast,
   });
 
   final String name;
   final List<WorkflowStep> steps;
+
+  /// `name:` on the job. When set it, not the job's key, is the check-run
+  /// name a ruleset's required check has to match.
+  final String? displayName;
+
+  /// `strategy.matrix`, each axis as its values written out; empty for a job
+  /// with no matrix.
+  final Map<String, List<String>> matrix;
+
+  /// `strategy.fail-fast` as written, or null when the job does not set it.
+  final String? failFast;
 
   /// 1-based line of the job's key, for naming it in a failure.
   final int line;
@@ -443,6 +457,9 @@ class Workflow {
             permissionsScalar: _permissionsScalar(jobMap),
             permissions: _stringMap(jobMap, 'permissions'),
             env: _stringMap(jobMap, 'env'),
+            displayName: _stringOr(jobMap, 'name'),
+            matrix: _matrix(jobMap),
+            failFast: _nested(jobMap, 'strategy', 'fail-fast'),
           ),
         );
       }
@@ -613,6 +630,20 @@ Map<String, String> _stringMap(YamlMap map, String key) {
   final node = map.nodes[key];
   if (node is! YamlMap) return const {};
   return {for (final e in node.nodes.entries) '${e.key}': '${e.value.value}'};
+}
+
+/// `strategy.matrix` as axis name to values. `include`/`exclude` and an
+/// axis that is not a list are left out: none is modelled here.
+Map<String, List<String>> _matrix(YamlMap job) {
+  final strategy = job.nodes['strategy'];
+  if (strategy is! YamlMap) return const {};
+  final matrix = strategy.nodes['matrix'];
+  if (matrix is! YamlMap) return const {};
+  return {
+    for (final e in matrix.nodes.entries)
+      if (e.value is YamlList)
+        '${e.key}': [for (final v in e.value as YamlList) '$v'],
+  };
 }
 
 /// `defaults: run: shell:` on a workflow or a job.

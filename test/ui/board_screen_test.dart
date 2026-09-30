@@ -186,6 +186,36 @@ void main() {
     }
   });
 
+  testWidgets('Retry on the out-of-strikes card restarts the same puzzle', (
+    tester,
+  ) async {
+    await screenTest(tester, (c, _) async {
+      final seed = c.state!.puzzle.seed;
+      await tester.pump(const Duration(seconds: 2));
+      for (var k = 0; k < 3; k++) {
+        final (cell, wrong) = emptyAndWrong(c.state!);
+        await tapCellAndKey(tester, cell, wrong);
+      }
+      expect(find.text('OUT OF STRIKES'), findsOneWidget);
+      expect(c.state!.elapsedSeconds, greaterThan(0));
+      await tester.tap(find.byKey(const ValueKey('btn-retry')));
+      await tester.pump();
+      final s = c.state!;
+      expect(
+        [s.puzzle.seed, s.lost, s.mistakes, s.elapsedSeconds],
+        [seed, false, 0, 0],
+        reason: 'Retry keeps the puzzle and resets strikes and the timer',
+      );
+      expect(
+        s.values,
+        s.puzzle.startingValues(),
+        reason: 'Retry clears every entry',
+      );
+      expect(find.text('OUT OF STRIKES'), findsNothing);
+      expect(find.byType(BoardGrid), findsOneWidget);
+    });
+  });
+
   testWidgets('manual notes: NOTES then a key leaves a pencil mark', (
     tester,
   ) async {

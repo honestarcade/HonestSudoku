@@ -76,7 +76,11 @@ done
 
 # ---- the edits flow ----------------------------------------------------------
 
-auth=(-H "Authorization: Bearer $PLAY_TOKEN")
+# The token reaches curl through a header file only this user can read,
+# never as an argument: a command line is in the process table, readable by
+# any process on the runner for as long as the call runs. The file is made
+# once the EXIT trap below is in place to remove it.
+AUTH_HEADER_FILE=""
 json=(-H "Content-Type: application/json")
 
 api() {
@@ -147,8 +151,16 @@ cleanup() {
     # while the run still reports success (#161).
     delete_edit "$EDIT_ID" "in-flight"
   fi
+  # Last: the deletion above still needs the header.
+  if [ -n "$AUTH_HEADER_FILE" ]; then rm -f "$AUTH_HEADER_FILE"; fi
 }
 trap cleanup EXIT
+
+# Under $TMPDIR by name: macOS's `mktemp` with no template ignores it.
+AUTH_HEADER_FILE="$(mktemp "${TMPDIR:-/tmp}/play-auth.XXXXXX")"
+chmod 600 "$AUTH_HEADER_FILE"
+printf 'Authorization: Bearer %s\n' "$PLAY_TOKEN" > "$AUTH_HEADER_FILE"
+auth=(-H "@$AUTH_HEADER_FILE")
 
 EDIT_ID="$(api POST "$API/$PACKAGE/edits" '{}' |
   sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)" ||

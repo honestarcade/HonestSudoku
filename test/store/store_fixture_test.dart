@@ -54,6 +54,16 @@ void main() {
     expect([g.strikeMode, g.announce], [StrikeMode.five, AnnounceMode.atEnd]);
     expect(g.values[1], classic.solution[1]);
     expect(g.values[3], wrongValue(classic, 3));
+    expect(
+      [g.quiet, g.history.last.quiet],
+      [
+        [3],
+        [3],
+      ],
+      reason:
+          'a document without quiet cells takes every wrong entry of an '
+          'At the end game as unannounced',
+    );
     final state = g.toState(const GameSettings());
     expect(state.paused, isTrue);
   });

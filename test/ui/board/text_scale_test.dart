@@ -2,11 +2,8 @@
 // up to 1.3×, nothing overflows or leaves the screen, and the grid's digits
 // grow only with Large digits.
 
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:honest_sudoku/engine/engine.dart';
 import 'package:honest_sudoku/game/game.dart';
@@ -14,24 +11,9 @@ import 'package:honest_sudoku/ui/board/board_layout.dart';
 import 'package:honest_sudoku/ui/board/board_screen.dart';
 import 'package:honest_sudoku/ui/board/game_controller.dart';
 import 'package:honest_sudoku/ui/board/notice_banner.dart';
-import 'package:honest_sudoku/ui/theme/tokens.dart';
 
+import '../helpers.dart';
 import '../stub_generator.dart';
-
-Future<void> _loadFonts() async {
-  Future<ByteData> bytes(String f) async =>
-      ByteData.sublistView(await File('assets/fonts/$f').readAsBytes());
-  final outfit = FontLoader(kFontOutfit);
-  for (final w in ['Light', 'Regular', 'Medium', 'SemiBold', 'Bold']) {
-    outfit.addFont(bytes('Outfit-$w.ttf'));
-  }
-  await outfit.load();
-  final mono = FontLoader(kFontMono);
-  for (final w in ['Regular', 'Medium', 'SemiBold']) {
-    mono.addFont(bytes('IBMPlexMono-$w.ttf'));
-  }
-  await mono.load();
-}
 
 /// Pumps the board at [width]×[height] and [textScale], stages it, and
 /// runs [check].
@@ -149,7 +131,7 @@ void _expectStacked(WidgetTester tester) {
 int _wrong(GameController c, int i) => c.state!.solution[i] % c.state!.n + 1;
 
 void main() {
-  setUpAll(_loadFonts);
+  setUpAll(loadAppFonts);
 
   group('no overflow, nothing off screen', () {
     for (final (w, h) in [(360.0, 640.0), (390.0, 844.0)]) {
@@ -232,6 +214,83 @@ void main() {
         ),
       );
     }
+  });
+
+  group('the notice line cap', () {
+    final long = Notice(BannerKind.hint, 'HINT · HIDDEN PAIR', 'x ' * 150);
+    const short = Notice(BannerKind.hint, 'HINT', 'One place for a 7.');
+
+    testWidgets('a long body stops at the cap, with an ellipsis', (
+      tester,
+    ) async {
+      for (final lines in [3, 2]) {
+        await tester.pumpWidget(
+          MediaQuery(
+            data: const MediaQueryData(textScaler: TextScaler.linear(1.3)),
+            child: Directionality(
+              textDirection: TextDirection.ltr,
+              child: Align(
+                alignment: Alignment.topLeft,
+                child: NoticeBanner(notice: long, scale: 1, maxLines: lines),
+              ),
+            ),
+          ),
+        );
+        final body = tester.renderObject<RenderParagraph>(find.text(long.body));
+        expect(
+          body.didExceedMaxLines,
+          isTrue,
+          reason: 'the banner body stops at $lines lines',
+        );
+        expect(
+          tester.widget<Text>(find.text(long.body)).overflow,
+          TextOverflow.ellipsis,
+        );
+        double measured(int cap) => NoticeBanner.measureHeight(
+          notice: long,
+          scale: 1,
+          textScaler: const TextScaler.linear(1.3),
+          maxLines: cap,
+        );
+        expect(
+          tester.getSize(find.byType(NoticeBanner)).height,
+          closeTo(measured(lines), .5),
+          reason: 'the banner is $lines lines tall',
+        );
+        expect(measured(lines), lessThan(measured(50)));
+      }
+    });
+
+    test('16×16 at 1.3× on 360 px: a long hint drops to 2 lines, a short '
+        'one keeps 3', () {
+      final layout = BoardLayout.of(GridShape.monster);
+      const scale = 360 / 390;
+      double h(Notice n, int lines) =>
+          NoticeBanner.measureHeight(
+            notice: n,
+            scale: scale,
+            textScaler: const TextScaler.linear(1.3),
+            maxLines: lines,
+          ) /
+          scale;
+      expect(
+        layout.noticeY + h(long, 3) + kNoticeGap + layout.padHeight,
+        greaterThan(kToolBarY - kToolClearance),
+        reason:
+            'three lines of the long hint would put the pad past the '
+            'tool clearance',
+      );
+      expect(
+        layout.noticeMaxLines(h(long, 3)),
+        2,
+        reason: 'a notice that would crowd the tools drops to 2 lines',
+      );
+      expect(
+        layout.noticeMaxLines(h(short, 3)),
+        3,
+        reason: 'a notice with room keeps 3 lines',
+      );
+    });
   });
 
   group('the worst notice never pushes the pad into the tools', () {

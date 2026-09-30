@@ -22,11 +22,12 @@ analyzer:
     # need a separate check" — both false, and both written in the edit that
     # corrected the first claim (#122).
     #
-    # Measured on 2026-09-20, one severity at a time, with
-    # `// TODO: x` appended to lib/main.dart and `dart analyze --fatal-infos`:
+    # Measured on 2026-09-29 (#270), one severity at a time, with
+    # `// TODO: x` appended to lib/main.dart and `dart analyze --fatal-infos`
+    # from Dart SDK 3.13.4 (the 2026-09-20 table said exit 3 for `warning`):
     #
     #   todo: info      No issues found!   exit 0
-    #   todo: warning   1 issue found.     exit 3
+    #   todo: warning   1 issue found.     exit 2
     #   todo: error     1 issue found.     exit 3
     #
     # So `info` is the one severity that is suppressed, and it is the one
