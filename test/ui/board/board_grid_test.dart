@@ -1,13 +1,19 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:honest_sudoku/engine/engine.dart';
 import 'package:honest_sudoku/game/game.dart';
 import 'package:honest_sudoku/ui/board/board_grid.dart';
+import 'package:honest_sudoku/ui/board/board_layout.dart';
+import 'package:honest_sudoku/ui/board/board_screen.dart';
 import 'package:honest_sudoku/ui/theme/board_theme.dart';
 import 'package:honest_sudoku/ui/theme/tokens.dart';
 
 import '../../game/fixtures.dart';
 import '../harness.dart';
+import '../helpers.dart';
 
 Future<void> pumpGrid(
   WidgetTester tester,
@@ -334,5 +340,124 @@ void main() {
       expect(counts.first.$2, counts.last.$2);
       expect(counts.first.$1, isNotEmpty);
     });
+  });
+
+  group('regression: #330 the selection ring covers none of the selected '
+      "cell's pencil marks", () {
+    setUpAll(loadAppFonts);
+
+    // Frame scales from a small phone's to the largest, and a 360×640
+    // screen's.
+    final scales = {
+      for (var k = 55; k <= 110; k += 5) k / 100,
+      frameGeometry(const Size(360, 640), 0).scale,
+      kMaxFrameScale,
+    };
+    for (final shape in GridShape.all) {
+      for (final scale in scales) {
+        for (final hinted in [false, true]) {
+          final how = hinted ? 'hinted' : 'selected';
+          testWidgets('${shape.label} at scale ${scale.toStringAsFixed(3)}, '
+              '$how', (tester) async {
+            final base = GameState.start(fixturePuzzle(shape));
+            final picked = hinted ? base.hint() : base.select(1);
+            final cell = picked.selected!;
+            expect(picked.hintedCell == cell, hinted, reason: 'fixture');
+            final notes = [...picked.notes]
+              ..[cell] = [for (var v = 1; v <= shape.n; v++) v];
+            await pumpFramed(
+              tester,
+              BoardGrid(
+                state: picked.copyWith(notes: notes),
+                theme: navy,
+                scale: scale,
+                onTapCell: (_) {},
+              ),
+            );
+            final origin = tester.getTopLeft(find.byType(BoardGrid));
+            final r = ring(tester);
+            final cellBox = find.byKey(ValueKey('cell-$cell'));
+            expect(
+              tester.getRect(cellBox),
+              r.ringRect!.shift(origin),
+              reason: 'the ring is drawn on the selected cell',
+            );
+            // The ink, at a phone's pixel ratio of 2: the cell's own layer
+            // holds its marks but not the ring, which the grid draws above it.
+            const ratio = 2.0;
+            final layer = tester.renderObject<RenderRepaintBoundary>(
+              find
+                  .ancestor(of: cellBox, matching: find.byType(RepaintBoundary))
+                  .first,
+            );
+            final band = (r.ringWidth * ratio).round();
+            final (:ink, :underRing) = (await tester.runAsync(() async {
+              final image = await layer.toImage(pixelRatio: ratio);
+              final px = (await image.toByteData())!;
+              final w = image.width;
+              final h = image.height;
+              int at(int x, int y, int c) => px.getUint8((y * w + x) * 4 + c);
+              // How far each pixel is from the cell's background; ink is a
+              // pixel at least half as far as the strongest one, so an
+              // antialiased fringe is not counted as a mark.
+              final off = [
+                for (var y = 0; y < h; y++)
+                  for (var x = 0; x < w; x++)
+                    [
+                      for (var c = 0; c < 3; c++)
+                        (at(x, y, c) - at(w ~/ 2, 0, c)).abs(),
+                    ].reduce((a, b) => a + b),
+              ];
+              final full = off.reduce(math.max);
+              var ink = 0;
+              final underRing = <(int, int)>[];
+              for (var y = 0; y < h; y++) {
+                for (var x = 0; x < w; x++) {
+                  if (off[y * w + x] * 2 < full) continue;
+                  ink++;
+                  if (x < band || y < band || x >= w - band || y >= h - band) {
+                    underRing.add((x, y));
+                  }
+                }
+              }
+              image.dispose();
+              return (ink: ink, underRing: underRing);
+            }))!;
+            expect(ink, greaterThan(0), reason: 'the marks drew no ink');
+            expect(
+              underRing,
+              isEmpty,
+              reason:
+                  'mark ink lies in the ${r.ringWidth}-point band the ring '
+                  'paints over, at physical pixels $underRing',
+            );
+            // The pixel check sees all of each mark: none is clipped.
+            for (var v = 1; v <= shape.n; v++) {
+              final mark = find.descendant(
+                of: cellBox,
+                matching: find.text(shape.symbolFor(v)),
+              );
+              final text = tester.renderObject<RenderParagraph>(mark);
+              if (shape != GridShape.monster) {
+                expect(
+                  tester.widget<Text>(mark).style!.fontSize,
+                  BoardLayout.of(shape).noteSize(bigDigits: false) * scale,
+                  reason: 'only 16×16 marks shrink to clear the ring',
+                );
+              }
+              expect(
+                text.size.height,
+                greaterThanOrEqualTo(
+                  text.getMaxIntrinsicHeight(double.infinity) - .01,
+                ),
+                reason:
+                    'the ${shape.symbolFor(v)} mark is cut to '
+                    '${text.size} of its line',
+              );
+            }
+          });
+        }
+      }
+    }
   });
 }
