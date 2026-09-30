@@ -556,7 +556,7 @@ MUTATIONS: list[Mutation] = [
              "test/guards/workflow_guard_test.dart",
              sub(r"'@\$\{header\.path\}'", "'Authorization: Bearer $token'", 1),
              "the CI token sits in the process table for as long as curl runs",
-             'leak:'),
+             'bearer-argv: test/guards/workflow_guard_test.dart'),
     Mutation("#325", "a sealed call in repo_files.dart inherits the environment",
              "test/guards/repo_files.dart",
              sub(r"runSealed\('git', \[", "Process.runSync('git', [", 1),

@@ -1472,5 +1472,33 @@ exit 0
         reason: 'bearer-argv: ${offenders.join('\n')}',
       );
     });
+
+    test('no guard builds an Authorization header except into a file', () {
+      // The ruleset probe's own token only exists where GITHUB_TOKEN is set,
+      // so the leak scan catches it on argv in CI and nowhere else. Reading
+      // the source holds the rule on every machine (#325).
+      final offenders = <String>[];
+      final dart = Directory('test')
+          .listSync(recursive: true)
+          .whereType<File>()
+          .where((f) => f.path.endsWith('.dart'));
+      for (final f in dart) {
+        final lines = stripDartComments(f.readAsStringSync()).split('\n');
+        for (var i = 0; i < lines.length; i++) {
+          final line = lines[i];
+          if (!RegExp(r'''['"]Authorization\s*:''').hasMatch(line)) continue;
+          if (line.contains('writeAsStringSync(')) continue;
+          offenders.add(
+            '${f.path}:${i + 1}: an Authorization header is built outside a '
+            'file write, which is how it reaches a command line',
+          );
+        }
+      }
+      expect(
+        offenders,
+        isEmpty,
+        reason: 'bearer-argv: ${offenders.join('\n')}',
+      );
+    });
   });
 }
