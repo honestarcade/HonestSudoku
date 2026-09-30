@@ -1193,3 +1193,18 @@ than per-story.
 - **Decision:** Saved-game documents stay at format version 1 with #292's optional `quiet` key; the fixture README's rule now asks for a version bump only on an incompatible change.
   **Why:** Owner decision 2026-09-29: older builds ignore an unknown key, and `store_fixture_test.dart` already asserts what the v1 fixture, which lacks the key, decodes to.
   **Issue:** #292
+
+## Ad-hoc — 2026-09-30 (#65, #66: the device suites as built)
+
+- **Change:** #66's "each phase is a named `testWidgets` step" is a named step inside `test_driver/app_flow_test.dart`'s own runner (`step(name, body)`), which prints `STEP ok|FAIL <name>`, stops at the first failure, screenshots it, and writes the step list to `build/e2e/<phase>.json`.
+  **Why:** `testWidgets` needs `flutter_test`, which cannot run in the host-side driver, and `package:test` is not a dependency (invariant 3); a driver file is a plain program, as #57's `store_app_test.dart` is.
+  **Affects:** #66's AC wording only.
+- **Change:** #66's no-op store is the composition root's existing "no store" path — `kSaveDisabled` (`kDebugMode && bool.fromEnvironment('HS_DISABLE_SAVE')`, lib/ui/app.dart) makes the store factory yield null, which `GameController` already treats as "persist nothing" — rather than a store class that answers `absent`. `tools/e2e.sh --no-save` is therefore a debug build.
+  **Why:** `AppStore` is a `final class`, so no substitute can implement it without a new interface in lib/; the null path gives the behaviour the plan asked for (the app runs, remembers nothing, never throws). The `kDebugMode` gate is the second-pass plan's; `save_switch_guard_test.dart` holds it, with three mutations.
+  **Affects:** #66.
+- **Change:** The process death is a foreground `am force-stop` with no Home press first, so no lifecycle callback runs and the restore proves the debounced save, not the pause flush. The part-played game's pencil marks are placed after the clock passes five seconds so the save they cause carries a non-zero time.
+  **Why:** A foreground kill is the stricter case: whatever the player did more than the save's debounce before the kill must survive.
+  **Affects:** #66, #61 (its kill check uses the same command).
+- **Change:** #65's phase-threshold rule is reported by the soak (a second table, and a NOTE per pair) but does not fail the run; only uniqueness, requested band, the golden fingerprints and the ceiling do.
+  **Why:** #65's test plan lists those as the soak's assertions; the phase rule is a decision about copy that #65 makes from the table. On the sudoku-dev emulator (2026-09-30, `tools/soak.sh --device emulator-5570`, 20 seeds) CARVING GIVENS was over half the wall clock on 11 of 14 pairs, because every discarded attempt is spent in that phase, so the copy question is live.
+  **Affects:** #65 (the copy decision and #40's amendment), #40.
