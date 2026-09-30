@@ -71,6 +71,10 @@ echo "e2e: $DEVICE_NAME ($SERIAL), $mode build${suffix:+, saving disabled}"
 gen_timeout=60
 [ "$DEVICE_NAME" != phone ] || gen_timeout=30
 
+# flutter drive finds the app's VM service in logcat; a stale address from an
+# earlier run on this device (a soak, a killed app) is otherwise tried first,
+# and the drive retries that dead port instead of the new one.
+"$ADB" -s "$SERIAL" logcat -c
 start=$(date +%s)
 set +e
 E2E_PHASE=play E2E_GENERATION_TIMEOUT="$gen_timeout" \
@@ -92,6 +96,7 @@ if [ "$play" = 0 ]; then
     echo "e2e: $APP_ID is still running after force-stop" >&2
     exit 1
   fi
+  "$ADB" -s "$SERIAL" logcat -c
   start=$(date +%s)
   set +e
   E2E_PHASE=restore E2E_SAVED="$out/saved.json" E2E_REPORT="$out/restore.json" \

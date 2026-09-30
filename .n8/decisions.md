@@ -1259,3 +1259,9 @@ than per-story.
 - **Decision:** #331's loading notice and Back keep the design's 362-point width wherever the design's own 14-point side inset fits beside it (390 points and wider), and below that take the screen's width less the app's 20-point gutters (`kScreenGutter`, now named in `screen_frame.dart`), so a 360-point screen gets 320.
   **Why:** `min(362, width − 40)` alone would also have narrowed the design frame's 390-point layout to 350, which is not the bug; the design places the notice on a 14-point inset at 390, and the gutter is what every other screen keeps once the design no longer fits.
   **Issue:** #331, #67
+- **Decision:** `tools/e2e.sh` clears the device's logcat before each `flutter drive` (Rule 1, inside #66's scope).
+  **Why:** `flutter drive` finds the app's VM service in logcat; after a soak on the same device the first e2e attempt on `sudoku-min` (2026-09-30) retried the soak's dead address for about ten minutes. Verified the same day: `tools/soak.sh --device min --seeds 1` then `tools/e2e.sh min` → `e2e: PASSED on sudoku-min (play 32 s, restore 9 s)`.
+  **Issue:** #66
+- **Decision:** On `sudoku-min` (2026-09-30, `tools/soak.sh --device min`, 20 seeds) 16×16 Evil's worst case was 13,278 ms, inside the 15 s ceiling, and CARVING GIVENS was over half the wall clock on all 14 pairs (68–100 %). Both of #65's decisions go to the owner with these numbers once the owner's-phone soak is in.
+  **Why:** #65 names the owner's phone and `sudoku-min` as the evidence; the ceiling holds on the slowest target but narrowly, and the label rule is met on every pair.
+  **Issue:** #65, #40
