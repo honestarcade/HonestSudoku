@@ -21,6 +21,7 @@ import '../theme/board_theme.dart';
 import '../theme/tokens.dart';
 import '../widgets/app_mark.dart';
 import '../widgets/design_button.dart';
+import '../widgets/screen_frame.dart';
 import '../widgets/wordmark.dart';
 
 /// The launch splash stays at least this long, so it never flashes.
@@ -207,71 +208,79 @@ class _LoadingScreenState extends State<LoadingScreen>
         child: DecoratedBox(
           decoration: const BoxDecoration(gradient: kSplashGradient),
           child: SafeArea(
-            child: Center(
-              child: SingleChildScrollView(
-                child: MediaQuery.withNoTextScaling(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const RepaintBoundary(
-                        child: AppMark(size: 132, interior: MarkInterior.board),
-                      ),
-                      const SizedBox(height: 30),
-                      const Wordmark(size: 40),
-                      const SizedBox(height: 14),
-                      Text(
-                        Copy.byline,
-                        style: plexMono(
-                          11,
-                          scale: 1,
-                          color: HsColors.muted,
-                          letterSpacingEm: .28,
+            child: LayoutBuilder(
+              builder: (context, box) => Center(
+                child: SingleChildScrollView(
+                  child: MediaQuery.withNoTextScaling(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const RepaintBoundary(
+                          child: AppMark(
+                            size: 132,
+                            interior: MarkInterior.board,
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 30),
-                      _progressBar(),
-                      const SizedBox(height: 30),
-                      Text(
-                        _label,
-                        key: const ValueKey('loading-label'),
-                        style: plexMono(
-                          10,
-                          scale: 1,
-                          color: HsColors.labelDim,
-                          letterSpacingEm: .2,
+                        const SizedBox(height: 30),
+                        const Wordmark(size: 40),
+                        const SizedBox(height: 14),
+                        Text(
+                          Copy.byline,
+                          style: plexMono(
+                            11,
+                            scale: 1,
+                            color: HsColors.muted,
+                            letterSpacingEm: .28,
+                          ),
                         ),
-                      ),
-                      if (failure != null) ...[
-                        const SizedBox(height: 24),
-                        NoticeBanner(
-                          key: const ValueKey('loading-notice'),
-                          notice: failure,
-                          scale: 1,
-                          action: NoticeAction(Copy.tryAgain, _retry),
+                        const SizedBox(height: 30),
+                        _progressBar(),
+                        const SizedBox(height: 30),
+                        Text(
+                          _label,
+                          key: const ValueKey('loading-label'),
+                          style: plexMono(
+                            10,
+                            scale: 1,
+                            color: HsColors.labelDim,
+                            letterSpacingEm: .2,
+                          ),
                         ),
-                        if (!_launch) ...[
-                          const SizedBox(height: 12),
+                        if (failure != null) ...[
+                          const SizedBox(height: 24),
                           SizedBox(
-                            width: kPadWidth,
-                            child: DesignButton.variant(
-                              DesignButtonVariant.secondary,
-                              key: const ValueKey('loading-back'),
+                            width: _noticeWidth(box.maxWidth),
+                            child: NoticeBanner(
+                              key: const ValueKey('loading-notice'),
+                              notice: failure,
                               scale: 1,
-                              padding: const EdgeInsets.all(13),
-                              onPressed: _back,
-                              child: Text(
-                                Copy.back,
-                                style: outfit(
-                                  13,
-                                  scale: 1,
-                                  weight: FontWeight.w500,
+                              action: NoticeAction(Copy.tryAgain, _retry),
+                            ),
+                          ),
+                          if (!_launch) ...[
+                            const SizedBox(height: 12),
+                            SizedBox(
+                              width: _noticeWidth(box.maxWidth),
+                              child: DesignButton.variant(
+                                DesignButtonVariant.secondary,
+                                key: const ValueKey('loading-back'),
+                                scale: 1,
+                                padding: const EdgeInsets.all(13),
+                                onPressed: _back,
+                                child: Text(
+                                  Copy.back,
+                                  style: outfit(
+                                    13,
+                                    scale: 1,
+                                    weight: FontWeight.w500,
+                                  ),
                                 ),
                               ),
                             ),
-                          ),
+                          ],
                         ],
                       ],
-                    ],
+                    ),
                   ),
                 ),
               ),
@@ -281,6 +290,13 @@ class _LoadingScreenState extends State<LoadingScreen>
       ),
     );
   }
+
+  /// The design's width wherever its own side inset fits beside it; on a
+  /// narrower screen, the width inside the app's side gutters (#331).
+  static double _noticeWidth(double screen) =>
+      screen >= kPadWidth + 2 * kSideInset
+      ? kPadWidth
+      : screen - 2 * kScreenGutter;
 
   Widget _progressBar() => AnimatedBuilder(
     animation: _bar,

@@ -5,6 +5,7 @@ import 'package:honest_sudoku/engine/engine.dart';
 import 'package:honest_sudoku/store/app_store.dart';
 import 'package:honest_sudoku/ui/app.dart';
 import 'package:honest_sudoku/ui/board/board_grid.dart';
+import 'package:honest_sudoku/ui/board/board_layout.dart';
 import 'package:honest_sudoku/ui/routes.dart';
 import 'package:honest_sudoku/ui/screens/menu_screen.dart';
 import 'package:honest_sudoku/ui/widgets/app_mark.dart';
@@ -15,8 +16,12 @@ import '../stub_generator.dart';
 String label(WidgetTester tester) =>
     tester.widget<Text>(find.byKey(const ValueKey('loading-label'))).data!;
 
-Future<void> pumpGenerating(WidgetTester tester, ManualGenerator gen) async {
-  setScreen(tester, 390, 844);
+Future<void> pumpGenerating(
+  WidgetTester tester,
+  ManualGenerator gen, {
+  Size screen = const Size(390, 844),
+}) async {
+  setScreen(tester, screen.width, screen.height);
   await tester.pumpWidget(
     HonestSudokuApp(
       generator: gen.call,
@@ -146,6 +151,40 @@ void main() {
       reason: 'back while the notice shows is the notice Back',
     );
   });
+
+  for (final (screen, left, width) in [
+    // Narrower than the design: inside the app's 20-point side gutters.
+    (const Size(360, 640), 20.0, 320.0),
+    // The design's frame: its width, on its 14-point inset.
+    (const Size(390, 844), 14.0, kPadWidth),
+  ]) {
+    testWidgets('regression: #331 the cancel notice and Back keep the side '
+        'gutter at ${screen.width.round()}×${screen.height.round()}', (
+      tester,
+    ) async {
+      final gen = ManualGenerator();
+      await pumpGenerating(tester, gen, screen: screen);
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      final spans = {
+        for (final key in ['loading-notice', 'loading-back'])
+          key: (
+            tester.getRect(find.byKey(ValueKey(key))).left,
+            tester.getRect(find.byKey(ValueKey(key))).right,
+          ),
+      };
+      expect(
+        spans,
+        {
+          'loading-notice': (left, left + width),
+          'loading-back': (left, left + width),
+        },
+        reason:
+            'on a ${screen.width}-point screen the notice and Back span '
+            '$spans',
+      );
+    });
+  }
 
   testWidgets('launch: never before 800 ms, then the menu', (tester) async {
     setScreen(tester, 390, 844);
