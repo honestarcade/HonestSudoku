@@ -1226,3 +1226,9 @@ than per-story.
 - **Decision:** #65's phase-threshold rule is reported by the soak (a second table, and a NOTE per pair) but does not fail the run; only uniqueness, requested band, the golden fingerprints and the ceiling do.
   **Why:** #65's test plan lists those as the soak's assertions; the phase rule is a decision about copy that #65 makes from the table. On the sudoku-dev emulator (2026-09-30, `tools/soak.sh --device emulator-5570`, 20 seeds) CARVING GIVENS was over half the wall clock on 11 of 14 pairs, because every discarded attempt is spent in that phase, so the copy question is live.
   **Issue:** #65 (the copy decision and #40's amendment), #40.
+- **Decision:** The soak's golden-fingerprint assertion was proven by corrupting one hash in `test/fixtures/golden_boards.json` (4×4 seed 1, `…58d` → `…580`) for a one-seed run on `sudoku-dev` (2026-09-30, `tools/soak.sh --device emulator-5580 --seeds 1`): it exited 1 with `FAIL soak-golden: the device computed {"shape":"4x4","seed":1,"hash":"054513b312a5f58d",…}`, and the file was restored. The ceiling assertion is left to its natural proof on `sudoku-min` (#61), where 16×16 Evil is expected to overrun; uniqueness has not been seen failing, because breaking the engine to show it was refused by the session's permission classifier.
+  **Why:** A soak that has never failed is not yet evidence (CLAUDE.md); a fixture edit shows the comparison is live without touching the engine.
+  **Issue:** #65
+- **Decision:** #65's budget (AC4) and phase-label (AC5) decisions wait for the `sudoku-min` and owner's-phone soaks; the `sudoku-dev` table is not the evidence either criterion names.
+  **Why:** `sudoku-dev` is a host-accelerated emulator: 16×16 Evil's worst case there was 14,041 ms against the 15 s ceiling, so the slowest target will decide the budget, and the phase shares should be read from the same runs.
+  **Issue:** #65, #40
