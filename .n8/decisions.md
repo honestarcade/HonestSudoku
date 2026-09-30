@@ -1232,3 +1232,15 @@ than per-story.
 - **Decision:** #65's budget (AC4) and phase-label (AC5) decisions wait for the `sudoku-min` and owner's-phone soaks; the `sudoku-dev` table is not the evidence either criterion names.
   **Why:** `sudoku-dev` is a host-accelerated emulator: 16×16 Evil's worst case there was 14,041 ms against the 15 s ceiling, so the slowest target will decide the budget, and the phase shares should be read from the same runs.
   **Issue:** #65, #40
+- **Decision:** #61's release build under test was built from the `v0.9.0-rc.1` tag in a scratch worktree with no `HS_` variables (build number 1041, the release run's own code), so it is signed with the debug key; `build.gradle.kts` falls back to it by design when none of the four are set.
+  **Why:** An emulator install needs no upload key, and building from the tag keeps the source identical to the uploaded candidate without loading any secret into an agent's run; there is no `bundletool` on the machine to unpack the uploaded AAB, and fetching one was not planned.
+  **Issue:** #61
+- **Decision:** Three premises in #61's plan were false and the pass worked around each rather than adding code: the isolate does not read `HS_GENERATION_CEILING_MS` (`kGenerationCeiling` is a fixed 15 s), so the timeout path was exercised with a throwaway local build at a 1-second ceiling, reverted after, and it showed "GENERATION FAILED / Couldn't build a board in time" with a working TRY AGAIN; the controller does not log `GenerationEvent`s, so 16×16 Evil's time was measured by polling screenshots (6.1–6.6 s, 7.4–8.1 s, 11.5–12.0 s on three random seeds); and `tools/install_build.sh` does not exist, so the APK went in with `adb install`.
+  **Why:** Implementation-detail staleness that the story's intent survives: the timeout path was exercised deliberately, which is what the criterion asks. Adding a production define only to serve a manual check would be new surface for a one-off; #65's soak measures timing directly, so nothing downstream depends on the log.
+  **Issue:** #61, #65
+- **Decision:** `sudoku-big` is 400 dpi (the story named no density), and `sudoku-min` keeps the story's 5.0-inch diagonal although 720×1280 at 320 dpi is geometrically 4.6 inches.
+  **Why:** 400 dpi is a typical density for a 1080×2400 phone; the density, not the nominal diagonal, sets the 360-dp width the small-screen checks depend on.
+  **Issue:** #61
+- **Decision:** #61's defects were filed as #330 (`sev:medium`: 16×16 selection ring hides pencil marks — it hides what the player marked in the cell they are working on, the owner's "misleads" bar) and #331 (`sev:low`: the loading notice runs edge to edge at 360 dp — cosmetic, controls work), under epic #58 per #67's convention.
+  **Why:** The project's severity labels are the `sev:*` set in `reference/github.md`, and #64's blocking bar (misleads or blocks play) sorts the two.
+  **Issue:** #330, #331
