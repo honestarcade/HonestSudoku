@@ -1531,6 +1531,27 @@ MUTATIONS: list[Mutation] = [
              append("\n/// Where back goes.\nconst String home = '/menu';\n"),
              "a hand-spelled route name is a push waiting to happen",
              'route-names: 1 route name(s) spelled by hand'),
+
+    # ---- #66: the save switch never reaches a release build ----------------
+    Mutation("#66", "the save switch drops its kDebugMode gate",
+             "lib/ui/app.dart",
+             sub(r"kDebugMode && bool\.fromEnvironment\('HS_DISABLE_SAVE'\)",
+                 "bool.fromEnvironment('HS_DISABLE_SAVE')"),
+             "a release build given the define would remember nothing",
+             'save-switch: kSaveDisabled in lib/ui/app.dart is not'),
+    Mutation("#66", "the save switch defaults to on",
+             "lib/ui/app.dart",
+             sub(r"bool\.fromEnvironment\('HS_DISABLE_SAVE'\)",
+                 "bool.fromEnvironment('HS_DISABLE_SAVE', defaultValue: true)"),
+             "every debug build would forget the player's games",
+             'save-switch: HS_DISABLE_SAVE is read with'),
+    Mutation("#66", "a second place reads the save switch",
+             "lib/main.dart",
+             sub(r"^Future<void> main\(\) async \{$",
+                 "const bool _noSave = bool.fromEnvironment('HS_DISABLE_SAVE');\n\n"
+                 "Future<void> main() async {\n  if (_noSave) return;", flags=re.M),
+             "a read outside the composition root escapes the kDebugMode gate",
+             'save-switch: HS_DISABLE_SAVE is read at'),
 ]
 
 
