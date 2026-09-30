@@ -383,6 +383,76 @@ One block per pass, newest at the bottom. Copy the template below, fill every fi
   - Timeout path, bracketed: the release build was uninstalled, a debug build with the ceiling lowered to one second installed, a 16×16 Evil requested, "GENERATION FAILED / Couldn't build a board in time. Try again." shown with TRY AGAIN, and TRY AGAIN produced a board; then the debug build was uninstalled and the release build reinstalled. The isolate does not read `HS_GENERATION_CEILING_MS`, so that debug build carried a throwaway local edit of `kGenerationCeiling` rather than the define.
 - Issues filed: two defects found on `sudoku-min`, both re-checked on `sudoku-big`: the loading screen's failure notice and Back button span the full 360-dp width with no margin (did not reproduce on `sudoku-big`, where they sit inside a margin); the 16×16 selection ring covers the selected cell's outer pencil marks (reproduced on `sudoku-big`, less severely). Issue numbers to be added when filed.
 
+### Pass — 2026-09-30 (sudoku-min, device suites)
+
+- Date: 2026-09-30
+- Build version: 0.1.0 (pubspec.yaml) — profile builds of `801c148` (`milestone/m6-device-testing`), built by `flutter drive --profile` inside `tools/soak.sh` and `tools/e2e.sh`, signed with the debug key.
+- Build code: 1 (pubspec.yaml's `+1`; no `--build-number` passed).
+- Device (model, Android version): `sudoku-min` emulator (`emulator-5590`, booted with `tools/matrix_avds.sh --boot sudoku-min`) — "Android SDK built for arm64", Android 7.0 (API 24), arm64-v8a, 720×1280 at 320 dpi.
+- Ran by: Claude (agent, #65 and #66), running the two device suites unattended.
+- Sections completed:
+  - [x] Engine soak (#65) — `tools/soak.sh --device min`, seeds 1..20 per pair, no reduction: exit 0, whole run 242 s (the script's own timer, 2026-09-30). Every pair within the 15 s ceiling; every board had exactly one solution and graded to the band requested; the golden fingerprints computed on the device equal the committed host values. Table as `tools/soak.sh` wrote it to `build/soak-sudoku-min-2026-09-30.md`:
+
+    | shape | difficulty | median ms | worst ms | best ms | median attempts | worst attempts | ceiling |
+    |---|---|---|---|---|---|---|---|
+    | 4x4 | easy | 1 | 10 | 0 | 1 | 1 | within 15 s |
+    | 6x6 | easy | 1 | 3 | 1 | 1 | 1 | within 15 s |
+    | 6x6 | medium | 87 | 389 | 23 | 128 | 774 | within 15 s |
+    | 6x6 | hard | 240 | 461 | 27 | 314 | 666 | within 15 s |
+    | 9x9 | easy | 2 | 2 | 2 | 1 | 1 | within 15 s |
+    | 9x9 | medium | 16 | 74 | 3 | 3 | 13 | within 15 s |
+    | 9x9 | hard | 65 | 422 | 4 | 9 | 59 | within 15 s |
+    | 9x9 | expert | 627 | 5067 | 76 | 70 | 660 | within 15 s |
+    | 9x9 | evil | 9 | 20 | 4 | 2 | 5 | within 15 s |
+    | 16x16 | easy | 17 | 20 | 17 | 1 | 1 | within 15 s |
+    | 16x16 | medium | 36 | 170 | 25 | 1 | 2 | within 15 s |
+    | 16x16 | hard | 164 | 3778 | 64 | 1 | 2 | within 15 s |
+    | 16x16 | expert | 463 | 6313 | 271 | 1 | 3 | within 15 s |
+    | 16x16 | evil | 5435 | 13278 | 572 | 1 | 1 | within 15 s |
+
+    Phases, summed over each pair's seeds:
+
+    | shape | difficulty | GENERATING ms | CARVING GIVENS ms | READY ms | carving share |
+    |---|---|---|---|---|---|
+    | 4x4 | easy | 7 | 17 | 1 | 68% **over half** |
+    | 6x6 | easy | 3 | 17 | 4 | 71% **over half** |
+    | 6x6 | medium | 1 | 2551 | 8 | 100% **over half** |
+    | 6x6 | hard | 1 | 4837 | 8 | 100% **over half** |
+    | 9x9 | easy | 0 | 36 | 4 | 90% **over half** |
+    | 9x9 | medium | 0 | 379 | 16 | 96% **over half** |
+    | 9x9 | hard | 0 | 2235 | 12 | 99% **over half** |
+    | 9x9 | expert | 3 | 27120 | 17 | 100% **over half** |
+    | 9x9 | evil | 0 | 192 | 11 | 95% **over half** |
+    | 16x16 | easy | 1 | 324 | 24 | 93% **over half** |
+    | 16x16 | medium | 2 | 885 | 49 | 95% **over half** |
+    | 16x16 | hard | 14 | 7404 | 84 | 99% **over half** |
+    | 16x16 | expert | 11 | 21129 | 113 | 99% **over half** |
+    | 16x16 | evil | 51 | 116739 | 2137 | 98% **over half** |
+
+    16×16 Evil's worst case (seed 5) was 13,278 ms of the 15 s ceiling, so this run did not overrun; the phase check flagged all 14 pairs (CARVING GIVENS over half the wall clock), which is #65's copy question and is not decided here.
+  - [x] End-to-end (#66) — `tools/e2e.sh min`: `e2e: PASSED on sudoku-min (play 23 s, restore 9 s)`, 16 of 16 steps ok (`build/e2e-sudoku-min-2026-09-30.md`). The first attempt that day never reached a step: `flutter drive` attached to the VM service address the soak's app process had logged earlier, and it retried that stale address until the attempt was stopped. The second attempt was run after `adb logcat -c` and passed:
+
+    | phase | step | result | ms |
+    |---|---|---|---|
+    | play | launch lands on the menu, with no game to continue | ok | 701 |
+    | play | New puzzle opens setup; pick 9×9 Medium | ok | 434 |
+    | play | Start waits for a real 9×9 Medium board | ok | 698 |
+    | play | entries from the solution win the game | ok | 3051 |
+    | play | the win card shows a streak of 1 | ok | 2 |
+    | play | Main menu: Continue is gone | ok | 166 |
+    | play | Statistics shows the solve | ok | 347 |
+    | play | Settings: Paper, and row/column/box highlight off | ok | 764 |
+    | play | a new board renders Paper with no unit shading | ok | 917 |
+    | play | a second game: six entries, one mistake, two notes | ok | 7871 |
+    | restore | relaunch after the kill offers Continue | ok | 714 |
+    | restore | settings survived the relaunch | ok | 2 |
+    | restore | Continue restores board, notes, time and mistakes, paused | ok | 168 |
+    | restore | the restored game plays on to a win | ok | 2947 |
+    | restore | the win card shows a streak of 2 | ok | 2 |
+    | restore | Statistics counts both solves | ok | 546 |
+
+- Issues filed: none — no app defect found. The stale-VM-service hang on the first e2e attempt is a harness problem: `tools/e2e.sh` does not clear logcat before its first drive, while `tools/soak.sh` does.
+
 ### Reporting a bug
 
 File every problem as a GitHub issue with the `bug` label, and fill in every field below so nobody has to come back to you with a question. The last field is the owner's bar for what must be fixed before release.
