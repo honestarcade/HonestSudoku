@@ -11,7 +11,15 @@ run by CI and needs the owner's key.
 Usage:
   source ~/HonestArcadeApps/secrets/elevenlabs.env
   python3 tools/sfx.py /tmp/audition [--variants 3] [--only place,mistake]
+  python3 tools/sfx.py --audition place [--dir build/sfx-audition] [--device SERIAL]
   python3 tools/sfx.py --install place /tmp/audition/place-v2.wav [--plan Creator]
+
+`--audition` (#63) hears the candidates where the player will: each
+<clip>-v<N>.wav in turn is staged as assets/audio/<clip>.wav at the clip's mix
+level, and the app is built and launched with `flutter run --release` on the
+attached phone; Enter moves to the next. The owner's pick is written to
+<dir>/selections.json, and assets/audio/ is put back exactly as it was
+however the loop ends.
 
 The swap from a placeholder to a real clip is `--install`: it writes
 assets/audio/<clip>.wav at the clip's mix level, deletes
@@ -29,6 +37,7 @@ import os
 import re
 import ssl
 import struct
+import subprocess
 import sys
 import urllib.request
 import wave
@@ -42,6 +51,7 @@ CHANNELS = 2
 ROOT = Path(__file__).resolve().parent.parent
 DEST = ROOT / "assets" / "audio"
 LICENSES = DEST / "LICENSES.md"
+AUDITION_DIR = ROOT / "build" / "sfx-audition"
 
 
 def _peak(pcm: bytes) -> int:
@@ -165,15 +175,21 @@ def write_wav(path: Path, pcm: bytes, channels: int = 1) -> None:
         w.writeframes(pcm)
 
 
-def install(clip: str, src: Path, plan: str) -> None:
-    """The whole swap: the clip at its mix level, the placeholder gone, the
-    licence row and generation date recorded."""
+def _leveled(clip: str, src: Path) -> bytes:
+    """The samples of src at the clip's mix level: what install writes, and
+    so what an audition must play."""
     with wave.open(str(src), "rb") as w:
         if (w.getnchannels(), w.getsampwidth(), w.getframerate()) != (1, 2, RATE):
             sys.exit(f"sfx: {src} is not 44.1 kHz mono 16-bit")
         pcm = w.readframes(w.getnframes())
-    gain = 10 ** (MIX_DB[clip] / 20.0)
-    write_wav(DEST / f"{clip}.wav", _scale(pcm, gain))
+    return _scale(pcm, 10 ** (MIX_DB[clip] / 20.0))
+
+
+def install(clip: str, src: Path, plan: str) -> None:
+    """The whole swap: the clip at its mix level, the placeholder gone, the
+    licence row and generation date recorded."""
+    pcm = _leveled(clip, src)
+    write_wav(DEST / f"{clip}.wav", pcm)
     placeholder = DEST / f"placeholder-{clip}.wav"
     if placeholder.exists():
         placeholder.unlink()
@@ -199,6 +215,110 @@ def install(clip: str, src: Path, plan: str) -> None:
           f"placeholder removed, licence row added")
 
 
+# What to do in the app to hear each clip.
+HEAR = {
+    "place": "place a number",
+    "mistake": "enter a wrong number with mistakes shown",
+    "solve": "solve a puzzle (4x4 is quickest)",
+    "lose": "run out of strikes",
+}
+
+
+def candidates(clip: str, folder: Path) -> list:
+    """The clip's takes in folder, in variant order (v10 after v9)."""
+    takes = []
+    for path in folder.glob(f"{clip}-v*.wav"):
+        m = re.fullmatch(rf"{re.escape(clip)}-v(\d+)\.wav", path.name)
+        if m:
+            takes.append((int(m.group(1)), path))
+    return [path for _, path in sorted(takes)]
+
+
+def _ask(prompt: str):
+    """One line from the owner, or None once stdin has closed."""
+    try:
+        return input(prompt)
+    except EOFError:
+        print()
+        return None
+
+
+def _pick(answer: str, heard: list):
+    """The take the answer names -- `2`, `v2` or the file name -- or None."""
+    a = answer.strip().lower()
+    for take in heard:
+        n = take.stem.rsplit("-v", 1)[1]
+        if a in (n, f"v{n}", take.name.lower(), take.stem.lower()):
+            return take
+    return None
+
+
+def audition(clip: str, folder: Path, device: str) -> int:
+    """Play each candidate for clip through a release build on the phone, one
+    at a time, then record the owner's pick.
+
+    assets/audio/ is snapshotted first and restored in `finally`, so a failed
+    build, Ctrl-C or a closed stdin leaves no candidate staged and the
+    placeholder untouched.
+    """
+    takes = candidates(clip, folder)
+    if not takes:
+        print(f"sfx: no {clip}-v<N>.wav candidates in {folder}", file=sys.stderr)
+        return 2
+    staged = DEST / f"{clip}.wav"
+    placeholder = DEST / f"placeholder-{clip}.wav"
+    before = {p: (p.read_bytes() if p.exists() else None)
+              for p in (staged, placeholder)}
+    cmd = ["flutter", "run", "--release", "--no-resident"]
+    if device:
+        cmd += ["-d", device]
+    heard = []
+    try:
+        for n, take in enumerate(takes, 1):
+            write_wav(staged, _leveled(clip, take))
+            print(f"\n[{n}/{len(takes)}] {clip}: now playing {take.name} "
+                  f"({MIX_DB[clip]:+.1f} dB) -- building and launching",
+                  flush=True)
+            # stdin closed to flutter, so it cannot eat the owner's keypress.
+            if subprocess.run(cmd, cwd=ROOT, stdin=subprocess.DEVNULL).returncode:
+                print(f"sfx: flutter run failed on {take.name}; stopping",
+                      file=sys.stderr)
+                return 1
+            heard.append(take)
+            print(f"  {take.name} is on the phone: {HEAR[clip]} to hear it.")
+            more = "for the next candidate" if n < len(takes) else "to choose"
+            answer = _ask(f"  Enter {more}, q to stop: ")
+            if answer is None or answer.strip().lower() == "q":
+                break
+        answer = (_ask(f"Winner for {clip} "
+                       f"({', '.join(t.stem for t in heard)}; blank for none): ")
+                  or "").strip()
+        if not answer:
+            return 0
+        winner = _pick(answer, heard)
+        if winner is None:
+            print(f"sfx: {answer!r} is not a candidate you heard; "
+                  "nothing recorded", file=sys.stderr)
+            return 1
+        record = folder / "selections.json"
+        chosen = json.loads(record.read_text()) if record.exists() else {}
+        chosen[clip] = winner.name
+        record.write_text(json.dumps(chosen, indent=2, sort_keys=True) + "\n")
+        print(f"{clip}: {winner.name} recorded in {record}")
+        print(f"  install it with: tools/sfx.py --install {clip} {winner}")
+        return 0
+    finally:
+        for path, data in before.items():
+            if data is None:
+                path.unlink(missing_ok=True)
+            else:
+                path.write_bytes(data)
+        print(f"assets/audio/ restored: {staged.name} "
+              f"{'as it was' if before[staged] is not None else 'removed'}, "
+              f"{placeholder.name} "
+              f"{'as it was' if before[placeholder] is not None else 'absent'}")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("out_dir", nargs="?")
@@ -208,7 +328,22 @@ def main() -> int:
                     help="install FILE as CLIP, replacing its placeholder")
     ap.add_argument("--plan", default="Creator",
                     help="the ElevenLabs plan the clip was generated on")
+    ap.add_argument("--audition", metavar="CLIP",
+                    help="play CLIP's candidates through the app on the phone")
+    ap.add_argument("--dir", default=str(AUDITION_DIR),
+                    help="where --audition finds <clip>-v<N>.wav")
+    ap.add_argument("--device", default="",
+                    help="the adb serial --audition runs on (default: the "
+                         "one attached device)")
     args = ap.parse_args()
+
+    if args.audition and args.install:
+        ap.error("--audition and --install are separate steps")
+    if args.audition:
+        if args.audition not in SOUNDS:
+            print(f"unknown clip: {args.audition}", file=sys.stderr)
+            return 2
+        return audition(args.audition, Path(args.dir), args.device)
 
     if args.install:
         clip, src = args.install

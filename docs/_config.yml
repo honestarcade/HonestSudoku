@@ -1,3 +1,6 @@
 title: Honest Sudoku
 description: Fully offline Sudoku for Android. No ads, no tracking, no permissions.
 theme: jekyll-theme-primer
+# The device test plan lives beside the site but is not part of it (#60).
+exclude:
+  - test-plan.md

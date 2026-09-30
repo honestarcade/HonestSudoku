@@ -4,6 +4,7 @@
 
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:honest_sudoku/game/game.dart';
 import 'package:honest_sudoku/store/app_store.dart';
@@ -29,6 +30,16 @@ import 'theme/tokens.dart';
 import 'widgets/tap_target.dart';
 
 Future<AppStore> _openStore() async => AppStore.open(await storeDirectory());
+
+/// Runs the app with no store, so it remembers nothing: set by
+/// `tools/e2e.sh --no-save` (`--dart-define=HS_DISABLE_SAVE=true`) to prove
+/// the device suite's persistence step fails without the disk (#66). Gated
+/// on [kDebugMode] so no release build can be told to stop saving;
+/// test/guards/save_switch_guard_test.dart holds it to that.
+const bool kSaveDisabled =
+    kDebugMode && bool.fromEnvironment('HS_DISABLE_SAVE');
+
+Future<AppStore?> _noStore() async => null;
 
 /// The app.
 class HonestSudokuApp extends StatefulWidget {
@@ -82,7 +93,7 @@ class _HonestSudokuAppState extends State<HonestSudokuApp> {
   late final GameController _controller = GameController(
     generator: widget.generator,
     seeds: widget.seeds,
-    store: widget.store ?? _openStore,
+    store: widget.store ?? (kSaveDisabled ? _noStore : _openStore),
   );
   late final SoundPlayer _sound = widget.sound ?? const NoSoundPlayer();
   late final GameFeedback _feedback = GameFeedback(

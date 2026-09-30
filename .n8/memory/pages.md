@@ -14,7 +14,9 @@ metadata:
   path independent of the file name.
 - **Everything under `docs/` is public.** That is the point, and it is also the
   hazard: anything committed there is served. Nothing but the site belongs in
-  that folder.
+  that folder, with one exception: `docs/test-plan.md`, the device test plan
+  (#60), which `exclude:` in `docs/_config.yml` keeps off the site —
+  `test/docs/test_plan_test.dart` asserts the exclusion.
 
 ## How it was enabled
 

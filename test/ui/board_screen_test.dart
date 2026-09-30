@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:honest_sudoku/engine/engine.dart';
@@ -5,6 +7,7 @@ import 'package:honest_sudoku/game/game.dart';
 import 'package:honest_sudoku/ui/board/board_grid.dart';
 import 'package:honest_sudoku/ui/board/board_screen.dart';
 import 'package:honest_sudoku/ui/board/game_controller.dart';
+import 'package:honest_sudoku/ui/routes.dart';
 
 import 'helpers.dart';
 import 'stub_generator.dart';
@@ -125,6 +128,27 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('menu-continue')), findsOneWidget);
       expect(find.text('9×9 · MEDIUM · $played'), findsOneWidget);
+    });
+
+    testWidgets('a fresh board route over a running game lands paused '
+        'without changing state during build (#328)', (tester) async {
+      await pumpApp(tester);
+      await startFromMenu(tester);
+      final nav = tester.state<NavigatorState>(find.byType(Navigator));
+      unawaited(nav.pushNamed(Routes.aboutApp));
+      await tester.pumpAndSettle();
+      unawaited(nav.pushNamed(Routes.board));
+      await tester.pumpAndSettle();
+      expect(
+        tester.takeException(),
+        isNull,
+        reason: 'entering the board changes no state while it builds',
+      );
+      expect(
+        find.text('Paused'),
+        findsOneWidget,
+        reason: 'a board entered other than from generation lands paused',
+      );
     });
 
     testWidgets('a failed generation shows the failure with a retry that '

@@ -1193,3 +1193,69 @@ than per-story.
 - **Decision:** Saved-game documents stay at format version 1 with #292's optional `quiet` key; the fixture README's rule now asks for a version bump only on an incompatible change.
   **Why:** Owner decision 2026-09-29: older builds ignore an unknown key, and `store_fixture_test.dart` already asserts what the v1 fixture, which lacks the key, decodes to.
   **Issue:** #292
+
+## /n8-exec M6 — 2026-09-30
+
+- **Decision:** M5 counts as executed although #50, #53, #54 and #56 are open: each carries a "Done" comment on PR #289 and was left open only for a manual box that M6's device stories (#61, #62, #64) now own.
+  **Why:** The in-order precondition asks whether the milestone's work landed, and it did; the open boxes are the device checks this milestone exists to run.
+  **Issue:** #50, #53, #54, #56
+- **Decision:** #59's local signed build loads the four `HS_` values through `set_ci_secrets.sh`'s own `read_credential` parser from a scratch wrapper, never sourcing the credentials file or echoing a value, then runs `tools/gate.sh` unchanged.
+  **Why:** The AC asks for the documented local path with the variables exported; parsing is the project's rule for that file (#119, #126), and the wrapper adds no committed code.
+  **Issue:** #59
+- **Decision:** `tools/verify_release_artifact.sh` also compares the downloaded bundle's sha256 with the `.sha256` the release job uploads beside it, and exits 4 on a mismatch.
+  **Why:** The story's point is checking the exact file the run uploaded; the run already records its digest, so a mismatch is cheap to catch and would otherwise pass silently.
+  **Issue:** #59
+- **Decision:** #328's pause moves into a post-frame callback in the board screen's `didPush`, rather than pausing before every push.
+  **Why:** Fresh board pushes come from several call sites; deferring in the one screen covers all of them. Cost: a board fading in over a running game can show unpaused for one frame.
+  **Issue:** #328
+- **Decision:** #60's mode table uses the supported pairs M2 settled (4×4 Easy only; 6×6 to Hard), not the planner's eleven rows, and its sections follow the menu's real order (Statistics, How to play, Settings); the test holds both to the code.
+  **Why:** The planner's list predates M2's narrowed table (2026-09-23) and misordered two menu rows; the story's own rule is "menu-navigation order" and the engine's table.
+  **Issue:** #60
+- **Decision:** `docs/test-plan.md` is excluded from the GitHub Pages site via `docs/_config.yml`, and `.n8/memory/pages.md` names the exception; #60 created `.n8/memory/device-testing.md` with the link only, for #59 to fill.
+  **Why:** Pages renders any `.md` in `docs/`, and the plan is an internal checklist; #60's AC needs the memory file to link the run log before #59's device block exists.
+  **Issue:** #60, #59
+- **Decision:** #66's "each phase is a named `testWidgets` step" is a named step inside `test_driver/app_flow_test.dart`'s own runner (`step(name, body)`), which prints `STEP ok|FAIL <name>`, stops at the first failure, screenshots it, and writes the step list to `build/e2e/<phase>.json`.
+  **Why:** `testWidgets` needs `flutter_test`, which cannot run in the host-side driver, and `package:test` is not a dependency (invariant 3); a driver file is a plain program, as #57's `store_app_test.dart` is.
+  **Issue:** #66's AC wording only.
+- **Decision:** #66's no-op store is the composition root's existing "no store" path — `kSaveDisabled` (`kDebugMode && bool.fromEnvironment('HS_DISABLE_SAVE')`, lib/ui/app.dart) makes the store factory yield null, which `GameController` already treats as "persist nothing" — rather than a store class that answers `absent`. `tools/e2e.sh --no-save` is therefore a debug build.
+  **Why:** `AppStore` is a `final class`, so no substitute can implement it without a new interface in lib/; the null path gives the behaviour the plan asked for (the app runs, remembers nothing, never throws). The `kDebugMode` gate is the second-pass plan's; `save_switch_guard_test.dart` holds it, with three mutations.
+  **Issue:** #66.
+- **Decision:** The process death is a foreground `am force-stop` with no Home press first, so no lifecycle callback runs and the restore proves the debounced save, not the pause flush. The part-played game's pencil marks are placed after the clock passes five seconds so the save they cause carries a non-zero time.
+  **Why:** A foreground kill is the stricter case: whatever the player did more than the save's debounce before the kill must survive.
+  **Issue:** #66, #61 (its kill check uses the same command).
+- **Decision:** #65's phase-threshold rule is reported by the soak (a second table, and a NOTE per pair) but does not fail the run; only uniqueness, requested band, the golden fingerprints and the ceiling do.
+  **Why:** #65's test plan lists those as the soak's assertions; the phase rule is a decision about copy that #65 makes from the table. On the sudoku-dev emulator (2026-09-30, `tools/soak.sh --device emulator-5570`, 20 seeds) CARVING GIVENS was over half the wall clock on 11 of 14 pairs, because every discarded attempt is spent in that phase, so the copy question is live.
+  **Issue:** #65 (the copy decision and #40's amendment), #40.
+- **Decision:** The soak's golden-fingerprint assertion was proven by corrupting one hash in `test/fixtures/golden_boards.json` (4×4 seed 1, `…58d` → `…580`) for a one-seed run on `sudoku-dev` (2026-09-30, `tools/soak.sh --device emulator-5580 --seeds 1`): it exited 1 with `FAIL soak-golden: the device computed {"shape":"4x4","seed":1,"hash":"054513b312a5f58d",…}`, and the file was restored. The ceiling assertion is left to its natural proof on `sudoku-min` (#61), where 16×16 Evil is expected to overrun; uniqueness has not been seen failing, because breaking the engine to show it was refused by the session's permission classifier.
+  **Why:** A soak that has never failed is not yet evidence (CLAUDE.md); a fixture edit shows the comparison is live without touching the engine.
+  **Issue:** #65
+- **Decision:** #65's budget (AC4) and phase-label (AC5) decisions wait for the `sudoku-min` and owner's-phone soaks; the `sudoku-dev` table is not the evidence either criterion names.
+  **Why:** `sudoku-dev` is a host-accelerated emulator: 16×16 Evil's worst case there was 14,041 ms against the 15 s ceiling, so the slowest target will decide the budget, and the phase shares should be read from the same runs.
+  **Issue:** #65, #40
+- **Decision:** #61's release build under test was built from the `v0.9.0-rc.1` tag in a scratch worktree with no `HS_` variables (build number 1041, the release run's own code), so it is signed with the debug key; `build.gradle.kts` falls back to it by design when none of the four are set.
+  **Why:** An emulator install needs no upload key, and building from the tag keeps the source identical to the uploaded candidate without loading any secret into an agent's run; there is no `bundletool` on the machine to unpack the uploaded AAB, and fetching one was not planned.
+  **Issue:** #61
+- **Decision:** Three premises in #61's plan were false and the pass worked around each rather than adding code: the isolate does not read `HS_GENERATION_CEILING_MS` (`kGenerationCeiling` is a fixed 15 s), so the timeout path was exercised with a throwaway local build at a 1-second ceiling, reverted after, and it showed "GENERATION FAILED / Couldn't build a board in time" with a working TRY AGAIN; the controller does not log `GenerationEvent`s, so 16×16 Evil's time was measured by polling screenshots (6.1–6.6 s, 7.4–8.1 s, 11.5–12.0 s on three random seeds); and `tools/install_build.sh` does not exist, so the APK went in with `adb install`.
+  **Why:** Implementation-detail staleness that the story's intent survives: the timeout path was exercised deliberately, which is what the criterion asks. Adding a production define only to serve a manual check would be new surface for a one-off; #65's soak measures timing directly, so nothing downstream depends on the log.
+  **Issue:** #61, #65
+- **Decision:** `sudoku-big` is 400 dpi (the story named no density), and `sudoku-min` keeps the story's 5.0-inch diagonal although 720×1280 at 320 dpi is geometrically 4.6 inches.
+  **Why:** 400 dpi is a typical density for a 1080×2400 phone; the density, not the nominal diagonal, sets the 360-dp width the small-screen checks depend on.
+  **Issue:** #61
+- **Decision:** #61's defects were filed as #330 (`sev:medium`: 16×16 selection ring hides pencil marks — it hides what the player marked in the cell they are working on, the owner's "misleads" bar) and #331 (`sev:low`: the loading notice runs edge to edge at 360 dp — cosmetic, controls work), under epic #58 per #67's convention.
+  **Why:** The project's severity labels are the `sev:*` set in `reference/github.md`, and #64's blocking bar (misleads or blocks play) sorts the two.
+  **Issue:** #330, #331
+- **Decision:** #63's twelve candidates (three per clip) were generated on 2026-09-30 with the owner's ElevenLabs key into `build/sfx-audition/` (gitignored), before the owner's audition.
+  **Why:** #63's first criterion directs `tools/sfx.py` to run with the owner's key, so the spend is the planned one; generating ahead leaves the owner only the listening and the choice.
+  **Issue:** #63
+- **Decision:** #63's code lands in two parts: `tools/sfx.py --audition` (with `test/guards/sfx_audition_test.dart` and eight mutations) now, and the upload-blocking `tools/check_no_placeholder_audio.sh` + `release.yml` step + `release_workflow_guard_test.dart` + README wording held on branch `m6-audio-gate` @ `94e2958` until the owner's clips are installed.
+  **Why:** Landing the hard failure while the four placeholders are still in `assets/audio/` would fail every candidate tag's `ship` job, and the README wording describes clips that do not exist yet.
+  **Issue:** #63
+- **Decision:** `--audition` writes `selections.json` beside the candidates (`build/sfx-audition/`, not the Discretion line's `build/sfx-candidates/`), takes Enter rather than a single keypress, runs `flutter run --release --no-resident` with flutter's stdin closed, and plays each take at its `MIX_DB` level; `--install` still takes the file path rather than reading `selections.json`.
+  **Why:** The candidates live in `build/sfx-audition/`; line input is scriptable and testable, and a closed stdin stops flutter swallowing the Enter; takes at the shipping level are what the owner should judge. Reading `selections.json` in `--install` is a convenience left for the install step.
+  **Issue:** #63
+- **Decision:** #330 is fixed by keeping a selected cell's pencil marks inside its ring, not by moving or thinning the ring: the selected cell's notes are inset by the ring's width, each mark is centred on its ink rather than its line box, and a mark's size is capped so its ink fits its slot. Only 16×16 marks are ever capped by that rule, and only in the selected (or hinted) cell to any visible degree; 4×4, 6×6 and 9×9 marks keep the design's `noteSize`, which the regression test asserts.
+  **Why:** The design's ring is an inset 2-point stroke, and in a 16×16 cell at a small phone's scale the four rows of marks have less room inside it than their natural ink needs, so something has to give. Drawing the ring outside or across the cell edge would change its look on every size and cover neighbouring cells' marks; drawing it beneath the marks would hide yellow hinted marks on the yellow ring. A slightly smaller mark in the one cell being worked on was the least visible change.
+  **Issue:** #330, #67
+- **Decision:** #331's loading notice and Back keep the design's 362-point width wherever the design's own 14-point side inset fits beside it (390 points and wider), and below that take the screen's width less the app's 20-point gutters (`kScreenGutter`, now named in `screen_frame.dart`), so a 360-point screen gets 320.
+  **Why:** `min(362, width − 40)` alone would also have narrowed the design frame's 390-point layout to 350, which is not the bug; the design places the notice on a 14-point inset at 390, and the gutter is what every other screen keeps once the design no longer fits.
+  **Issue:** #331, #67

@@ -2,6 +2,8 @@
 // selection ring, coloured by a board theme. It reads the model's derived
 // flags and applies the display toggles; it holds no rule logic and no state.
 
+import 'dart:math' as math;
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:honest_sudoku/game/game.dart';
@@ -107,6 +109,7 @@ class BoardGrid extends StatelessWidget {
                       theme: theme,
                       layout: layout,
                       scale: scale,
+                      ringWidth: grid.thickPx,
                       onTap: onTapCell,
                     ),
                   ),
@@ -183,6 +186,7 @@ class _Cell extends StatelessWidget {
     required this.theme,
     required this.layout,
     required this.scale,
+    required this.ringWidth,
     required this.onTap,
   });
 
@@ -191,6 +195,7 @@ class _Cell extends StatelessWidget {
   final BoardTheme theme;
   final BoardLayout layout;
   final double scale;
+  final double ringWidth;
   final ValueChanged<int> onTap;
 
   @override
@@ -218,7 +223,11 @@ class _Cell extends StatelessWidget {
       );
     } else if (notes.isNotEmpty) {
       content = Padding(
-        padding: EdgeInsets.all(1 * scale),
+        // The ring is drawn over the cell, so a selected cell's marks keep
+        // clear of it (#330).
+        padding: EdgeInsets.all(
+          state.selected == index ? ringWidth : 1 * scale,
+        ),
         child: _Notes(
           notes: notes,
           layout: layout,
@@ -248,6 +257,19 @@ class _Cell extends StatelessWidget {
   }
 }
 
+// IBM Plex Mono's digits and A–G reach from 12 units below the baseline to
+// 710 above, of 1000 to the em (read 2026-09-30 with fontTools from
+// assets/fonts/IBMPlexMono-Medium.ttf). A mark is sized and centred by that
+// ink rather than by its line box, which is taller: inside a selected 16×16
+// cell's ring there is room for the ink and little else (#330).
+
+/// The ink's middle, in ems above the baseline.
+const double _inkMidEm = .349;
+
+/// The slot height a mark needs, in ems: its ink and a margin for
+/// antialiasing.
+const double _inkEm = .8;
+
 /// Pencil marks in fixed slots: value v always sits in slot v − 1 of a grid
 /// `noteCols` wide, so a mark never moves when another is added.
 class _Notes extends StatelessWidget {
@@ -266,38 +288,63 @@ class _Notes extends StatelessWidget {
   final bool bigDigits;
 
   @override
-  Widget build(BuildContext context) {
-    final cols = layout.noteCols;
-    final style = plexMono(
-      layout.noteSize(bigDigits: bigDigits),
-      scale: scale,
-      color: color,
-    );
-    return Column(
-      children: [
-        for (var r = 0; r < layout.noteRows; r++)
-          Expanded(
-            child: Row(
-              children: [
-                for (var c = 0; c < cols; c++)
-                  Expanded(
-                    child: notes.contains(r * cols + c + 1)
-                        ? Center(
-                            child: Text(
-                              layout.shape.symbolFor(r * cols + c + 1),
-                              softWrap: false,
-                              textScaler: TextScaler.noScaling,
-                              style: style,
-                            ),
-                          )
-                        : const SizedBox.shrink(),
-                  ),
-              ],
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, box) {
+      final cols = layout.noteCols;
+      final slotHeight = box.maxHeight / layout.noteRows;
+      final size = math.min(
+        layout.noteSize(bigDigits: bigDigits) * scale,
+        math.min(slotHeight, box.maxWidth / cols) / _inkEm,
+      );
+      final style = plexMono(size, scale: 1, color: color);
+      final probe = TextPainter(
+        text: TextSpan(text: '0', style: style),
+        textDirection: TextDirection.ltr,
+        textScaler: TextScaler.noScaling,
+      )..layout();
+      final ascent = probe.computeDistanceToActualBaseline(
+        TextBaseline.alphabetic,
+      );
+      probe.dispose();
+      // The glyphs are drawn on the ascent rounded to a whole point
+      // (measured 2026-09-30 under flutter_test on Flutter 3.47.5, Plex Mono
+      // at 3.75 to 100 points), so the baseline is set off by what that
+      // rounding takes back.
+      final baseline =
+          slotHeight / 2 + size * _inkMidEm + ascent - ascent.roundToDouble();
+      return Column(
+        children: [
+          for (var r = 0; r < layout.noteRows; r++)
+            Expanded(
+              child: Row(
+                children: [
+                  for (var c = 0; c < cols; c++)
+                    Expanded(
+                      child: notes.contains(r * cols + c + 1)
+                          ? OverflowBox(
+                              maxWidth: double.infinity,
+                              maxHeight: double.infinity,
+                              alignment: Alignment.topCenter,
+                              child: Baseline(
+                                baseline: baseline,
+                                baselineType: TextBaseline.alphabetic,
+                                child: Text(
+                                  layout.shape.symbolFor(r * cols + c + 1),
+                                  softWrap: false,
+                                  textScaler: TextScaler.noScaling,
+                                  style: style,
+                                ),
+                              ),
+                            )
+                          : const SizedBox.shrink(),
+                    ),
+                ],
+              ),
             ),
-          ),
-      ],
-    );
-  }
+        ],
+      );
+    },
+  );
 }
 
 /// Draws the grid lines over the cells.
