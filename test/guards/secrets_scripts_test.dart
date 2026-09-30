@@ -15,465 +15,40 @@ library;
 // real credential is read, and nothing leaves the machine. The stubs record
 // byte LENGTHS, never values.
 
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'leak_scan.dart';
 import 'repo_files.dart';
 import 'workflow_yaml.dart';
 
 late Directory _tmp;
 
 String get _home => '${_tmp.path}/home';
-String get _credentials =>
-    '$_home/HonestArcadeApps/secrets/sudoku-signing-credentials.txt';
+String get _credentials => credentialsFile(_home);
 String get _ghLog => '${_tmp.path}/gh.log';
 
 /// Scratch space handed to every script, inside the scanned tree.
 String get _scratch => '${_tmp.path}/scratch';
 
-void _writeExecutable(String path, String body) {
-  File(path)
-    ..createSync(recursive: true)
-    ..writeAsStringSync(body);
-  Process.runSync('chmod', ['+x', path]);
-}
-
-/// Values that must never appear anywhere a script can write.
-///
-/// **Derived, not registered.** The previous version asked each test to call
-/// `_plant`, and `_plant` was called in exactly two places — so `_run` scanned
-/// on every invocation over an empty set for every other test, and rows 3 and
-/// 4 of #176's table survived in a group that planted nothing. "A test cannot
-/// forget to check" was true of the scan and false of the planting (#200).
-///
-/// So the sentinels come from the environment the script is actually handed,
-/// plus the credentials file it is pointed at. A test that passes a secret is
-/// scanned for that secret because it passed it, and there is no separate
-/// step to leave out.
-final Set<String> _sentinels = {};
-
-/// Sentinels whose home IS the credentials file.
-///
-/// That file exists to hold these values, so finding them there is not a
-/// leak. The previous version excluded the whole file unconditionally, which
-/// any script could write any other secret into (#200) — this excludes the
-/// values that came from it and nothing else, so a private key appended to
-/// the same file is still caught.
-final Set<String> _credentialSentinels = {};
-
-/// Environment variable names whose VALUES are secrets.
-///
-/// Anything ending in these, so `HS_KEYSTORE_PASS`, `KEYSTORE_PASS` and
-/// `HS_STUB_PASS` are all covered without listing each.
-const _secretSuffixes = [
-  'PASS',
-  'PASSWORD',
-  'SECRET',
-  'TOKEN',
-  'KEY',
-  'B64',
-  'JSON',
-];
-
-// Deliberately NOT here: ALIAS. The upload key's alias is public by design —
-// android/signing/README.md publishes it beside the certificate fingerprint,
-// and keytool takes it on the command line because it is not a secret.
-// Treating it as one made every legitimate `-alias upload` a leak (#200).
-
-bool _looksSecret(String name) {
-  final upper = name.toUpperCase();
-  return _secretSuffixes.any(upper.endsWith);
-}
-
-/// Adds every secret-shaped value in [env], and the contents of the
-/// credentials file if one exists, to the scan set.
-/// The variables the credentials file exists to carry.
-///
-/// A value derived from one of these is at home in that file. Anything else
-/// found there — a service-account private key, say — is a leak, so the
-/// exclusion cannot be abused by appending to it (#200).
-const _credentialHomed = {
-  'HS_KEYSTORE_PASS',
-  'HS_KEY_PASS',
-  'HS_KEY_ALIAS',
-  'HS_KEYSTORE_PATH',
-};
-
-void _deriveSentinels(Map<String, String> env) {
-  for (final entry in env.entries) {
-    if (!_looksSecret(entry.key)) continue;
-    _addSentinel(entry.value, entry.key);
-    if (_credentialHomed.contains(entry.key.toUpperCase())) {
-      _credentialSentinels.add(entry.value.trim());
-    }
-  }
-  final creds = File(_credentials);
-  if (creds.existsSync()) {
-    // Four spellings, not one. The previous pattern required a double quote
-    // immediately before end-of-line, so a single-quoted value, an unquoted
-    // value and a value followed by a trailing comment all derived NOTHING —
-    // and the three tests written for those spellings scanned an empty
-    // sentinel set and passed by asserting about nothing (#208).
-    for (final m in RegExp(
-      r'''^\s*export\s+(\w+)=(?:"([^"]*)"|'([^']*)'|([^\s#]+))''',
-      multiLine: true,
-    ).allMatches(creds.readAsStringSync())) {
-      // By NAME, like the environment above. The file also carries
-      // HS_KEYSTORE_PATH, which is a path the scripts print in error
-      // messages on purpose — treating every exported value as a secret made
-      // "the keystore named here is not readable: /nonexistent" a leak.
-      if (!_looksSecret(m.group(1)!)) continue;
-      final value = m.group(2) ?? m.group(3) ?? m.group(4) ?? '';
-      _addSentinel(value, 'credentials file');
-      if (_credentialHomed.contains(m.group(1)!.toUpperCase())) {
-        _credentialSentinels.add(value.trim());
-      }
-    }
-  }
-}
-
-/// A value too short to search for is a hole, not a pass.
-///
-/// `_plant` silently dropped anything under six characters, and the pre-flight
-/// group's fixture password is `"pw"` — so that group's scan was doubly dead.
-/// A fixture that cannot be scanned for now fails loudly rather than
-/// disabling the check it was written for (#200).
-void _addSentinel(String value, String where) {
-  final v = value.trim();
-  if (v.isEmpty) return;
-  // Eight, to match `_leakForms`: below eight only the verbatim form is
-  // searched, so a seven-character fixture piped through `base64` would walk
-  // past the scan while the fixture looked covered. The floor here was four
-  // — long enough that a verbatim match means something, and exactly the gap
-  // #220 demonstrated and asked to close (#230).
-  if (v.length < 8) {
-    fail(
-      'leak-fixture: the value of `$where` is ${v.length} character(s); the '
-      'transformed forms are searched from eight. Give the fixture a longer '
-      'distinctive value — a short one silently disables most of the leak '
-      'scan for this test',
-    );
-  }
-  _sentinels.add(v);
-}
-
-/// Every form of [secret] a script could emit instead of the literal.
-///
-/// A leak does not have to be faithful to be a leak. The previous set was five
-/// fixed forms, so rot13, gzip, URL-encoding, case folding, the LAST eight
-/// characters and a value split across two writes all walked past it (#200).
-///
-/// This cannot be complete — no fixed set can be — so the forms here are the
-/// ones reachable with a single shell builtin or a command these scripts
-/// already use. The honest statement of scope is in the issue, not in a
-/// comment claiming the property is general.
-Iterable<({String form, String how})> _leakForms(String secret) sync* {
-  yield (form: secret, how: 'verbatim');
-  // Transformed forms only for values long enough that a match means
-  // something. A four-character password is searched verbatim, but its
-  // LOWERCASED form is four ordinary letters: `Pass` lowercased matched
-  // `-storepass:env` in recorded keytool argv and failed eight tests that
-  // had nothing to do with a leak. Lowering the floor from six to four made
-  // that strictly more likely, and the guard broke on a real short password
-  // rather than on a real leak (#208).
-  if (secret.length < 8) return;
-  yield (form: base64.encode(utf8.encode(secret)), how: 'base64');
-  yield (form: secret.split('').reversed.join(), how: 'reversed');
-  yield (
-    form: utf8
-        .encode(secret)
-        .map((b) => b.toRadixString(16).padLeft(2, '0'))
-        .join(),
-    how: 'hex',
-  );
-  yield (form: secret.toLowerCase(), how: 'lowercased');
-  yield (form: secret.toUpperCase(), how: 'uppercased');
-  yield (form: _rot13(secret), how: 'rot13');
-  yield (form: Uri.encodeComponent(secret), how: 'URL-encoded');
-  // A slice is only evidence if the slice itself is distinctive. The tail of
-  // `S3CRET-store-password` is the word `password`, which appears in the
-  // keystore step's own English explanation — so the slice matched ordinary
-  // prose and reported a leak that had not happened (#208). Requiring a
-  // digit or punctuation in the slice keeps it a fingerprint rather than a
-  // dictionary lookup.
-  bool distinctive(String f) => RegExp(r'[^A-Za-z]').hasMatch(f);
-  if (secret.length >= 8) {
-    final head = secret.substring(0, 8);
-    final tail = secret.substring(secret.length - 8);
-    if (distinctive(head)) {
-      yield (form: head, how: 'its first 8 characters');
-    }
-    if (distinctive(tail)) {
-      yield (form: tail, how: 'its last 8 characters');
-    }
-  }
-}
-
-String _rot13(String s) => String.fromCharCodes(
-  s.codeUnits.map((c) {
-    if (c >= 0x41 && c <= 0x5A) return (c - 0x41 + 13) % 26 + 0x41;
-    if (c >= 0x61 && c <= 0x7A) return (c - 0x61 + 13) % 26 + 0x61;
-    return c;
-  }),
+/// Every file under the temporary tree is read after each run, `$HOME` and
+/// `$RUNNER_TEMP` included: that is where the workflows put the decoded
+/// keystore, and where a debugging dump naturally lands. The stubs' argv logs
+/// are reported by name.
+final _scan = LeakScan(
+  roots: () => [_home, '${_tmp.path}/runner', _tmp.path],
+  argvLogs: {
+    for (final log in const ['gh.log', 'keytool.log', 'gcloud.log', 'curl.log'])
+      log: () => '${_tmp.path}/$log',
+  },
+  scratch: () => _scratch,
 );
-
-/// Everything a script wrote that a human or another process could read.
-///
-/// `$HOME` alone was not enough: `$RUNNER_TEMP` is where these workflows put
-/// the decoded keystore, `/tmp` is where a debugging dump naturally lands, and
-/// the scripts `cd` to the repository root (#200).
-List<({String where, String text, String path})> _channels(
-  String out,
-  String err,
-) {
-  final channels = <({String where, String text, String path})>[
-    (where: 'stdout', text: out, path: ''),
-    (where: 'stderr', text: err, path: ''),
-  ];
-  for (final log in const ['gh.log', 'keytool.log', 'gcloud.log', 'curl.log']) {
-    final f = File('${_tmp.path}/$log');
-    if (f.existsSync()) {
-      channels.add((
-        where: '$log (recorded argv)',
-        text: f.readAsStringSync(),
-        path: f.path,
-      ));
-    }
-  }
-  // The repository root is the scripts' WORKING DIRECTORY — `_exec` passes it
-  // — and it was not scanned, though this list's own comment cited "the
-  // scripts cd to the repository root" as a reason for the list. A password
-  // written to `$PWD` was invisible, and on CI that directory is
-  // $GITHUB_WORKSPACE, which upload-artifact and actions/cache sweep (#208).
-  //
-  // Only files the run CREATED are read: the repository is full of committed
-  // text, and reading all of it would be slow and would match on prose.
-  for (final dir in [_home, _scratch, '${_tmp.path}/runner', _tmp.path]) {
-    // `$RUNNER_TEMP/play-sa.json` is where the play step is SUPPOSED to put
-    // the service-account key: written with umask 077 and removed by the
-    // workflow's `forget` step, which `if: always()` guarantees runs. That
-    // file being there is the step working, not a leak — the same
-    // distinction the credentials file gets, and drawn by path identity so
-    // nothing else can hide behind it (#208).
-    _collectFiles(Directory(dir), channels);
-  }
-  _collectWorkspaceLeaks(channels);
-  return channels;
-}
-
-/// Files a run left in the repository root, which is its working directory.
-///
-/// `_exec` passes `workingDirectory: repoRoot.path`, and that directory was
-/// not scanned though `_channels`'s own comment cited "the scripts cd to the
-/// repository root" as a reason for its list. A password written to `$PWD`
-/// was invisible, and on CI that directory is $GITHUB_WORKSPACE, which
-/// upload-artifact and actions/cache sweep (#208).
-///
-/// Only the TOP LEVEL, and only files git does not already track: the
-/// repository is full of committed text that would match on prose, and
-/// `build/` alone is tens of megabytes. A script that writes a secret into
-/// the workspace writes it where it is standing.
-void _collectWorkspaceLeaks(
-  List<({String where, String text, String path})> channels,
-) {
-  // Computed HERE, per scan, not once for the whole suite (#227).
-  final unmodified = _unmodifiedAtRoot();
-  for (final entity in repoRoot.listSync()) {
-    if (entity is! File) continue;
-    final name = entity.path.substring(repoRoot.path.length + 1);
-    if (unmodified.contains(name)) continue;
-    // latin1 over the bytes, like the `$RUNNER_TEMP` scan below and for the
-    // same reason: `readAsStringSync` throws on the first byte that is not
-    // valid UTF-8, and skipping the file then hides everything else in it —
-    // a secret plus one junk byte is invisible. The sibling scan learned
-    // this in #200; this one still had the swallow at #236.
-    final text = latin1.decode(entity.readAsBytesSync(), allowInvalid: true);
-    channels.add((
-      where: 'file \$GITHUB_WORKSPACE/$name',
-      text: text,
-      path: entity.path,
-    ));
-  }
-}
-
-/// Top-level files whose content still matches the index, AT SCAN TIME.
-///
-/// The previous version was a lazy `final`: both git queries ran ONCE, on
-/// first use, before any script under test had modified anything. So a file a
-/// script overwrote DURING the run was not modified yet when the set was
-/// built, stayed in the skip set, and was never read — while the docstring
-/// claimed the opposite (#227).
-///
-/// Measured: on a clean tree the leak was invisible, and the same tree went
-/// red on a second run purely because the first run's debris made the file
-/// modified before the set was computed. A guard whose verdict depends on
-/// leftover state is worse than no guard, because it looks like one.
-///
-/// A function, therefore, called per scan. `git ls-files --modified` is a
-/// stat-and-hash over a dozen root files; that cost is not worth a cache that
-/// is wrong.
-Set<String> _unmodifiedAtRoot() {
-  Set<String> topLevel(String out) => {
-    for (final line in out.split('\n'))
-      if (!line.contains('/') && line.isNotEmpty) line,
-  };
-  // chokepoint-exempt: reads the git index to tell a committed file from one
-  // a script created or overwrote; passes no secret and its output is a list
-  // of file names.
-  final tracked = Process.runSync(
-    'git',
-    ['ls-files'],
-    workingDirectory: repoRoot.path,
-    stdoutEncoding: utf8,
-  );
-  // chokepoint-exempt: reads which tracked files differ from the index, so a
-  // committed file a run overwrote is scanned rather than skipped; handles no
-  // secret and its output is a list of names.
-  final modified = Process.runSync(
-    'git',
-    ['ls-files', '--modified'],
-    workingDirectory: repoRoot.path,
-    stdoutEncoding: utf8,
-  );
-  return topLevel(tracked.stdout.toString())
-    ..removeAll(topLevel(modified.stdout.toString()));
-}
-
-void _collectFiles(
-  Directory dir,
-  List<({String where, String text, String path})> channels,
-) {
-  if (!dir.existsSync()) return;
-  for (final entity in dir.listSync(recursive: true)) {
-    if (entity is! File) continue;
-    // Skip the harness's own fixtures. `bin/` holds the stub executables this
-    // file writes, and a stub that echoes a value it was given is the test
-    // working, not a script leaking.
-    if (entity.path.startsWith('${_tmp.path}/bin/')) continue;
-    // The blanket `.sh` exemption this replaces was an unbounded suffix rule
-    // justified as "the harness's own fixtures": a secret written to
-    // `$RUNNER_TEMP/dump.sh` anywhere in the tree was exempt (#208). Scope it
-    // to the directory the fixtures are actually in.
-    if (entity.path.startsWith('${_tmp.path}/fixtures/')) continue;
-    String text;
-    try {
-      text = entity.readAsStringSync();
-    } catch (_) {
-      // Not UTF-8. Read the BYTES instead of skipping: the previous version
-      // skipped any unreadable file, so two junk bytes in front of a secret
-      // hid it completely, while the comment claimed only keystores were
-      // skipped (#200).
-      try {
-        text = latin1.decode(entity.readAsBytesSync(), allowInvalid: true);
-      } catch (_) {
-        continue;
-      }
-    }
-    // PATH IDENTITY, which is what the comment above already claimed. The
-    // suffix form exempted `$RUNNER_TEMP/keep/play-sa.json` too — a copy the
-    // workflow's `forget` step does not remove, so it survives the job (#208).
-    if (entity.path == '${_tmp.path}/runner/play-sa.json') continue;
-    if (entity.path == '$_scratch/runner/play-sa.json') continue;
-    channels.add((
-      where: 'file ${entity.path.replaceFirst(_home, r'$HOME')}',
-      text: text,
-      path: entity.path,
-    ));
-  }
-}
-
-/// Fails if any derived value, in any of its forms, reached any channel.
-void _assertNoLeak(String out, String err, String why) {
-  final channels = _channels(out, err);
-  for (final secret in _sentinels) {
-    final ownHome = _credentialSentinels.contains(secret);
-    for (final form in _leakForms(secret)) {
-      if (form.form.length < 4) continue;
-      for (final channel in channels) {
-        // The credentials file is this value's own home, and only for values
-        // that came from it.
-        // Compared on the real path: `where` is rewritten for display, so
-        // matching on it silently never fired.
-        // The file holds an escaped spelling, so the raw value and the
-        // written one differ as strings — match on the value's home, not on
-        // the exact bytes.
-        if (ownHome && channel.path == _credentials) continue;
-        expect(
-          channel.text,
-          isNot(contains(form.form)),
-          reason:
-              'leak: $why — a secret reached ${channel.where}'
-              '${form.how == 'verbatim' ? '' : ' (as ${form.how})'}',
-        );
-      }
-    }
-  }
-}
-
-/// The ONE way this file starts a process that handles a secret.
-///
-/// #200 moved the leak scan into `_run` and claimed "there is no registration
-/// step left to leave out". There was: `_run` is not how the workflow steps
-/// are tested. Four groups built their own `Process.runSync` and never
-/// reached the scan, so `PLAY_SERVICE_ACCOUNT_JSON` echoed into
-/// `$GITHUB_STEP_SUMMARY` — rendered, retained, downloadable — passed with
-/// 404 green (#208).
-///
-/// The hole did not close; it moved from "a test can forget to plant" to
-/// "a test can forget to use `_run`". So the scan now lives at the single
-/// point where a process is started, and `no raw Process.runSync starts a
-/// script` asserts that nothing bypasses it. That test is the reason this
-/// one cannot quietly stop covering things: the bypass became detectable
-/// rather than merely discouraged.
-({int code, String out, String err}) _exec(
-  String executable,
-  List<String> arguments, {
-  Map<String, String>? environment,
-  String? workingDirectory,
-  String? why,
-}) {
-  final env = environment == null
-      ? null
-      : {
-          // Scratch space inside the scanned tree, for every runner — not
-          // only `_run`'s. $RUNNER_TEMP is where the workflows put the
-          // decoded keystore.
-          'TMPDIR': _scratch,
-          'RUNNER_TEMP': '$_scratch/runner',
-          ...environment,
-        };
-  Directory('$_scratch/runner').createSync(recursive: true);
-  _deriveSentinels(env ?? const {});
-  final r = Process.runSync(
-    executable,
-    arguments,
-    workingDirectory: workingDirectory,
-    includeParentEnvironment: environment == null,
-    environment: env ?? const {},
-    stdoutEncoding: utf8,
-    stderrEncoding: utf8,
-  );
-  final out = r.stdout.toString();
-  final err = r.stderr.toString();
-  // ALWAYS. The scan used to be conditional on `environment` being passed,
-  // so `_exec(...)` with the argument omitted went THROUGH the chokepoint
-  // and silently derived nothing and scanned nothing — a bypass no amount of
-  // strengthening the source rule could have caught, because it was in the
-  // chokepoint's own signature (#208). A call that handles no secret loses
-  // nothing by being scanned; a call that handles one must not be able to
-  // opt out by leaving an argument off.
-  //
-  // Re-derive first: the credentials file may have been written BY this run.
-  _deriveSentinels(const {});
-  _assertNoLeak(out, err, why ?? executable);
-  return (code: r.exitCode, out: out, err: err);
-}
 
 ({int code, String out, String err}) _run(
   String script, {
   Map<String, String> env = const {},
+  String? why,
 }) {
   final environment = {
     'PATH':
@@ -482,22 +57,14 @@ void _assertNoLeak(String out, String err, String why) {
     'GH_LOG': _ghLog,
     ...env,
   };
-  // Derived from what this run is actually handed, before it runs. No test
-  // has to remember to register anything (#200).
-  return _exec(
+  final r = _scan.run(
     '/bin/bash',
     [script],
     workingDirectory: repoRoot.path,
     environment: environment,
-    why: script,
+    why: why ?? script,
   );
-}
-
-/// Sentinels are per-test; a value planted by one group must not make another
-/// group's unrelated output look like a leak.
-void _clearSentinels() {
-  _sentinels.clear();
-  _credentialSentinels.clear();
+  return (code: r.code, out: r.out, err: r.err);
 }
 
 void _writeCredentials(String text) {
@@ -542,7 +109,7 @@ void main() {
     _tmp = Directory.systemTemp.createTempSync('hs-secrets-guard');
     Directory('$_home/HonestArcadeApps/secrets').createSync(recursive: true);
     // Records the name and byte length of what it is given. Never the value.
-    _writeExecutable('${_tmp.path}/bin/gh', '''#!/bin/sh
+    _scan.writeExecutable('${_tmp.path}/bin/gh', '''#!/bin/sh
 if [ "\$1 \$2" = "secret list" ]; then exit 0; fi
 n=\$(wc -c | tr -d ' ')
 # argv as well as the byte count: recording only the length made the
@@ -554,13 +121,15 @@ echo "SET bytes=\$n argv=\$*" >> "\$GH_LOG"
     // `cd "$(dirname "$0")/.."` runs before any check, so the narrowed PATH
     // used by the no-gcloud test still needs this one binary.
     for (final tool in const ['dirname']) {
-      final found = Process.runSync('command', [
-        '-v',
-        tool,
-      ], runInShell: true).stdout.toString().trim();
-      if (found.isNotEmpty) {
-        Link('${_tmp.path}/bin/$tool').createSync(found);
-      }
+      final found = findOnPath(tool);
+      if (found != null) Link('${_tmp.path}/bin/$tool').createSync(found);
+    }
+    // `$RUNNER_TEMP/play-sa.json` is where the play step is SUPPOSED to put
+    // the service-account key: written with umask 077, and removed by the
+    // workflow's `forget` step. By path identity, so a copy anywhere else
+    // is still a leak.
+    for (final runner in ['${_tmp.path}/runner', '$_scratch/runner']) {
+      _scan.home('$runner/play-sa.json', const ['PLAY_SERVICE_ACCOUNT_JSON']);
     }
   });
 
@@ -618,7 +187,7 @@ echo "SET bytes=\$n argv=\$*" >> "\$GH_LOG"
       // not be searched even though #176's Fix line named it — and
       // set_ci_secrets.sh:130 asserts `-storepass:env` keeps the password
       // "off the command line and out of the process table" (#190).
-      _writeExecutable(
+      _scan.writeExecutable(
         '${_tmp.path}/bin/keytool',
         '#!/bin/sh\n'
             'printf "%s\\n" "\$*" >> "${_tmp.path}/keytool.log"\n'
@@ -680,7 +249,7 @@ echo "SET bytes=\$n argv=\$*" >> "\$GH_LOG"
       // on this machine but finds a real one on a CI runner with setup-java —
       // so these passed locally and failed in CI against a fake keystore.
       // Controlling the pre-flight is the only way to test the parser alone.
-      _writeExecutable(
+      _scan.writeExecutable(
         '${_tmp.path}/bin/keytool',
         '#!/bin/sh\necho "Key and Certificate Management"\nexit 0\n',
       );
@@ -748,7 +317,7 @@ echo "SET bytes=\$n argv=\$*" >> "\$GH_LOG"
       );
       // Answers `-help` so the probe accepts it as a real keytool, and
       // refuses everything else — a wrong password or alias, in effect.
-      _writeExecutable(
+      _scan.writeExecutable(
         '${_tmp.path}/bin/keytool',
         '#!/bin/sh\n'
             'if [ "\$1" = "-help" ]; then echo "Key and Certificate Management"; exit 0; fi\n'
@@ -774,7 +343,7 @@ echo "SET bytes=\$n argv=\$*" >> "\$GH_LOG"
         'export HS_KEY_ALIAS="upload"\n'
         'export HS_KEY_PASS="PREFLIGHT-PASS-8fJ2"\n',
       );
-      _writeExecutable(
+      _scan.writeExecutable(
         '${_tmp.path}/bin/keytool',
         '#!/bin/sh\necho "Unable to locate a Java Runtime" >&2\nexit 1\n',
       );
@@ -806,27 +375,17 @@ echo "SET bytes=\$n argv=\$*" >> "\$GH_LOG"
     // registering silently dropped it. Declared here for the same reason
     // make_upload_key declares its password: what a stub plants, the stub's
     // test declares (#200).
-    setUp(() => _deriveSentinels(const {'STUB_PRIVATE_KEY': keyBody}));
+    setUp(() => _scan.declare(const {'STUB_PRIVATE_KEY': keyBody}));
 
-    // Registered, not searched here: `_run` scans every channel on every
-    // invocation, so a path this group never thought to list is covered
-    // anyway. That is the difference between #155's three chosen cases and
-    // what #176 asked for (#190).
-    // No registration step. `_run` derives the sentinels from the
-    // environment it passes, and these three values reach the scripts
-    // through the credentials file and through env (#200).
-    tearDown(_clearSentinels);
-
-    void expectNoLeak(({int code, String out, String err}) r, String why) {
-      // `_run` already asserted. Kept as a named call so the tests below
-      // still read as leak tests rather than as exit-code tests.
-      _assertNoLeak(r.out, r.err, why);
-    }
+    // No search here: `_run` scans every channel on every invocation, from
+    // the sentinels it derives from the environment and the credentials file
+    // it hands the script, so a path this group never thought to list is
+    // covered anyway.
 
     test('set_ci_secrets.sh prints names, never values', () {
       final keystore = '${_tmp.path}/fake.keystore';
       File(keystore).writeAsStringSync('not a real keystore');
-      _writeExecutable(
+      _scan.writeExecutable(
         '${_tmp.path}/bin/keytool',
         '#!/bin/sh\necho "Key and Certificate Management"\nexit 0\n',
       );
@@ -851,32 +410,18 @@ echo "SET bytes=\$n argv=\$*" >> "\$GH_LOG"
       };
       cases.forEach((why, credentials) {
         _writeCredentials(credentials);
-        final r = _run(
+        _run(
           'tools/set_ci_secrets.sh',
           env: {'HS_KEYTOOL': '${_tmp.path}/bin/keytool'},
+          why: 'set_ci_secrets.sh, $why',
         );
-        expectNoLeak(r, why);
       });
-
-      // And the complement: the harness must be able to see a leak, or it is
-      // asserting nothing.
-      // chokepoint-exempt: this call exists TO leak, so the scan would fail
-      // it by design. It is the guard on the guard.
-      final leaky = Process.runSync(
-        '/bin/bash',
-        ['-c', 'echo "pass: \$HS_LEAK"'],
-        environment: {'HS_LEAK': password},
-        stdoutEncoding: utf8,
-      );
-      expect(
-        leaky.stdout.toString(),
-        contains(password),
-        reason: 'leak-harness: the search cannot see a value it should',
-      );
+      // That the scan can see a leak at all is `leak_scan_test.dart`'s
+      // channel canaries.
     });
 
     test('setup_play_ci.sh never prints the key it uploads', () {
-      _writeExecutable('${_tmp.path}/bin/gcloud', '''#!/bin/sh
+      _scan.writeExecutable('${_tmp.path}/bin/gcloud', '''#!/bin/sh
 case "\$1 \$2" in "auth list") echo "owner@example.com"; exit 0 ;; esac
 case "\$1 \$2 \$3 \$4" in
   "iam service-accounts keys create")
@@ -888,7 +433,6 @@ exit 0
         'tools/setup_play_ci.sh',
         env: {'HS_PLAY_ACCOUNT': 'owner@example.com'},
       );
-      expectNoLeak(r, 'setup_play_ci.sh');
       expect(
         r.out,
         contains('key id: KEYID'),
@@ -899,7 +443,7 @@ exit 0
 
   group('setup_play_ci.sh', () {
     void stubGcloud(String account) {
-      _writeExecutable('${_tmp.path}/bin/gcloud', '''#!/bin/sh
+      _scan.writeExecutable('${_tmp.path}/bin/gcloud', '''#!/bin/sh
 case "\$1 \$2" in "auth list") echo "$account"; exit 0 ;; esac
 exit 0
 ''');
@@ -919,7 +463,7 @@ exit 0
     });
 
     test('no active login is refused', () {
-      _writeExecutable('${_tmp.path}/bin/gcloud', '#!/bin/sh\nexit 0\n');
+      _scan.writeExecutable('${_tmp.path}/bin/gcloud', '#!/bin/sh\nexit 0\n');
       final r = _run('tools/setup_play_ci.sh');
       expect(r.code, 4, reason: 'no-login: ${r.err}');
     });
@@ -958,45 +502,14 @@ exit 0
     String resolveKeytool() {
       const pinned = '/opt/homebrew/opt/openjdk@21/bin/keytool';
       if (File(pinned).existsSync()) return pinned;
-      final found = Process.runSync('command', [
-        '-v',
-        'keytool',
-      ], runInShell: true).stdout.toString().trim();
+      final found = findOnPath('keytool');
       expect(
         found,
-        isNotEmpty,
+        isNotNull,
         reason: 'no keytool available; this test needs a real one',
       );
-      return found;
+      return found!;
     }
-
-    test('a fixture too short for the transformed forms is refused', () {
-      // #230 item 3. `_leakForms` searches base64, reversed, hex and the rest
-      // only from eight characters, and `_addSentinel` accepted four — so a
-      // fixture of five to seven characters was searched verbatim only, the
-      // exact hole #220 demonstrated, with nothing saying so. The floor is
-      // asserted at its boundary: seven refused, eight accepted.
-      expect(
-        () => _addSentinel('seven77', 'a probe'),
-        throwsA(
-          isA<TestFailure>().having(
-            (f) => f.message,
-            'message',
-            contains('leak-fixture'),
-          ),
-        ),
-        reason:
-            'fixture-floor: a seven-character fixture was accepted as a '
-            'sentinel, and only its verbatim form will ever be searched',
-      );
-      _addSentinel('eight888', 'a probe');
-      expect(
-        _sentinels,
-        contains('eight888'),
-        reason: 'fixture-floor: an eight-character fixture was refused',
-      );
-      _sentinels.remove('eight888');
-    });
 
     test('the overwrite refusal sees the committed certificate from any '
         'directory', () {
@@ -1010,7 +523,7 @@ exit 0
       final elsewhere = Directory('$_home/elsewhere')
         ..createSync(recursive: true);
       addTearDown(() => elsewhere.deleteSync(recursive: true));
-      final r = _exec(
+      final r = _scan.run(
         '/bin/bash',
         ['${repoRoot.path}/tools/make_upload_key.sh'],
         workingDirectory: elsewhere.path,
@@ -1050,7 +563,7 @@ exit 0
       addTearDown(() => home.deleteSync(recursive: true));
 
       ({int code, String err}) attempt(String password) {
-        final r = _exec(
+        final r = _scan.run(
           '/bin/bash',
           ['tools/make_upload_key.sh'],
           workingDirectory: repoRoot.path,
@@ -1113,9 +626,7 @@ exit 0
       // make_upload_key.sh was outside the leak group entirely — the last row
       // of #176's table — and it is the only script that holds the plaintext
       // password as an environment variable (#190).
-      addTearDown(_clearSentinels);
-
-      final made = _exec(
+      final made = _scan.run(
         '/bin/bash',
         ['tools/make_upload_key.sh'],
         workingDirectory: repoRoot.path,
@@ -1133,52 +644,63 @@ exit 0
         why: 'make_upload_key.sh',
       );
       expect(made.code, 0, reason: 'make: ${made.err}');
-      // No hand-rolled scan any more: `_exec` derives from the environment
-      // it passed and scans afterwards, for this call exactly as for every
-      // other. That is the point of the chokepoint (#208).
 
       // 2. Nothing runs if someone sources it anyway, and the value comes back
-      //    whole.
-      // chokepoint-exempt: deliberately sources the credentials file to
-      // prove nothing in it executes; the value it prints is the assertion.
-      final sourced = Process.runSync('/bin/bash', [
-        '-c',
-        'set -a; . "\$1"; set +a; printf %s "\$HS_KEYSTORE_PASS"',
-        'bash',
-        _credentials,
-      ], stdoutEncoding: utf8);
+      //    whole. Printing it is the point, so stdout is allowed to carry it;
+      //    every other channel is still searched.
+      final sourced = _scan.run(
+        '/bin/bash',
+        [
+          '-c',
+          'set -a; . "\$1"; set +a; printf %s "\$HS_KEYSTORE_PASS"',
+          'bash',
+          _credentials,
+        ],
+        environment: {
+          'PATH': Platform.environment['PATH'] ?? '/usr/bin:/bin',
+          'HOME': _home,
+        },
+        why: 'dot-sourcing the credentials file',
+        allow: ['credentials-dot-source'],
+      );
       expect(
         File(marker).existsSync() || File('${marker}2').existsSync(),
         isFalse,
         reason: 'source: the password executed on a dot-source',
       );
       expect(
-        sourced.stdout,
+        sourced.out,
         password,
         reason: 'source: the value came back changed',
       );
 
       // 3. The supported path — parsing — gives the same value.
-      // chokepoint-exempt: reads the credentials file with the script's own
-      // awk parser to prove the value round-trips; it is the parser under
-      // test, not a script handling a secret.
-      final parsed = Process.runSync('/bin/bash', [
-        '-c',
-        'CREDENTIALS="\$1"\n'
-            '${_readCredentialFunction()}\n'
-            'read_credential HS_KEYSTORE_PASS',
-        'bash',
-        _credentials,
-      ], stdoutEncoding: utf8);
+      final parsed = _scan.run(
+        '/bin/bash',
+        [
+          '-c',
+          'CREDENTIALS="\$1"\n'
+              '${_readCredentialFunction()}\n'
+              'read_credential HS_KEYSTORE_PASS',
+          'bash',
+          _credentials,
+        ],
+        environment: {
+          'PATH': Platform.environment['PATH'] ?? '/usr/bin:/bin',
+          'HOME': _home,
+        },
+        why: "parsing the credentials file with set_ci_secrets.sh's parser",
+        allow: ['credentials-parse'],
+      );
       expect(
-        parsed.stdout.toString().trimRight(),
+        parsed.out.trimRight(),
         password,
         reason: 'parse: the value came back changed',
       );
 
       // 4. And the value actually opens the keystore that was just made — the
       //    check that would have caught #119 on its own.
-      final opens = _exec(
+      final opens = _scan.run(
         keytool,
         [
           '-list',
@@ -1192,6 +714,8 @@ exit 0
           'upload',
         ],
         environment: {'HSP': password},
+        // `HSP` is not named like a secret, and what it holds is one.
+        secrets: {'HSP': password},
         why: 'keytool -list on the produced keystore',
       );
       expect(
@@ -1211,7 +735,7 @@ exit 0
         _credentials,
       ]) {
         File(existing).writeAsStringSync('in the way');
-        final r = _exec(
+        final r = _scan.run(
           '/bin/bash',
           ['tools/make_upload_key.sh'],
           workingDirectory: repoRoot.path,
@@ -1244,7 +768,7 @@ exit 0
     }) {
       gcloudLog = '${_tmp.path}/gcloud.log';
       File(gcloudLog).writeAsStringSync('');
-      _writeExecutable('${_tmp.path}/bin/gcloud', '''#!/bin/sh
+      _scan.writeExecutable('${_tmp.path}/bin/gcloud', '''#!/bin/sh
 echo "\$*" >> "$gcloudLog"
 case "\$1 \$2" in
   "auth list") echo "owner@example.com"; exit 0 ;;
@@ -1293,7 +817,7 @@ exit 0
       // Without the trap the key survived, and because idempotence keys off
       // `gh secret list`, the next run minted a second one (#134).
       stubGcloud();
-      _writeExecutable('${_tmp.path}/bin/gh', '''#!/bin/sh
+      _scan.writeExecutable('${_tmp.path}/bin/gh', '''#!/bin/sh
 if [ "\$1 \$2" = "secret list" ]; then exit 0; fi
 echo "boom" >&2
 exit 1
@@ -1383,7 +907,7 @@ exit 1
       // step or `ps` — passed all 47 tests (#208). A stub that does not log
       // argv makes the argv channel decorative.
       File('${_tmp.path}/gcloud.log').writeAsStringSync('');
-      _writeExecutable('${_tmp.path}/bin/gcloud', '''#!/bin/sh
+      _scan.writeExecutable('${_tmp.path}/bin/gcloud', '''#!/bin/sh
 echo "gcloud \$*" >> "${_tmp.path}/gcloud.log"
 case "\$1 \$2" in
   "auth activate-service-account") exit 0 ;;
@@ -1394,7 +918,7 @@ exit 0
       // curl: answers from files the test plants, so each HTTP status and body
       // is the scenario's choice.
       File('${_tmp.path}/curl.log').writeAsStringSync('');
-      _writeExecutable(
+      _scan.writeExecutable(
         '${_tmp.path}/bin/curl',
         '''#!/bin/sh
 echo "curl \$*" >> "${_tmp.path}/curl.log"
@@ -1434,7 +958,7 @@ exit 0
       File('${_tmp.path}/tracks.json').writeAsStringSync(tracksBody);
       File('${_tmp.path}/edit.json').writeAsStringSync(editBody);
 
-      final r = _exec(
+      final r = _scan.run(
         '/bin/bash',
         [script],
         workingDirectory: repoRoot.path,
@@ -1449,6 +973,7 @@ exit 0
           'HS_EDIT_BODY': '${_tmp.path}/edit.json',
           'HS_EDIT_STATUS': editStatus,
         },
+        why: 'the play step of play-api-check',
       );
       return (
         code: r.code,
@@ -1568,7 +1093,7 @@ exit 0
       // Records every invocation so a test can assert what the step ASKED
       // for, not only what it did with the answer: dropping `-alias` from
       // `keytool -list` changes the question, and the answer looks the same.
-      _writeExecutable('${_tmp.path}/bin/keytool', r"""#!/bin/sh
+      _scan.writeExecutable('${_tmp.path}/bin/keytool', r"""#!/bin/sh
 printf '%s\n' "$*" >> "$HS_KEYTOOL_CALLS"
 case "$1" in
   -list)
@@ -1618,7 +1143,7 @@ exit 0
       final calls = '${_tmp.path}/keytool_calls.txt';
       File(calls).writeAsStringSync('');
 
-      final r = _exec(
+      final r = _scan.run(
         '/bin/bash',
         [script],
         workingDirectory: repoRoot.path,
@@ -1635,6 +1160,7 @@ exit 0
           'HS_STUB_KS_FP': ksFp,
           'HS_STUB_PEM_FP': pemFp,
         },
+        why: 'the keystore step of play-api-check',
       );
       return (
         code: r.code,
@@ -1756,7 +1282,7 @@ exit 0
       expect(step, isNotNull, reason: 'the `keystore_check` step has gone');
       stepScript = step!.run!;
 
-      _writeExecutable('${_tmp.path}/bin/keytool', r"""#!/bin/sh
+      _scan.writeExecutable('${_tmp.path}/bin/keytool', r"""#!/bin/sh
 printf '%s\n' "$*" >> "$HS_KEYTOOL_CALLS"
 exit 0
 """);
@@ -1775,7 +1301,7 @@ exit 0
       final calls = '${_tmp.path}/keytool_calls2.txt';
       File(calls).writeAsStringSync('');
 
-      final r = _exec(
+      final r = _scan.run(
         '/bin/bash',
         [script],
         workingDirectory: repoRoot.path,
@@ -1787,6 +1313,7 @@ exit 0
           'HS_KEY_PASS': keyPass,
           'HS_KEYTOOL_CALLS': calls,
         },
+        why: 'the keystore_check step of release.yml',
       );
       return (
         code: r.code,
@@ -1832,114 +1359,6 @@ exit 0
       expect(r.out, isNot(contains(secret)));
       expect(r.err, isNot(contains(secret)));
     });
-  });
-
-  test('nothing in this file starts a process except the chokepoint', () {
-    // The reason the chokepoint cannot quietly stop covering things.
-    //
-    // #200 moved the leak scan into `_run` and said "there is no registration
-    // step left to leave out". There was: `_run` was not how the workflow
-    // steps were tested, four groups built their own runner, and the whole
-    // service-account key reached $GITHUB_STEP_SUMMARY with the suite green
-    // (#208). The hole moved from "forgot to plant" to "forgot to use _run".
-    //
-    // Round eight then walked past this rule six ways out of seven. It
-    // matched the literal `Process.runSync(` on one line, so `Process.start`,
-    // `Process.run`, a tear-off (`const runner = Process.runSync;`) and a
-    // bare marker with no reason all escaped — and so did an ordinary call
-    // merely PRECEDED, within thirty lines, by a comment containing the text
-    // for the end of `_exec`'s signature, which is how the old "am I inside
-    // _exec" test decided.
-    //
-    // So: every `Process.` in this file is an offence unless it sits inside
-    // `_exec`'s own body, and that body's extent is MEASURED rather than
-    // guessed from a nearby string.
-    // THIS FILE ONLY, and the block below says why.
-    //
-    // What stood here claimed the opposite — "EVERY guard test file …
-    // everywhere else a process start is an offence" — describing a change
-    // that was written and then reverted in the same commit, twenty lines
-    // above the comment that says it was reverted. It survived its own
-    // revert and asserted a guard that does not exist (#229).
-    const chokepointFile = 'test/guards/secrets_scripts_test.dart';
-    final source = readFile(chokepointFile);
-    final lines = source.split('\n');
-
-    final execStart = lines.indexWhere((l) => l.contains(') _exec('));
-    expect(
-      execStart,
-      isNot(-1),
-      reason: 'leak-chokepoint: `_exec` is gone; this rule guards nothing',
-    );
-    final execEnd = lines.indexWhere((l) => l == '}', execStart);
-    expect(
-      execEnd,
-      isNot(-1),
-      reason: 'leak-chokepoint: could not find the end of `_exec`',
-    );
-
-    final offenders = <String>[];
-    final startsProcess = RegExp(r'\bProcess\s*\.');
-
-    // NOT the other guard files, and #222 says why rather than the silence
-    // that would otherwise stand here.
-    //
-    // Scoping this rule across `test/guards/` is correct and it is what #220
-    // asked for. Doing it surfaced raw process starts in most of the other
-    // guard files — including `signing_guard_test.dart`, which runs real
-    // Flutter builds with the HS_* signing variables, so those genuinely
-    // need scanning. #222 carries the enumerated list; it is not restated
-    // here, and neither is a count, because four different ones have been
-    // written down so far and none of them was checked (#239).
-    //
-    // Routing those calls through a shared chokepoint is a refactor of the
-    // test infrastructure, not a line change, and writing an exemption for
-    // each instead would be precisely the self-granted exemption tightened
-    // below.
-    //
-    // So the scope stays as it is, the gap is filed with the enumerated list,
-    // and this comment exists so the next reader knows the limit is known
-    // rather than overlooked.
-
-    final harmless = RegExp("Process\\.runSync\\(\\s*'(chmod|command|which)'");
-    for (var i = 0; i < lines.length; i++) {
-      if (!startsProcess.hasMatch(lines[i])) continue; // rule-self-reference
-      // Prose. A comment cannot start a process, and this file discusses
-      // `Process.runSync` at length in the comments explaining why it is
-      // funnelled through one place.
-      if (lines[i].trimLeft().startsWith('//')) continue;
-      // The chokepoint itself.
-      if (i >= execStart && i <= execEnd) continue;
-      // This rule's own source.
-      if (lines[i].contains('rule-self-reference')) continue;
-      // Argument-less helpers that carry no secret and produce no output
-      // worth scanning.
-      // The LINE, not a window. Joining three lines meant any raw process
-      // call with a `chmod` within two lines was exempt — which is the shape
-      // of an ordinary write-then-chmod helper, so the exemption laundered
-      // the bypass it sat next to (#220).
-      if (harmless.hasMatch(lines[i])) continue;
-      // An exemption must be DECLARED within four lines AND carry a reason.
-      // A bare `// chokepoint-exempt:` with nothing after it was accepted,
-      // which is an exemption anyone can grant themselves in silence (#208).
-      final preceding = lines
-          .sublist((i - 4).clamp(0, lines.length), i)
-          .join('\n');
-      final marker = RegExp(r'chokepoint-exempt:\s*(\S.*)')
-          .firstMatch(preceding);
-      if (marker != null && marker.group(1)!.trim().length >= 20) continue;
-      offenders.add('line ${i + 1}: ${lines[i].trim()}');
-    }
-    expect(
-      offenders,
-      isEmpty,
-      reason:
-          'leak-chokepoint: these start a process without going through '
-          '`_exec`, so nothing derives their secrets or scans their output. '
-          'An exemption is a `// chokepoint-exempt: <reason>` comment within '
-          'four lines, and the reason must say something:\n'
-          '${offenders.join('\n')}',
-    );
   });
 
   group('no script puts a secret on a command line', () {
@@ -2022,6 +1441,36 @@ exit 0
         }
       }
       expect(offenders, isEmpty, reason: offenders.join('\n'));
+    });
+
+    test('no Authorization header is passed as an argument', () {
+      // `curl -H "Authorization: Bearer $TOKEN"` puts the token in the
+      // process table for as long as curl runs. The header goes in a file
+      // only the runner's user can read, passed as `-H @file` (#326).
+      final offenders = <String>[];
+      for (final f in scripts) {
+        final text = f.readAsStringSync().replaceAll(RegExp(r'\\\n\s*'), ' ');
+        for (final line in text.split('\n')) {
+          if (line.trimLeft().startsWith('#')) continue;
+          // `-H` or `--header`, then the header text itself rather than an
+          // `@file`, quoted or not.
+          if (RegExp(
+            r'''(^|\s|\()(-H|--header)[\s=]*["']?\s*Authorization\s*:''',
+            caseSensitive: false,
+          ).hasMatch(line)) {
+            offenders.add(
+              '${f.path.split('/').last}: an Authorization header is on a '
+              'command line, where any process can read it from the process '
+              'table. Write it to a 0600 file and pass `-H @file`',
+            );
+          }
+        }
+      }
+      expect(
+        offenders,
+        isEmpty,
+        reason: 'bearer-argv: ${offenders.join('\n')}',
+      );
     });
   });
 }

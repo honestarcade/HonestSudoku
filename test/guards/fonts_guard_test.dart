@@ -11,6 +11,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fonts_rules.dart';
+import 'leak_scan.dart';
 import 'repo_files.dart';
 
 String _describe(String rule, List<Offender> offenders) =>
@@ -268,7 +269,7 @@ flutter:
     test('fonts-check: every file matches its recorded hash', () {
       // bash missing throws, which fails the test: a guard that skips when
       // its tool is absent is no guard.
-      final r = Process.runSync('bash', [
+      final r = runSealed('bash', [
         'tools/fetch_fonts.sh',
         '--check',
       ], workingDirectory: repoRoot.path);

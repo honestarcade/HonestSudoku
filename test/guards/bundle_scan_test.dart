@@ -31,6 +31,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'leak_scan.dart';
 import 'repo_files.dart';
 
 const _package = 'com.honestarcade.sudoku';
@@ -121,7 +122,7 @@ String _bundle(Directory dir, String name, List<int> bytes) {
     ..createSync(recursive: true);
   File('${staging.path}/AndroidManifest.xml').writeAsBytesSync(bytes);
   final aab = '${dir.path}/$name.aab';
-  final result = Process.runSync('zip', [
+  final result = runSealed('zip', [
     '-qr',
     aab,
     'base',
@@ -141,7 +142,7 @@ class _Scan {
 }
 
 _Scan _scan(String path) {
-  final result = Process.runSync('tools/check_aab.sh', [
+  final result = runSealed('tools/check_aab.sh', [
     path,
   ], workingDirectory: repoRoot.path);
   return _Scan(
@@ -158,7 +159,7 @@ void main() {
     tmp = Directory.systemTemp.createTempSync('hs-bundle-scan');
     // No graceful degradation: a fixture suite that quietly stops building
     // fixtures is the blind spot this file was written to close.
-    final zip = Process.runSync('zip', ['-v']);
+    final zip = runSealed('zip', ['-v']);
     if (zip.exitCode != 0) {
       throw StateError('the `zip` command is required to build these fixtures');
     }
@@ -441,7 +442,7 @@ void main() {
       ..createSync(recursive: true);
     File('${dir.path}/placeholder').writeAsStringSync('nothing here\n');
     final aab = '${tmp.path}/empty.aab';
-    Process.runSync('zip', [
+    runSealed('zip', [
       '-qr',
       aab,
       'base',
@@ -523,7 +524,7 @@ void main() {
     // uses-permission run is followed, within a dozen runs, by a run that is
     // exactly `name`. If aapt2 ever stops encoding it this way, these fixtures
     // stop standing in for reality and this test says so.
-    final dump = Process.runSync('sh', [
+    final dump = runSealed('sh', [
       '-c',
       "unzip -p '$built' base/manifest/AndroidManifest.xml "
           "| LC_ALL=C tr -c '[:print:]' '\\n'",

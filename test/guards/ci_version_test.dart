@@ -14,25 +14,17 @@ library;
 // What this does NOT cover: whether the codes it computes are actually
 // monotonic on Play. That depends on run numbers rising, which is GitHub's
 // guarantee, not this script's.
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'leak_scan.dart';
 import 'repo_files.dart';
 
 const _script = 'tools/ci_version.sh';
 
 ({int code, String out, String err}) _run(List<String> args) {
-  // chokepoint-exempt: runs ci_version.sh with a tag and two run numbers;
-  // no secret is passed and its output is a version name and code.
-  final r = Process.runSync(
-    _script,
-    args,
-    workingDirectory: repoRoot.path,
-    stdoutEncoding: utf8,
-    stderrEncoding: utf8,
-  );
+  final r = runSealed(_script, args, workingDirectory: repoRoot.path);
   return (code: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString());
 }
 

@@ -20,6 +20,7 @@ import 'dart:isolate';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'leak_scan.dart';
 import 'repo_files.dart';
 import 'workflow_rules.dart';
 import 'workflow_yaml.dart';
@@ -633,38 +634,10 @@ bool _isRateLimited(String status, String payload) {
 ///
 /// The keystore ALIAS is in `android/signing/README.md`, on keytool's command
 /// line, and play-api-check reports it in its summary on purpose.
-/// `secrets_scripts_test.dart` excludes it from sentinel derivation for the
-/// same reason; naming it here by the SECRET rather than by whatever env key
+/// `leak_scan.dart` excludes it from sentinel derivation for the same
+/// reason; naming it here by the SECRET rather than by whatever env key
 /// it is bound to is what keeps the two honest (#225).
 const _publicSecrets = {'HS_KEY_ALIAS'};
-
-/// The shapes a value can take on its way into a log.
-///
-/// A step that pipes a secret through `rev` or `base64` has published it as
-/// surely as one that echoes it, and a reader of the run summary reverses
-/// either instantly. Searching the literal only let both through (#225).
-///
-/// Deliberately smaller than `secrets_scripts_test.dart`'s `_leakForms`: this
-/// runs over every step of every workflow, and it carries the transforms a
-/// shell reaches for without thinking.
-///
-/// Open by decision, not by oversight: hex, rot13, a value split across two
-/// writes, reversed-then-base64, and a DIGEST of the secret. All five were
-/// tested open on 2026-09-22 — the verbatim control is caught at the same
-/// injection point, each of these is not.
-///
-/// The digest is the interesting one and the reason given for it here was
-/// wrong: it does NOT need a new dependency, because `_runReal` already runs
-/// the host's `sha256sum` and fails without it. What it costs is one more
-/// form per secret in a scan that runs over every step of every workflow,
-/// which is a judgement rather than an impossibility (#241, #251).
-Iterable<String> _leakShapes(String secret) sync* {
-  yield secret;
-  yield secret.split('').reversed.join();
-  yield base64.encode(utf8.encode(secret));
-  yield secret.toLowerCase();
-  yield secret.toUpperCase();
-}
 
 /// The credential files the harness plants in `$RUNNER_TEMP` before a body
 /// runs.
@@ -687,7 +660,7 @@ String _sentinel(String tag) {
 /// The stubs that run the real command rather than pretend to be it.
 ///
 /// `base64` printed a fixed word, so a secret piped through it never came
-/// out encoded and `_leakShapes`' base64 form could not fire — the issue's
+/// out encoded and the leak scan's base64 form could not fire — the issue's
 /// own reproducer was green (#232). `sha256sum` printed the same word, so
 /// the summary's digest row said "stub". A succeeding stub must behave enough
 /// like the command for a correct step to produce real output, or the
@@ -1034,27 +1007,26 @@ const _preflight = (
 _runStepBody(
   String body, {
   required Iterable<String> ambient,
+  required String why,
   String? failing,
   Map<String, String> extraEnv = const {},
+  Map<String, String> secrets = const {},
   Map<String, String> expressions = const {},
   Map<String, String> plant = const {},
   bool keepWorkspace = false,
   void Function(Directory workspace)? beforeRun,
 }) {
   final dir = Directory.systemTemp.createTempSync('hs-stepbody');
+  _stepWorkspace = dir;
   try {
     final bin = Directory('${dir.path}/bin')..createSync(recursive: true);
 
-    // Every file the HARNESS writes, with the exact text it wrote.
-    //
-    // The `wrote` channel skips these, and it skips them by CONTENT: a file
-    // whose bytes still match what was put there is not something the body
-    // wrote. Skipping by path shape instead — `bin/**`, `step.sh`, any
-    // planted path — meant a body could write a secret into one of them and
-    // the channel dropped it, with the suite green (#243). `$GITHUB_WORKSPACE`
-    // is this directory, and on a runner that is what upload-artifact sweeps.
-    final harnessWrote = <String, String>{};
-
+    // Every file the HARNESS writes goes through `_scan`, which skips it by
+    // CONTENT: a file whose bytes still match what was put there is not
+    // something the body wrote. Skipping by path shape instead — `bin/**`,
+    // `step.sh`, any planted path — meant a body could write a secret into
+    // one of them unseen (#243). `$GITHUB_WORKSPACE` is this directory, and
+    // on a runner that is what upload-artifact sweeps.
     void stub(String command) {
       final fails = command == failing;
       // A succeeding stub writes a byte, because several bodies redirect a
@@ -1136,17 +1108,10 @@ exit 0
       } else {
         script = '#!/bin/sh\necho "stub output for \$command"\nexit 0\n';
       }
-      final stubPath = '${bin.path}/${command.split('/').last}';
-      File(stubPath).writeAsStringSync(script);
-      harnessWrote[stubPath] = script;
-      Process.runSync('chmod', ['+x', stubPath]);
+      _scan.writeExecutable('${bin.path}/${command.split('/').last}', script);
       // A project script is invoked by path, so shadow it there too.
       if (command.contains('/')) {
-        final asPath = File('${dir.path}/$command');
-        asPath.parent.createSync(recursive: true);
-        asPath.writeAsStringSync(script);
-        harnessWrote[asPath.path] = script;
-        Process.runSync('chmod', ['+x', asPath.path]);
+        _scan.writeExecutable('${dir.path}/$command', script);
       }
     }
 
@@ -1164,6 +1129,14 @@ exit 0
     for (final name in _runnerCredentials) {
       File('${runnerTemp.path}/$name').writeAsStringSync('x');
     }
+    // Where the steps are SUPPOSED to put the service-account key and the
+    // decoded keystore, removed by `forget` and `shred`. By path identity,
+    // so a copy anywhere else is still found.
+    _scan
+      ..home('${runnerTemp.path}/play-sa.json', const [
+        'PLAY_SERVICE_ACCOUNT_JSON',
+      ])
+      ..home('${runnerTemp.path}/upload.keystore', const ['HS_KEYSTORE_B64']);
     File('${dir.path}/build/app/outputs/bundle/release/app-release.aab')
       ..createSync(recursive: true)
       ..writeAsStringSync('bundle');
@@ -1186,7 +1159,7 @@ exit 0
       File('${dir.path}/$relative')
         ..createSync(recursive: true)
         ..writeAsStringSync(content);
-      harnessWrote['${dir.path}/$relative'] = content;
+      _scan.harnessWrote('${dir.path}/$relative', content);
     });
 
     // The caller's chance to assert the workspace is what it expects BEFORE
@@ -1194,12 +1167,13 @@ exit 0
     beforeRun?.call(dir);
 
     final script = File('${dir.path}/step.sh')..writeAsStringSync(expanded);
-    harnessWrote[script.path] = expanded;
-    final r = Process.runSync(
+    _scan.harnessWrote(script.path, expanded);
+    // Scanned: every value handed under a secret-shaped name, and every one
+    // in [secrets], is searched for on every channel the body could reach.
+    final r = _scan.run(
       '/bin/bash',
       [script.path],
       workingDirectory: dir.path,
-      includeParentEnvironment: false,
       environment: {
         'PATH': '${bin.path}:/usr/bin:/bin',
         'RUNNER_TEMP': runnerTemp.path,
@@ -1211,7 +1185,9 @@ exit 0
         'GITHUB_REF_NAME': 'v1.2.3',
         'GITHUB_RUN_NUMBER': '7',
         'GITHUB_RUN_ATTEMPT': '1',
-        'HS_KEYSTORE_B64': 'eA==',
+        // Valid base64, because `keystore` runs it through a real decoder,
+        // and long enough for the leak scan to search every form of it.
+        'HS_KEYSTORE_B64': 'aHMta2V5c3RvcmUtZml4dHVyZS03cQ==',
         'HS_KEYSTORE_PASS': 'PROPAGATE-PASS-1',
         'HS_KEY_ALIAS': 'upload',
         'HS_KEY_PASS': 'PROPAGATE-PASS-1',
@@ -1226,58 +1202,51 @@ exit 0
         'PROMOTE_OUTCOME': 'success',
         ...extraEnv,
       },
-      stdoutEncoding: utf8,
-      stderrEncoding: utf8,
+      secrets: secrets,
+      why: why,
     );
     // What the body left in the workspace: the name and the current bytes of
     // everything under `$GITHUB_WORKSPACE` that the harness did not put
-    // there. Not literally everything it wrote — a file it created and then
-    // deleted is gone by the time this runs, as it would be for the sinks
-    // this models — and the harness's own files are skipped while their
-    // bytes are unchanged. A step's exit code says nothing about what it
-    // published, and #215 is a step that exits 0 and puts the signing
+    // there, directories by name. A step's exit code says nothing about what
+    // it published, and #215 is a step that exits 0 and puts the signing
     // keystore in the run summary.
     final wrote = StringBuffer();
-    for (final entity in dir.listSync(recursive: true)) {
-      // THE NAME, not only the content. `upload-artifact` publishes the paths
-      // of what it sweeps as surely as the bytes, so `touch
-      // "$GITHUB_WORKSPACE/$HS_KEYSTORE_B64"` put the keystore in an artifact
-      // listing while this channel — which read bytes and used the path only
-      // as a map key — stayed silent (#249). Directories count: a directory
-      // name is listed too.
-      final relative = entity.path.substring(dir.path.length + 1);
-      if (entity is Directory) {
-        wrote.writeln(relative);
-        continue;
+    r.wrote.forEach((path, text) {
+      if (!path.startsWith('${dir.path}/')) return;
+      final relative = path.substring(dir.path.length + 1);
+      if (relative.endsWith('/')) {
+        wrote.writeln(relative.substring(0, relative.length - 1));
+        return;
       }
-      if (entity is! File) continue;
-      // latin1 over the BYTES, and no `catch`. `readAsStringSync` throws on
-      // the first byte that is not valid UTF-8, and the catch that stood
-      // here dropped the whole file — so `printf '%s\377' "$HS_KEYSTORE_B64"`
-      // put the keystore in the run summary with the suite green (#236).
-      // A total decoding leaves every ASCII byte of a secret searchable.
-      final text = latin1.decode(entity.readAsBytesSync(), allowInvalid: true);
-      // Unchanged since the harness wrote it — a stub, the script, a planted
-      // input — so the body did not write it. Anything else in this tree it
-      // DID write, including a file it put inside `bin/`, the script
-      // overwritten under its own feet, and a planted file it appended to:
-      // all three were skipped by path and all three were green (#243).
-      if (harnessWrote[entity.path] == text) continue;
       wrote.writeln(relative);
       wrote.writeln(text);
-    }
+    });
 
     return (
-      code: r.exitCode,
-      out: r.stdout.toString(),
-      err: r.stderr.toString(),
+      code: r.code,
+      out: r.out,
+      err: r.err,
       wrote: wrote.toString(),
       workspace: dir,
     );
   } finally {
+    _stepWorkspace = null;
     if (!keepWorkspace) dir.deleteSync(recursive: true);
   }
 }
+
+/// The workspace of the step body running now, read as the scan's root.
+Directory? _stepWorkspace;
+
+/// `TMPDIR` for every scanned call in this file, removed when it ends.
+final Directory _scratchDir = Directory.systemTemp.createTempSync(
+  'hs-workflow-scratch',
+);
+
+final _scan = LeakScan(
+  roots: () => [if (_stepWorkspace != null) _stepWorkspace!.path],
+  scratch: () => _scratchDir.path,
+);
 
 /// What an inserted step in this job would have access to.
 ///
@@ -1591,6 +1560,8 @@ void _assertReleaseShape(Workflow wf) {
 }
 
 void main() {
+  tearDownAll(() => _scratchDir.deleteSync(recursive: true));
+
   group('the repository as it stands', () {
     test('there is at least one workflow', () {
       // An empty or missing directory fails rather than passing vacuously.
@@ -2866,9 +2837,23 @@ void main() {
           Platform.environment['GITHUB_TOKEN'] ??
           Platform.environment['GH_TOKEN'] ??
           '';
-      late final ProcessResult probe;
+      // The header goes in a file only this user can read, and curl reads it
+      // with `-H @file`: on the command line the token is in the process
+      // table, readable by anything on the runner for as long as curl runs.
+      // The file is the token's one home, so the scan allows it there.
+      final header = File('${_scratchDir.path}/ruleset-auth-header');
+      if (token.isNotEmpty) {
+        header.writeAsStringSync('');
+        runSealed('/bin/chmod', ['600', header.path]);
+        header.writeAsStringSync('Authorization: Bearer $token\n');
+        _scan.home(header.path, const ['GITHUB_TOKEN']);
+        addTearDown(() {
+          if (header.existsSync()) header.deleteSync();
+        });
+      }
+      late final LeakRun probe;
       try {
-        probe = Process.runSync(
+        probe = _scan.run(
           'curl',
           [
             '-sS',
@@ -2878,14 +2863,17 @@ void main() {
             '\n%{http_code}',
             '-H',
             'Accept: application/vnd.github+json',
-            if (token.isNotEmpty) ...['-H', 'Authorization: Bearer $token'],
+            if (token.isNotEmpty) ...['-H', '@${header.path}'],
             rulesetUrl,
           ],
-          stdoutEncoding: utf8,
-          stderrEncoding: utf8,
+          environment: {
+            'PATH': Platform.environment['PATH'] ?? '/usr/bin:/bin',
+          },
+          secrets: {'GITHUB_TOKEN': token},
+          why: 'the ruleset probe',
         );
       } on ProcessException {
-        // `Process.runSync` THROWS when the binary is absent; it does not
+        // Starting a process THROWS when the binary is absent; it does not
         // return a non-zero code. The old skip branch could therefore only
         // ever mean "unauthenticated", and a developer without the tool got
         // the red suite its comment promised they would not (#202).
@@ -2893,12 +2881,12 @@ void main() {
         return;
       }
 
-      final lines = probe.stdout.toString().trim().split('\n');
+      final lines = probe.out.trim().split('\n');
       final status = lines.isEmpty ? '' : lines.last.trim();
       final payload = lines.take(lines.length - 1).join('\n');
 
-      if (probe.exitCode != 0) {
-        markTestSkipped('no network: ${probe.stderr}');
+      if (probe.code != 0) {
+        markTestSkipped('no network: ${probe.err}');
         return;
       }
       if (_isRateLimited(status, payload)) {
@@ -3216,11 +3204,7 @@ void main() {
         // parent just made. The tag is for the multiplier rather than for
         // that number — the battery would otherwise spawn one more full test
         // process per mutation, and there are over a hundred.
-        final env = Map<String, String>.from(Platform.environment)
-          ..remove('GITHUB_TOKEN')
-          ..remove('GH_TOKEN')
-          ..['HS_RULESET_READ_EXPECTED'] = '1';
-        final child = Process.runSync(
+        final child = _scan.run(
           'flutter',
           [
             'test',
@@ -3229,10 +3213,12 @@ void main() {
             'the required checks are still bound',
             'test/guards/workflow_guard_test.dart',
           ],
-          environment: env,
-          includeParentEnvironment: false,
+          environment: const {'HS_RULESET_READ_EXPECTED': '1'},
+          // Everything the child needs to run a test, and neither token.
+          inheritAllExcept: const {'GITHUB_TOKEN', 'GH_TOKEN'},
+          why: 'the child flutter test with the ruleset flag set',
         );
-        final out = '${child.stdout}${child.stderr}';
+        final out = '${child.out}${child.err}';
 
         // The three conditions under which the read cannot happen at all are
         // the parent's own skips, and an anonymous read from a shared runner
@@ -3256,7 +3242,7 @@ void main() {
         }
 
         expect(
-          child.exitCode,
+          child.code,
           isNot(0),
           reason:
               'flag-wiring: with HS_RULESET_READ_EXPECTED=1 and no token, an '
@@ -3640,6 +3626,7 @@ void main() {
         final r = _runStepBody(
           step.run!,
           ambient: _ambientCommands,
+          why: 'honesty: ${spec.path} job `${spec.job}` step `${spec.step}`',
           extraEnv: spec.env,
           expressions: spec.expressions,
           plant: spec.plant,
@@ -3733,13 +3720,18 @@ void main() {
         'HS_KEY_ALIAS',
         'HS_KEY_PASS',
       ];
-      final present = {for (final n in names) n: 'present-$n'};
+      // Not spelled from the name: the refusal names the variable, and a
+      // value containing its own name reads as a leak of it.
+      final present = {
+        for (final (i, n) in names.indexed) n: 'PRESENT-fixture-${i}q',
+      };
 
       // Positive control first: with all five set it must SUCCEED, or the
       // refusals below are indistinguishable from a body that always fails.
       final ok = _runStepBody(
         body,
         ambient: _ambientCommands,
+        why: 'the secrets pre-flight with every secret set',
         extraEnv: present,
       );
       expect(
@@ -3753,7 +3745,12 @@ void main() {
       // And one at a time, each must be refused BY NAME.
       for (final missing in names) {
         final env = {...present, missing: ''};
-        final r = _runStepBody(body, ambient: _ambientCommands, extraEnv: env);
+        final r = _runStepBody(
+          body,
+          ambient: _ambientCommands,
+          why: 'the secrets pre-flight without `$missing`',
+          extraEnv: env,
+        );
         expect(
           r.code,
           isNot(0),
@@ -3817,6 +3814,7 @@ void main() {
         final r = _runStepBody(
           step.run!,
           ambient: _ambientCommands,
+          why: 'destroys: $path job `${spec.job}` step `${spec.step}`',
           keepWorkspace: true,
           beforeRun: (workspace) {
             for (final name in spec.files) {
@@ -3898,7 +3896,7 @@ void main() {
                 // The keystore ALIAS is stored as a secret and is public by
                 // design: it is in `android/signing/README.md`, on keytool's
                 // command line, and the play-api-check summary reports it on
-                // purpose. `secrets_scripts_test.dart` already excludes it
+                // purpose. `leak_scan.dart` already excludes it
                 // from sentinel derivation for the same reason; the two must
                 // agree or one of them is wrong.
                 // Exempt by the SECRET, not by the env name.
@@ -3942,15 +3940,27 @@ void main() {
             final shared = _sentinel('SHARED');
             final sharedEnv = {for (final name in secretEnv.keys) name: shared};
 
-            final distinct = _runStepBody(
+            // Handed through `secrets:` as well as the environment, so each
+            // is searched for whatever its env key is called: #232 binds a
+            // secret to a key spelled `*ALIAS`, which no suffix matches.
+            // Every form the value could take is searched on every channel,
+            // and a hit fails with this reason.
+            final why =
+                'published-secret: $path job `${job.name}` step '
+                '`${step.id}` writes the value of a secret it was handed';
+            _runStepBody(
               body,
               ambient: _ambientCommands,
+              why: why,
               extraEnv: secretEnv,
+              secrets: secretEnv,
             );
             final same = _runStepBody(
               body,
               ambient: _ambientCommands,
+              why: why,
               extraEnv: sharedEnv,
+              secrets: sharedEnv,
             );
             expect(
               same.code,
@@ -3958,42 +3968,9 @@ void main() {
               reason:
                   'published-secret: $path job `${job.name}` step '
                   '`${step.id}` cannot complete even with every secret equal '
-                  'and every command succeeding, so the search below covers '
+                  'and every command succeeding, so the leak scan covered '
                   'only the lines it reached. stderr: ${same.err}',
             );
-
-            // Every form the value could take, not the literal only. `rev`
-            // and `base64` are ordinary commands and a reader of the summary
-            // reverses either instantly; searching verbatim let both through
-            // (#225).
-            final hunted = <String, String>{
-              for (final entry in secretEnv.entries)
-                for (final form in _leakShapes(entry.value)) form: entry.key,
-              for (final form in _leakShapes(shared)) form: 'a shared secret',
-            };
-
-            for (final entry in hunted.entries) {
-              for (final channel in <(String, String)>[
-                ('stdout', '${distinct.out}\n${same.out}'),
-                ('stderr', '${distinct.err}\n${same.err}'),
-                (
-                  'a file it wrote (the run summary is one)',
-                  '${distinct.wrote}\n${same.wrote}',
-                ),
-              ]) {
-                expect(
-                  channel.$2,
-                  isNot(contains(entry.key)),
-                  reason:
-                      'published-secret: $path job `${job.name}` step '
-                      '`${step.id}` writes the value of `${entry.value}` to '
-                      '${channel.$1}. A step set pins which steps exist, not '
-                      r'what they do — and `$GITHUB_STEP_SUMMARY` is '
-                      'rendered, '
-                      'retained and downloadable by anyone with read access',
-                );
-              }
-            }
           }
         }
       }
@@ -4077,6 +4054,8 @@ void main() {
               final failed = _runStepBody(
                 body,
                 ambient: ambient,
+                why:
+                    'propagation: $path job `$job` step `$id`, `$command` failing',
                 failing: command,
               );
               expect(
@@ -4090,7 +4069,11 @@ void main() {
                     'step still runs it. stdout: ${failed.out}',
               );
 
-              final clean = _runStepBody(body, ambient: ambient);
+              final clean = _runStepBody(
+                body,
+                ambient: ambient,
+                why: 'vacuity: $path job `$job` step `$id`',
+              );
               expect(
                 clean.code,
                 0,

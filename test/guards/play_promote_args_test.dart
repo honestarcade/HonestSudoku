@@ -19,11 +19,11 @@ library;
 // draft-app retry and the summary's honesty are all exercised here without
 // credentials. What only a dispatch can show is Google's own behaviour: the
 // wording of its refusals, and whether a track accepts what was sent.
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'leak_scan.dart';
 import 'repo_files.dart';
 import 'workflow_yaml.dart';
 
@@ -75,21 +75,32 @@ case "$method" in
 esac
 """;
 
+/// The Play token every fixture hands the script. Long and distinctive enough
+/// for the leak scan to search every transformed form.
+const _fixtureToken = 'PLAY-fixture-token-3k';
+
+/// Everything a test here creates lives under this, stubs included, and all
+/// of it is read after each scanned run.
+late Directory _tmp;
+
+final _scan = LeakScan(
+  roots: () => [_tmp.path],
+  scratch: () => '${_tmp.path}/scratch',
+);
+
 ({int code, String out, String err}) _run(List<String> args, {String? token}) {
-  final r = Process.runSync(
+  final r = _scan.run(
     _script,
     args,
     workingDirectory: repoRoot.path,
-    includeParentEnvironment: false,
     environment: {
       'PATH': Platform.environment['PATH'] ?? '/usr/bin:/bin',
       'PLAY_TOKEN': ?token,
       'HS_PLAY_API': _unreachableApi,
     },
-    stdoutEncoding: utf8,
-    stderrEncoding: utf8,
+    why: 'play_promote.sh ${args.join(' ')}',
   );
-  return (code: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString());
+  return (code: r.code, out: r.out, err: r.err);
 }
 
 /// Runs a refusal step's `run:` body under bash with the dispatch inputs set,
@@ -99,17 +110,14 @@ int _runRefusal(String script, String fromTrack, String toTrack) {
   final dir = Directory.systemTemp.createTempSync('hs-refusal');
   try {
     final file = File('${dir.path}/refuse.sh')..writeAsStringSync(script);
-    final r = Process.runSync(
+    final r = runSealed(
       '/bin/bash',
       [file.path],
-      includeParentEnvironment: false,
       environment: {
         'PATH': '/usr/bin:/bin',
         'FROM_TRACK': fromTrack,
         'TO_TRACK': toTrack,
       },
-      stdoutEncoding: utf8,
-      stderrEncoding: utf8,
     );
     return r.exitCode;
   } finally {
@@ -317,6 +325,9 @@ void _assertPromoteShape(Workflow wf) {
 }
 
 void main() {
+  setUp(() => _tmp = Directory.systemTemp.createTempSync('hs-promote-args'));
+  tearDown(() => _tmp.deleteSync(recursive: true));
+
   test('a track is refused with no token at all', () {
     // #21 AC4's whole rationale is that argument checks run BEFORE the
     // token check, so the refusals can be proven without a token. Moving
@@ -354,21 +365,25 @@ void main() {
     test('production as the target', () {
       // Checked with a valid token present, so the refusal cannot be
       // attributed to the missing credential.
-      final r = _run([_package, 'internal', 'production'], token: 'fake');
+      final r = _run([
+        _package,
+        'internal',
+        'production',
+      ], token: _fixtureToken);
       expect(r.code, 2, reason: 'production-refused: ${r.err}');
       expect(r.out.trim(), isEmpty);
       expect(r.err.toLowerCase(), contains('production'));
     });
 
     test('production as the source', () {
-      final r = _run([_package, 'production', 'alpha'], token: 'fake');
+      final r = _run([_package, 'production', 'alpha'], token: _fixtureToken);
       expect(r.code, 2);
       expect(r.out.trim(), isEmpty);
     });
 
     for (final track in const ['internal', 'alpha', 'beta']) {
       test('$track to itself', () {
-        final r = _run([_package, track, track], token: 'fake');
+        final r = _run([_package, track, track], token: _fixtureToken);
         expect(r.code, 2, reason: 'same-track: $track to $track was allowed');
         expect(r.out.trim(), isEmpty);
       });
@@ -376,16 +391,16 @@ void main() {
 
     for (final bad in const ['staging', 'Internal', 'prod', '']) {
       test('the unknown track `$bad`', () {
-        final r = _run([_package, 'internal', bad], token: 'fake');
+        final r = _run([_package, 'internal', bad], token: _fixtureToken);
         expect(r.code, 2, reason: 'allowlist: `$bad` was allowed');
         expect(r.out.trim(), isEmpty);
       });
     }
 
     test('a missing package argument', () {
-      expect(_run(['', 'internal', 'alpha'], token: 'fake').code, 2);
-      expect(_run(const [], token: 'fake').code, 2);
-      expect(_run([_package, 'internal'], token: 'fake').code, 2);
+      expect(_run(['', 'internal', 'alpha'], token: _fixtureToken).code, 2);
+      expect(_run(const [], token: _fixtureToken).code, 2);
+      expect(_run([_package, 'internal'], token: _fixtureToken).code, 2);
     });
   });
 
@@ -556,32 +571,27 @@ void main() {
     // (#178).
     late Directory dir;
 
-    setUp(() => dir = Directory.systemTemp.createTempSync('hs-promote'));
+    setUp(() => dir = Directory('${_tmp.path}/promote')..createSync());
     tearDown(() => dir.deleteSync(recursive: true));
 
     /// A curl that opens an edit, then answers everything else 500 — so the
     /// script dies, the EXIT trap runs, and the cleanup DELETE is the call
     /// under test.
-    void stubCurl() {
-      final f = File('${dir.path}/curl')..writeAsStringSync(_curlStub);
-      Process.runSync('chmod', ['+x', f.path]);
-    }
+    void stubCurl() => _scan.writeExecutable('${dir.path}/curl', _curlStub);
 
     ({int code, String err}) run() {
-      final r = Process.runSync(
+      final r = _scan.run(
         _script,
         [_package, 'internal', 'alpha'],
         workingDirectory: repoRoot.path,
-        includeParentEnvironment: false,
         environment: {
           'PATH': '${dir.path}:/usr/bin:/bin',
-          'PLAY_TOKEN': 'fake',
+          'PLAY_TOKEN': _fixtureToken,
           'HS_PLAY_API': _unreachableApi,
         },
-        stdoutEncoding: utf8,
-        stderrEncoding: utf8,
+        why: 'play_promote.sh with a failing DELETE',
       );
-      return (code: r.exitCode, err: r.stderr.toString());
+      return (code: r.code, err: r.err);
     }
 
     test('a DELETE answered 500 warns that the edit is still pending', () {
@@ -637,12 +647,10 @@ void main() {
       // helper's exit 1; nothing read the SCRIPT's handling of it, so
       // neutering both `die_api "no completed release on $FROM"` sites left
       // the suite green (#198).
-      final dir = Directory.systemTemp.createTempSync('hs-nocr');
-      addTearDown(() => dir.deleteSync(recursive: true));
+      final dir = Directory('${_tmp.path}/nocr')..createSync();
       // A curl that opens an edit and returns a track holding only a DRAFT
       // release — the state this refusal exists for.
-      File('${dir.path}/curl')
-        ..writeAsStringSync(r'''#!/bin/sh
+      _scan.writeExecutable('${dir.path}/curl', r'''#!/bin/sh
 out=""; method="GET"; want=0; prev=""
 for a in "$@"; do
   case "$prev" in -o) out="$a" ;; -X) method="$a" ;; esac
@@ -657,36 +665,32 @@ case "$method" in
      if [ "$want" = 1 ]; then printf '200'; fi ;;
 esac
 exit 0
-''')
-        ..createSync(recursive: false);
-      Process.runSync('chmod', ['+x', '${dir.path}/curl']);
+''');
 
-      final r = Process.runSync(
+      final r = _scan.run(
         _script,
         [_package, 'internal', 'alpha'],
         workingDirectory: repoRoot.path,
-        includeParentEnvironment: false,
         environment: {
           'PATH': '${dir.path}:/usr/bin:/bin',
-          'PLAY_TOKEN': 'fake',
+          'PLAY_TOKEN': _fixtureToken,
           'HS_PLAY_API': _unreachableApi,
         },
-        stdoutEncoding: utf8,
-        stderrEncoding: utf8,
+        why: 'play_promote.sh over a track holding only a draft',
       );
       expect(
-        r.exitCode,
+        r.code,
         isNot(0),
         reason:
             'no-completed-release: a track holding only a draft must fail '
             'the run, not promote nothing and report success',
       );
       expect(
-        r.stderr.toString(),
+        r.err,
         contains('no completed release on internal'),
         reason: 'no-completed-release: the message must name the track',
       );
-      expect((r.stdout as String).trim(), isEmpty);
+      expect(r.out.trim(), isEmpty);
     });
   });
 
@@ -702,7 +706,7 @@ exit 0
     // with status draft may be created on draft app.`
     late Directory dir;
 
-    setUp(() => dir = Directory.systemTemp.createTempSync('hs-draft'));
+    setUp(() => dir = Directory('${_tmp.path}/draft')..createSync());
     tearDown(() => dir.deleteSync(recursive: true));
 
     /// A curl that drives the whole edits flow, with the FIRST `:commit`
@@ -715,8 +719,7 @@ exit 0
     void stubCurl({required String status, required String body}) {
       final log = '${dir.path}/calls.log';
       File(log).writeAsStringSync('');
-      final f = File('${dir.path}/curl')
-        ..writeAsStringSync('''#!/bin/sh
+      _scan.writeExecutable('${dir.path}/curl', '''#!/bin/sh
 out=""; method="GET"; want=0; prev=""; url=""; body=""
 for a in "\$@"; do
   case "\$prev" in -o) out="\$a" ;; -X) method="\$a" ;; -d) body="\$a" ;; esac
@@ -745,28 +748,25 @@ esac
 [ "\$want" = 1 ] && printf '%s' "\$st"
 exit 0
 ''');
-      Process.runSync('chmod', ['+x', f.path]);
     }
 
     ({int code, String out, String err, int commits, String calls}) run() {
-      final r = Process.runSync(
+      final r = _scan.run(
         _script,
         [_package, 'internal', 'alpha'],
         workingDirectory: repoRoot.path,
-        includeParentEnvironment: false,
         environment: {
           'PATH': '${dir.path}:/usr/bin:/bin',
-          'PLAY_TOKEN': 'fake',
+          'PLAY_TOKEN': _fixtureToken,
           'HS_PLAY_API': _unreachableApi,
         },
-        stdoutEncoding: utf8,
-        stderrEncoding: utf8,
+        why: 'play_promote.sh through the draft-app retry',
       );
       final calls = File('${dir.path}/calls.log').readAsStringSync();
       return (
-        code: r.exitCode,
-        out: r.stdout.toString(),
-        err: r.stderr.toString(),
+        code: r.code,
+        out: r.out,
+        err: r.err,
         commits: ':commit'.allMatches(calls).length,
         calls: calls,
       );
@@ -953,10 +953,9 @@ exit 0
       File(summaryFile).writeAsStringSync('');
       final script = File('${dir.path}/summary.sh')
         ..writeAsStringSync(stepScript);
-      final r = Process.runSync(
+      final r = runSealed(
         '/bin/bash',
         [script.path],
-        includeParentEnvironment: false,
         environment: {
           'PATH': '/usr/bin:/bin',
           'RUNNER_TEMP': runnerTemp,
@@ -965,8 +964,6 @@ exit 0
           'FROM_TRACK': 'internal',
           'TO_TRACK': 'alpha',
         },
-        stdoutEncoding: utf8,
-        stderrEncoding: utf8,
       );
       return (code: r.exitCode, summary: File(summaryFile).readAsStringSync());
     }

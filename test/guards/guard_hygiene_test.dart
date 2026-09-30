@@ -17,6 +17,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'leak_scan.dart';
 import 'repo_files.dart';
 
 void main() {
@@ -104,14 +105,9 @@ void main() {
       'SECURITY.md',
     };
 
-    // chokepoint-exempt: lists tracked paths to compare against the set
-    // above; passes no secret and its output is a list of file names.
-    final tracked = Process.runSync(
-      'git',
-      ['ls-files'],
-      workingDirectory: repoRoot.path,
-      stdoutEncoding: systemEncoding,
-    ).stdout.toString().split('\n');
+    final tracked = runSealed('git', [
+      'ls-files',
+    ], workingDirectory: repoRoot.path).stdout.toString().split('\n');
 
     final atRoot = {
       for (final path in tracked)
