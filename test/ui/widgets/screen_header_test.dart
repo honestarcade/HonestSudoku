@@ -110,14 +110,18 @@ void main() {
       greaterThan(7),
       reason: 'the back glyph draws in Outfit at 26 pt',
     );
+    // One point, not half: the 4× render measures in quarter-point steps and
+    // anti-aliasing differs by platform — 0.375 on macOS (2026-09-29, #323's
+    // commit) and 0.5 on ubuntu-latest (CI run 36659484794, 2026-09-30). The
+    // defect this holds, centring the line box, measured 3.625.
     expect(
       (ink.center.dy - button.center.dy).abs(),
-      lessThan(.5),
+      lessThan(1),
       reason: 'the back glyph ink is vertically centred in its button',
     );
     expect(
       (ink.center.dx - button.center.dx).abs(),
-      lessThan(.5),
+      lessThan(1),
       reason: 'the back glyph ink is horizontally centred in its button',
     );
   });
