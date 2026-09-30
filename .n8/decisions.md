@@ -1137,7 +1137,7 @@ than per-story.
   **Why:** The first capture took the Flutter surface at 1080×1857, since the navigation bar is not part of it, which misses Play's 9:16. The planner allowed the full-window route.
   **Issue:** #57
 
-## Ad-hoc — 2026-09-24
+## Ad-hoc — 2026-09-24 — reconciled by /n8-replan 2026-09-29
 
 - **Change:** `integration_test` cannot be a dev dependency while the gate and `release.yml` build the release bundle with `--no-pub`. Its Android plugin is written into `GeneratedPluginRegistrant.java` by `flutter pub get` (in debug mode), and the `--no-pub` release build then compiles a registrant naming a plugin that release builds exclude, so it fails. #57 captured the store screenshots with `flutter_driver` (pure Dart, no plugin) instead.
   **Why:** Found executing #57 (M5). The alternatives were to drop `--no-pub` from the release build (pinned by `signing_guard_test.dart`, `workflow_guard_test.dart` and `release.yml`) or to exclude `integration_test/` from analysis. Both weaken a gate for a tooling need.
@@ -1146,7 +1146,7 @@ than per-story.
   **Why:** Every guard adds an entry and about 26 s, so each milestone that adds guards moves the merge gate closer to the limit.
   **Affects:** M6 and M7, whose stories add guards; each PR waits over an hour on `mutations` until #286 lands.
 
-## Ad-hoc — 2026-09-29
+## Ad-hoc — 2026-09-29 — reconciled by /n8-replan 2026-09-29
 
 - **Change:** Back and `‹` on About Honest Arcade pop to whichever screen opened it: About the App when reached through Honest Arcade Promises, the menu when reached from the menu row, and the menu when nothing is beneath it. This amends #45's back AC and #46's back-destination AC ("the studio screen opened from About the App returns to the menu as the design does"), which followed the design's `goBack`.
   **Why:** The owner's call on 2026-09-29, after device UAT on v0.2.0-uat.1 found back from the studio screen skipping About the App (#321).
@@ -1155,7 +1155,7 @@ than per-story.
   **Why:** The owner's call on 2026-09-29, after device UAT on v0.2.0-uat.1 found the glyph too small (#323); at 1.3× system text a 26-pt glyph would outgrow the 34-pt box, and the button's spoken label "Back" is unaffected.
   **Affects:** #46 and every screen story whose header follows the design's 16-pt glyph (Setup, Settings, Statistics, How to play, both About screens).
 
-## Ad-hoc — 2026-09-29 (device-UAT fixes on fix/bugs-from-verification: #320, #322)
+## Ad-hoc — 2026-09-29 (device-UAT fixes on fix/bugs-from-verification: #320, #322) — reconciled by /n8-replan 2026-09-29
 
 - **Change:** A strike-limit or announce change made mid-game is also copied into `lastSetup`, so the next board keeps it. Story #42's AC ("with no game in progress the change is also copied into `lastSetup`") becomes "always copied"; `GameController.updateSettings` does it for every caller, and the Settings screen no longer checks for a running game. `updateSettings` still never applies `lastSetup` to a running game (#39's API AC).
   **Why:** The owner's call on 2026-09-29, after #320's device UAT on v0.2.0-uat.1: a mode changed from the pause card's Settings reverted on the next board. The theme half of #320 did not reproduce at the controller: a theme picked mid-game survives the win, a new board and a relaunch (`game_controller_store_test.dart`, "a theme picked mid-game survives …").
@@ -1163,14 +1163,14 @@ than per-story.
 - **Change:** The out-of-strikes card gains `Retry` as its primary button, restarting the same puzzle through the pause card's Restart verb (`GameController.restart`: entries cleared, strikes and timer reset). The buttons read Retry, New puzzle (now the secondary look), Change size or difficulty, Main menu, and the body becomes "You set a limit of <limit>. Retry this puzzle from the start, or take a fresh one." This amends story #35's lost variant (primary `New puzzle`, the "still here if you undo" body).
   **Why:** The owner's call on 2026-09-29, from #322's device UAT on v0.2.0-uat.1. Open for the owner: the loss stays recorded when the player retries, and restart records nothing new (#39), so a retried game that is then won records a win for a start that already has a loss, and one then abandoned records an abandon.
   **Affects:** #35 (amended AC), #39's "restart records nothing new" (now also reachable after a loss), the statistics screen's per-difficulty totals.
-## Ad-hoc — 2026-09-29 (#286: the mutation battery runs in eight shards)
+## Ad-hoc — 2026-09-29 (#286: the mutation battery runs in eight shards) — reconciled by /n8-replan 2026-09-29
 
 - **Change:** `ci.yml`'s `mutations` job becomes a `mutation-shard` matrix of eight (`fail-fast: false`, `tools/mutation_check.py --shard K/8`, round-robin over the battery's order) plus a one-step `mutations` job that `needs:` the matrix and fails unless `needs.mutation-shard.result` is `success`. `mutation_check.py --shard K/N` refuses bad values and refuses to combine with `--only` (exit 2).
   **Why:** The single job hit its 60- and 90-minute limits (#286). The ruleset requires a check-run named `mutations`, and a matrix reports one check per shard, so an aggregator carries the name. Owner decision (2026-09-29): option 1 of #286.
 - **Change:** ci-shape (`workflow_guard_test.dart`) gains its first job-level `if:` exception, owner-approved 2026-09-29: only the job named `mutations`, only `if: always()`, and only when every job in its `needs` reaches a step's `env:` as `needs.<job>.result` and running those steps passes with every result `success` and fails with any one of them `failure`, `cancelled` or `skipped`. Every other job-level `if:` is still refused.
   **Why:** `always()` is required, not a convenience: without it the aggregator is SKIPPED when a shard fails, and a skipped required check does not block a merge, which is the hole ci-shape's rule exists to close (#189). The result check is what stops `always()` from turning a red shard into a green check.
   **Affects:** Nothing planned assumes the old single job beyond the timing notes in the 2026-09-24 entry above; M6 and M7 stories that add guards no longer wait over an hour on `mutations`. A new shard count means editing the matrix, the `/8` in the command and `_mutationShards` together; the shard guard holds them equal.
-## Ad-hoc — 2026-09-29 (#324, #325: every process a guard starts goes through `test/guards/leak_scan.dart`)
+## Ad-hoc — 2026-09-29 (#324, #325: every process a guard starts goes through `test/guards/leak_scan.dart`) — reconciled by /n8-replan 2026-09-29
 
 - **Change:** Workflow step bodies run by `workflow_guard_test.dart` are now searched with the same leak-form set as the credential scripts — base64, reversed, hex, lower and upper case, rot13, URL-encoding and the distinctive 8-character slices — on stdout, stderr, the command line, and the name and bytes of every file in the workspace and scratch. This reverses the "open by decision" exclusions #241 and #251 recorded in `_leakShapes`' docstring (hex, rot13, slices), which is deleted with the function. Every `_runStepBody` call is scanned now, not only the publish test's.
   **Why:** One leak-form implementation instead of two, per the #222 spike (2026-09-29). The cost #251 weighed was run time: `workflow_guard_test.dart` took 24 s before this change and 16 s after it, one run each (2026-09-29, `flutter test --no-pub test/guards/workflow_guard_test.dart` timed with `date +%s`, at b36e9d4 and on the #325 branch).
@@ -1178,3 +1178,12 @@ than per-story.
 - **Change:** `chokepoint-exempt:` is retired. A comment exempts nothing; a process that needs no secret goes through `runSealed`, and a call whose purpose is to emit a secret names an entry of `leakAllowances`, which `leak_scan_test.dart` holds to its call sites.
   **Why:** On CI the guard jobs set `GITHUB_TOKEN`, and every call that inherited the parent environment handed it to its child, so every existing `chokepoint-exempt:` reason ("passes no secret") was false there (#222 spike, 2026-09-29).
   **Affects:** Any planned guard that starts a process: it must use `LeakScan.run` or `runSealed`, or `leak_scan_test.dart` fails.
+
+## /n8-replan — 2026-09-29
+
+- **Decision:** Replanned M6–M8 against the six unreconciled ad-hoc entries (2026-09-24 ×2, 2026-09-29 ×4). Owner-approved change set, applied the same day.
+  **Why:** `integration_test` cannot be a dependency while the release bundle builds with `--no-pub` (2026-09-24), and PR #327 amended the design (#320–#323), sharded the mutation battery (#286) and moved every guard's process start through `test/guards/leak_scan.dart` (#324/#325).
+  **Issues:** #65, #66 (device suites move to `flutter_driver` under `test_driver/`, following #57's `tools/screenshots.sh`); #67 (suites out of the gate by `test_driver/`; the closing check is the required `gate` and `mutations` checks); #63 (its guards start scripts through `runSealed`/`LeakScan.run`); #64 (strike and announce modes change within one board; the strike loss exercises Retry); #60 (new AC: the plan checks the owner's design amendments); new #328 (a fresh board route over a running game pauses during build); the M8 description gains the #286/#324–#326 CI emphases and the design-departure documents check. M7 needed no change; the executed M3–M5 descriptions still describe the design's back destinations and lost card and are left as history.
+- **Decision:** After a loss, Retry keeps the loss recorded and the retried game counts as new play (a win on it records a win, an abandon an abandon) — the behaviour #322 shipped with.
+  **Why:** Owner decision 2026-09-29, answering the question #322's ledger entry left open; honest about what was played.
+  **Issue:** #322, #64
