@@ -828,18 +828,18 @@ _StubGateRun _stubGate({required int buildExit, required String verdict}) {
     '  exit "\$HS_STUB_BUILD_EXIT"\n'
     'fi\n',
   );
-  Process.runSync('chmod', [
-    '+x',
+  for (final stub in [
     '${bin.path}/dart',
     '${bin.path}/flutter',
     '${root.path}/tools/check_aab.sh',
-  ]);
+  ]) {
+    makeExecutable(stub);
+  }
 
-  final result = Process.runSync(
+  final result = runSealed(
     '/bin/bash',
     ['${root.path}/tools/gate.sh'],
     workingDirectory: root.path,
-    includeParentEnvironment: false,
     environment: {
       'PATH': '${bin.path}:/usr/bin:/bin',
       'HOME': root.path,
@@ -848,8 +848,6 @@ _StubGateRun _stubGate({required int buildExit, required String verdict}) {
       'HS_STUB_VERDICT': verdict,
       'HS_STUB_BUILD_EXIT': '$buildExit',
     },
-    stdoutEncoding: utf8,
-    stderrEncoding: utf8,
   );
   final recorded = calls.existsSync() ? calls.readAsStringSync() : '';
   return _StubGateRun(

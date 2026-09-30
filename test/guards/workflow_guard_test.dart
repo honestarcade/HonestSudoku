@@ -400,7 +400,12 @@ void _expectVerdictOverEveryNeed(WorkflowJob job) {
         for (final entry in keyFor.entries)
           if (entry.value.step == step) entry.value.key: results[entry.key]!,
       };
-      final r = _runStepBody(run, ambient: _ambientCommands, extraEnv: env);
+      final r = _runStepBody(
+        run,
+        ambient: _ambientCommands,
+        extraEnv: env,
+        why: 'always-verdict: job `${job.name}` step `${step.id}`',
+      );
       if (r.code != 0) failed++;
     }
     return failed;
@@ -1737,11 +1742,8 @@ void main() {
         reason: 'shard-matrix: the battery is not told which shard it is',
       );
 
-      ProcessResult list(List<String> extra) => Process.runSync('python3', [
-        'tools/mutation_check.py',
-        '--list',
-        ...extra,
-      ], stdoutEncoding: utf8);
+      ProcessResult list(List<String> extra) =>
+          runSealed('python3', ['tools/mutation_check.py', '--list', ...extra]);
       List<String> entries(ProcessResult r) {
         expect(
           r.exitCode,
