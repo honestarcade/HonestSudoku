@@ -1316,7 +1316,7 @@ MUTATIONS: list[Mutation] = [
              "the OFL requires the licence to travel with the fonts",
              'fonts-provenance: 1 offender'),
 
-    # ---- #49: the audio assets and the placeholder flag --------------------
+    # ---- #49: the audio assets ---------------------------------------------
     Mutation("#49", "a placeholder clip loses its recorded digest",
              "assets/audio/LICENSES.md",
              sub(r"^\| `placeholder-mistake\.wav` \|[^\n]*\n", "", flags=re.M),
@@ -1327,12 +1327,6 @@ MUTATIONS: list[Mutation] = [
              sub(r"^  assets:\n    - assets/audio/\n", "", flags=re.M),
              "the game would ship silent, and a dropped-in clip would not ship",
              'audio-declared: flutter: assets: does not list assets/audio/'),
-    Mutation("#49", "the release stops flagging placeholder audio",
-             ".github/workflows/release.yml",
-             sub(r'(\} >> )"\$GITHUB_STEP_SUMMARY"(\n          fi\n)$',
-                 r'\1/dev/null\2', flags=re.M),
-             "a build carrying placeholders would ship without a word",
-             'honesty: `placeholder_audio` no longer says'),
 
     # ---- #50: one fade for every screen change ------------------------------
     Mutation("#50", "a screen change slides instead of fading",
@@ -1596,6 +1590,69 @@ MUTATIONS: list[Mutation] = [
              sub(r"    if args\.audition and args\.install:\n[^\n]*\n", ""),
              "an ambiguous command would build and stage instead of refusing",
              'sfx-audition-args: --audition with --install exited'),
+
+    # ---- #63: placeholder audio blocks the upload --------------------------
+    Mutation("#63", "the placeholder check moves after the Play upload",
+             ".github/workflows/release.yml",
+             chain(sub(r"\n      # Before the upload and unconditional[^\n]*\n"
+                       r"(?:      #[^\n]*\n)*"
+                       r"      - id: placeholder_audio\n(?:        [^\n]*\n)+", "\n"),
+                   sub(r"(      - id: play\n(?:        [^\n]*\n)+)",
+                       r"\1\n      - id: placeholder_audio\n"
+                       r"        name: Refuse placeholder audio\n"
+                       r"        run: tools/check_no_placeholder_audio.sh\n")),
+             "a placeholder would be reported once it had reached Play",
+             'release-placeholder: `placeholder_audio` runs after the Play upload'),
+    Mutation("#63", "the placeholder check drifts away from the scan",
+             ".github/workflows/release.yml",
+             chain(sub(r"\n      # Before the upload and unconditional[^\n]*\n"
+                       r"(?:      #[^\n]*\n)*"
+                       r"      - id: placeholder_audio\n(?:        [^\n]*\n)+", "\n"),
+                   sub(r"(        run: tools/verify_upload_cert\.sh\n)",
+                       r"\1\n      - id: placeholder_audio\n"
+                       r"        name: Refuse placeholder audio\n"
+                       r"        run: tools/check_no_placeholder_audio.sh\n")),
+             "the check AC4 places after check_aab.sh would sit elsewhere",
+             'release-placeholder: `placeholder_audio` is not the step immediately after'),
+    Mutation("#63", "the placeholder check runs if: always()",
+             ".github/workflows/release.yml",
+             sub(r"(      - id: placeholder_audio\n        name: [^\n]*\n)",
+                 r"\1        if: always()\n"),
+             "the warning-era condition would come back with the step",
+             'release-placeholder: `placeholder_audio` is conditional'),
+    Mutation("#63", "the placeholder check made advisory",
+             ".github/workflows/release.yml",
+             sub(r"run: tools/check_no_placeholder_audio\.sh$",
+                 "run: tools/check_no_placeholder_audio.sh || true", flags=re.M),
+             "the refusal would be printed and ignored",
+             'release-placeholder: job `ship` runs'),
+    Mutation("#63", "the placeholder check exits 0 when it finds one",
+             "tools/check_no_placeholder_audio.sh",
+             sub(r"^exit 1$", "exit 0", flags=re.M),
+             "a build carrying placeholders would be uploaded after a warning",
+             'placeholder-check: exited 0 over two placeholders'),
+    Mutation("#63", "the placeholder check fails a clean tree",
+             "tools/check_no_placeholder_audio.sh",
+             sub(r"^  exit 0$", "  exit 1", flags=re.M),
+             "every release would be blocked, licensed clips or not",
+             'placeholder-clean: a clean tree exited 1'),
+    Mutation("#63", "the placeholder check names only the first file",
+             "tools/check_no_placeholder_audio.sh",
+             sub(r"\| LC_ALL=C sort\)", "| LC_ALL=C sort | head -n 1)"),
+             "the owner would fix one clip and be refused again for the next",
+             'placeholder-check: not one annotation per placeholder'),
+    Mutation("#63", "the placeholder summary line drops the count",
+             "tools/check_no_placeholder_audio.sh",
+             sub(r'check_no_placeholder_audio: \$count placeholder',
+                 "check_no_placeholder_audio: placeholder"),
+             "the summary line the story names would not say how many",
+             'placeholder-check: the summary line does not name the count'),
+    Mutation("#63", "the job summary still reads as a warning",
+             "tools/check_no_placeholder_audio.sh",
+             sub(r"### Placeholder audio blocked this release",
+                 "### Placeholder audio shipped"),
+             "the summary would read as a note, not the failure it now is",
+             'placeholder-check: the job summary does not read as a block'),
 ]
 
 

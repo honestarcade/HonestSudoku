@@ -517,13 +517,13 @@ const _dependsOn = <String, Map<String, Map<String, List<String>>>>{
       'keystore_check': ['keytool'],
       'build': ['flutter'],
       'scan': ['tools/check_aab.sh'],
+      'placeholder_audio': ['tools/check_no_placeholder_audio.sh'],
       'cert': ['tools/verify_upload_cert.sh'],
       'sidecar': ['sha256sum'],
       'asset': ['gh'],
       'summary': [],
       'name_failure': [],
       'shred': [],
-      'placeholder_audio': [],
     },
     'report-gate-failure': {'say': []},
   },
@@ -748,36 +748,6 @@ const _stepsAllSucceeded = '''
 /// Top level so `every [] step is exercised by a named test` can hold this
 /// map to the `[]` set in `_dependsOn` (#226).
 const _claims = <String, _Claim>{
-  'the release names every placeholder clip it ships': (
-    path: '.github/workflows/release.yml',
-    job: 'ship',
-    step: 'placeholder_audio',
-    env: {},
-    expressions: {},
-    plant: {
-      'assets/audio/placeholder-place.wav': 'x',
-      'assets/audio/placeholder-lose.wav': 'x',
-      'assets/audio/solve.wav': 'x',
-    },
-    completes: true,
-    mustSay: [
-      'Placeholder audio shipped',
-      'placeholder-place.wav',
-      'placeholder-lose.wav',
-    ],
-    mustNotSay: ['- assets/audio/solve.wav'],
-  ),
-  'the release does not flag placeholder audio it does not ship': (
-    path: '.github/workflows/release.yml',
-    job: 'ship',
-    step: 'placeholder_audio',
-    env: {},
-    expressions: {},
-    plant: {'assets/audio/place.wav': 'x'},
-    completes: true,
-    mustSay: [],
-    mustNotSay: ['Placeholder audio shipped'],
-  ),
   'the engine nightly summary says where the failing seeds are': (
     path: '.github/workflows/engine-nightly.yml',
     job: 'weekly',
@@ -1441,6 +1411,7 @@ void _assertReleaseShape(Workflow wf) {
       'keystore_check',
       'build',
       'scan',
+      'placeholder_audio',
       'cert',
       'sidecar',
       'artifact',
@@ -1449,7 +1420,6 @@ void _assertReleaseShape(Workflow wf) {
       'summary',
       'name_failure',
       'shred',
-      'placeholder_audio',
     ],
     reason:
         'release-shape: exactly these steps in this order. Anything else in '
@@ -1526,12 +1496,7 @@ void _assertReleaseShape(Workflow wf) {
   // unconditional and the other nineteen could carry anything; now every
   // step must be unconditional except a named few, so a new step is safe by
   // default rather than unguarded by default (#197).
-  const mayBeConditional = {
-    'summary',
-    'name_failure',
-    'shred',
-    'placeholder_audio',
-  };
+  const mayBeConditional = {'summary', 'name_failure', 'shred'};
   for (final step in ship.steps) {
     if (mayBeConditional.contains(step.id)) continue;
     expect(
@@ -3449,6 +3414,10 @@ void main() {
           '.github/workflows/release.yml',
           'tools/verify_upload_cert.sh',
         ),
+        'release.yml → check_no_placeholder_audio.sh': (
+          '.github/workflows/release.yml',
+          'tools/check_no_placeholder_audio.sh',
+        ),
         'play-promote.yml → play_promote.sh': (
           '.github/workflows/play-promote.yml',
           'tools/play_promote.sh',
@@ -3524,6 +3493,7 @@ void main() {
             'keystore_check',
             'build',
             'scan',
+            'placeholder_audio',
             'cert',
             'sidecar',
             'artifact',
@@ -3532,7 +3502,6 @@ void main() {
             'summary',
             'name_failure',
             'shred',
-            'placeholder_audio',
           ],
           'report-gate-failure': ['say'],
         },

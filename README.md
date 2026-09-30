@@ -158,11 +158,12 @@ ship your own.
 
 Three things are held back, because they are not ours to give away:
 
-**Audio.** The files listed in `assets/audio/LICENSES.md`'s Licensed table
-are **not** covered by the MIT licence: they are licensed to Honest Arcade for
-use in Honest Sudoku, and no licence is granted to use them in another
-project. The synthesised placeholders in the same directory are MIT-covered
-like the code.
+**Audio.** The sound clips in `assets/audio/` are **not** covered by the MIT
+licence. They are licensed to Honest Arcade from ElevenLabs for use in Honest
+Sudoku, and no licence is granted to use them in any other project. The
+prompts, length budgets and mix levels that produced them are in
+`tools/sfx.py`, so with a paid ElevenLabs plan you can generate your own set.
+Provenance: `assets/audio/LICENSES.md`.
 
 **Fonts.** Outfit and IBM Plex Mono, bundled in `assets/fonts/`, are under
 the SIL Open Font License 1.1, whose texts sit beside them; they are neither
@@ -179,7 +180,8 @@ rights: fork the game freely, but ship it under your own name and mark.
 placeholders; `tools/sfx.py` generates candidate clips with the owner's
 ElevenLabs key, `--audition <clip>` plays each candidate in turn through a
 release build on the attached phone, and `--install` swaps the winner in for
-its placeholder.
+its placeholder. `tools/check_no_placeholder_audio.sh` is the release
+workflow's refusal to upload a build that still carries a placeholder.
 
 ## Security
 

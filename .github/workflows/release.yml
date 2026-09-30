@@ -162,6 +162,13 @@ jobs:
         name: Scan the bundle for permissions
         run: tools/check_aab.sh
 
+      # Before the upload and unconditional: a bundle still carrying a
+      # synthesised placeholder clip must stop here, not be reported after
+      # it has reached Play (#63).
+      - id: placeholder_audio
+        name: Refuse placeholder audio
+        run: tools/check_no_placeholder_audio.sh
+
       - id: cert
         name: Verify the signing certificate
         run: tools/verify_upload_cert.sh
@@ -288,29 +295,6 @@ jobs:
         name: Remove the decoded keystore
         if: always()
         run: rm -f "$RUNNER_TEMP/upload.keystore"
-
-      # A warning, not a failure, until the owner's licensed clips land; M7
-      # turns it into a failure. Always, so a failed build still says what
-      # it would have shipped (#49).
-      - id: placeholder_audio
-        name: Flag placeholder audio
-        if: always()
-        run: |
-          set -euo pipefail
-          found=""
-          if [ -d assets/audio ]; then
-            found=$(find assets/audio -name 'placeholder-*.wav' | sort)
-          fi
-          if [ -n "$found" ]; then
-            {
-              echo "### Placeholder audio shipped"
-              echo ""
-              echo "These synthesised clips are in the bundle; the owner's"
-              echo "licensed audio replaces them (assets/audio/LICENSES.md)."
-              echo ""
-              echo "$found" | sed 's/^/- /'
-            } >> "$GITHUB_STEP_SUMMARY"
-          fi
 
   report-gate-failure:
     needs: gate
